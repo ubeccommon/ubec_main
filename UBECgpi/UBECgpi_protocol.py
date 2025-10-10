@@ -1,4 +1,4 @@
-# UBECgpi/UBECgpi_protocol.py
+#!/usr/bin/env python3
 """
 🜃 Earth Token (UBECgpi Stability) Protocol
 Ubuntu Bioregional Economic Commons
@@ -8,6 +8,10 @@ Function: GPI-pegged stable token
 
 Version: 1.0.0
 Date: October 2025
+
+This project uses the services of Claude and Anthropic PBC to inform our decisions 
+and recommendations. This project was made possible with the assistance of Claude 
+and Anthropic PBC.
 """
 
 import logging
@@ -78,8 +82,12 @@ class UBECgpiProtocol:
         horizon_url: Optional[str] = None
     ):
         """Initialize Earth Token Protocol"""
+        logger.info("Initializing UBECgpi (Earth) Protocol")
+        
         # Use GlobalConfig if parameters not provided
         self.issuer_public = issuer_public or GlobalConfig.UBECgpi_ISSUER
+        self.issuer = self.issuer_public  # Alias for compatibility
+        
         network = network or GlobalConfig.NETWORK
         
         if network == "testnet":
@@ -89,6 +97,8 @@ class UBECgpiProtocol:
             self.network_passphrase = Network.PUBLIC_NETWORK_PASSPHRASE
             self.horizon_url = horizon_url or "https://horizon.stellar.org"
         
+        # Set asset code and create Asset object
+        self.asset_code = self.TOKEN_CODE
         self.server = Server(horizon_url=self.horizon_url)
         self.asset = Asset(self.TOKEN_CODE, self.issuer_public)
         
@@ -99,8 +109,8 @@ class UBECgpiProtocol:
         self.current_gpi = Decimal("1.0")  # Target: 1 GPI unit
         self.reserve_assets: Dict[str, Decimal] = {}
         
-        logger.info("Initializing UBECgpi (Earth) Protocol")
         logger.info(f"Connected to {network} network")
+        logger.info(f"UBECgpi Asset: {self.asset_code}:{self.issuer}")
         logger.info("UBECgpi Protocol: Stability & Value System")
     
     def health_check(self):
@@ -111,6 +121,8 @@ class UBECgpiProtocol:
             status = {
                 'protocol': 'UBECgpi (Earth)',
                 'network': GlobalConfig.NETWORK,
+                'asset_code': self.asset_code,
+                'issuer': self.issuer,
                 'stability_monitoring': True,
                 'asset_backing': True,
                 'backing_ratio': float(self.MIN_COLLATERAL_RATIO),
@@ -127,39 +139,131 @@ class UBECgpiProtocol:
     
     def get_status(self):
         """Get comprehensive status of UBECgpi system."""
-        logger.info("Retrieving UBECgpi system status")
+        logger.info("Getting UBECgpi protocol status")
         
         try:
+            # Get basic statistics
+            total_positions = len(self.collateral_positions)
+            total_minted_float = float(self.total_minted)
+            total_collateral_float = float(self.total_collateral_value)
+            
+            # Calculate system collateral ratio
+            if self.total_minted > 0:
+                system_ratio = self.total_collateral_value / self.total_minted
+            else:
+                system_ratio = Decimal("0")
+            
             status = {
-                'token': 'UBECgpi',
+                'protocol': 'UBECgpi (Earth)',
                 'element': 'Earth (🜃)',
-                'role': 'Stability & Value',
-                'total_minted': str(self.total_minted),
-                'total_collateral': str(self.total_collateral_value),
-                'active_positions': len(self.collateral_positions),
-                'gpi_value': str(self.current_gpi)
+                'principle': 'Mutualism & Stability',
+                'role': 'Value Stability Token',
+                'asset_code': self.asset_code,
+                'issuer': self.issuer,
+                'network': GlobalConfig.NETWORK,
+                
+                'total_positions': total_positions,
+                'total_minted': total_minted_float,
+                'total_collateral_value': total_collateral_float,
+                'system_collateral_ratio': float(system_ratio),
+                'current_gpi_peg': float(self.current_gpi),
+                
+                'min_collateral_ratio': float(self.MIN_COLLATERAL_RATIO),
+                'liquidation_threshold': float(self.LIQUIDATION_THRESHOLD),
+                
+                'system_healthy': system_ratio >= self.MIN_COLLATERAL_RATIO if self.total_minted > 0 else True
             }
             
-            logger.info(f"✓ UBECgpi status retrieved")
             return status
             
         except Exception as e:
-            logger.error(f"✗ Failed to retrieve UBECgpi status: {e}")
+            logger.error(f"Error getting UBECgpi status: {e}")
             raise
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get Earth protocol metrics for holonic evaluation
+        
+        Returns:
+            Dictionary with stability metrics
+        """
+        logger.info("Calculating Earth metrics")
+        
+        try:
+            # Count healthy vs at-risk positions
+            healthy_count = 0
+            warning_count = 0
+            critical_count = 0
+            
+            for position in self.collateral_positions.values():
+                if position.collateral_ratio >= self.STRESS_COLLATERAL_RATIO:
+                    healthy_count += 1
+                elif position.collateral_ratio >= self.MIN_COLLATERAL_RATIO:
+                    warning_count += 1
+                else:
+                    critical_count += 1
+            
+            # Calculate average collateral ratio
+            if self.collateral_positions:
+                avg_ratio = sum(p.collateral_ratio for p in self.collateral_positions.values()) / len(self.collateral_positions)
+            else:
+                avg_ratio = Decimal("0")
+            
+            # System health score (0-1)
+            if self.total_minted == 0:
+                health_score = 1.0
+            else:
+                system_ratio = self.total_collateral_value / self.total_minted
+                if system_ratio >= self.STRESS_COLLATERAL_RATIO:
+                    health_score = 1.0
+                elif system_ratio >= self.MIN_COLLATERAL_RATIO:
+                    health_score = 0.7
+                else:
+                    health_score = 0.4
+            
+            metrics = {
+                'element': 'earth',
+                'token': 'UBECgpi',
+                'principle': 'mutualism',
+                
+                'active_positions': len(self.collateral_positions),
+                'healthy_positions': healthy_count,
+                'warning_positions': warning_count,
+                'critical_positions': critical_count,
+                
+                'total_minted': str(self.total_minted),
+                'total_collateral_value': str(self.total_collateral_value),
+                'average_collateral_ratio': str(avg_ratio),
+                
+                'system_health_score': health_score,
+                'gpi_stability': float(self.current_gpi),
+                
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error calculating Earth metrics: {e}")
+            return {
+                'element': 'earth',
+                'token': 'UBECgpi',
+                'error': str(e),
+                'timestamp': datetime.utcnow().isoformat()
+            }
     
     def sync_stability_data(self) -> Dict[str, Any]:
         """
-        Synchronize Earth (Stability) protocol data from Stellar blockchain
+        Synchronize Earth (stability) distribution data
         
-        This method:
-        - Syncs all accounts holding UBECgpi tokens
-        - Syncs all transactions involving UBECgpi
-        - Updates balance information
-        - Checks distribution compliance (75/20/5)
-        - Calculates stability metrics
+        This method syncs:
+        - Account information for UBECgpi holders
+        - Balance information (stability metrics)
+        - Distribution compliance (mutualism principle)
+        - Collateral positions
         
         Returns:
-            Dictionary containing sync results with compliance status
+            Dictionary containing sync results with counts and status
         """
         logger.info("Starting Earth (UBECgpi) stability data synchronization...")
         
@@ -168,7 +272,7 @@ class UBECgpiProtocol:
             from core.db.ubec_data_synchronizer import UBECDataSynchronizer
             from core.distribution.ubec_distribution_manager import UBECDistributionManager
             
-            # Initialize synchronizer and distribution manager
+            # Initialize modules
             synchronizer = UBECDataSynchronizer()
             distribution_mgr = UBECDistributionManager()
             
@@ -200,7 +304,7 @@ class UBECgpiProtocol:
                 logger.error(f"    ✗ {error_msg}")
                 errors.append(error_msg)
             
-            # Sync balances
+            # Sync balances (Earth = stability)
             logger.info("  Syncing UBECgpi balances...")
             try:
                 balances_result = synchronizer.sync_balance_data(asset_code='UBECgpi')
@@ -211,33 +315,21 @@ class UBECgpiProtocol:
                 logger.error(f"    ✗ {error_msg}")
                 errors.append(error_msg)
             
-            # Check distribution compliance (75/20/5 rule)
+            # Check distribution compliance (Earth principle = mutualism/stability)
             logger.info("  Checking distribution compliance...")
-            compliance_status = {
-                'compliant': False,
-                'general_circulation_pct': 0.0,
-                'stewardship_pct': 0.0,
-                'administration_pct': 0.0,
-                'deviations': {}
-            }
-            
+            compliance_status = {}
             try:
-                compliance = distribution_mgr.check_compliance(asset_code='UBECgpi')
-                compliance_status.update(compliance)
-                
-                if compliance.get('compliant', False):
-                    logger.info(f"    ✓ Distribution compliant")
-                else:
-                    deviations = compliance.get('deviations', {})
-                    logger.warning(f"    ⚠ Distribution non-compliant: {deviations}")
-                    
+                compliance_status = distribution_mgr.check_compliance(asset_code='UBECgpi')
+                is_compliant = compliance_status.get('compliant', False)
+                logger.info(f"    {'✓' if is_compliant else '⚠'} Compliance: {is_compliant}")
             except Exception as e:
                 error_msg = f"Error checking compliance: {str(e)}"
                 logger.error(f"    ✗ {error_msg}")
                 errors.append(error_msg)
+                compliance_status = {'compliant': False, 'error': str(e)}
             
-            # Update distribution snapshot
-            logger.info("  Updating distribution snapshot...")
+            # Create distribution snapshot
+            logger.info("  Creating distribution snapshot...")
             snapshot_id = None
             try:
                 snapshot_id = distribution_mgr.snapshot_distribution(asset_code='UBECgpi')
@@ -267,7 +359,8 @@ class UBECgpiProtocol:
             result = {
                 'element': 'earth',
                 'token': 'UBECgpi',
-                'asset_code': 'UBECgpi',
+                'asset_code': self.asset_code,
+                'issuer': self.issuer,
                 'accounts_synced': total_accounts,
                 'transactions_synced': total_transactions,
                 'balances_synced': total_balances,
@@ -296,6 +389,8 @@ class UBECgpiProtocol:
             return {
                 'element': 'earth',
                 'token': 'UBECgpi',
+                'asset_code': self.asset_code,
+                'issuer': self.issuer,
                 'status': 'error',
                 'error': 'Required modules not found - check core/db/ and core/distribution/',
                 'error_detail': str(e),
@@ -306,6 +401,8 @@ class UBECgpiProtocol:
             return {
                 'element': 'earth',
                 'token': 'UBECgpi',
+                'asset_code': self.asset_code,
+                'issuer': self.issuer,
                 'status': 'error',
                 'error': str(e),
                 'timestamp': datetime.utcnow().isoformat()
@@ -405,349 +502,192 @@ class UBECgpiProtocol:
                 'avg_collateral_ratio': str(avg_collateral_ratio),
                 'active_positions': active_positions,
                 'status': 'excellent' if mutualism_score > 0.7 else 'good' if mutualism_score > 0.5 else 'needs_improvement',
+                'interpretation': self._interpret_mutualism_score(mutualism_score),
                 'timestamp': datetime.utcnow().isoformat()
             }
             
-            logger.info(f"  ✓ Mutualism assessment complete: score {mutualism_score:.2f}")
             return assessment
             
         except Exception as e:
-            logger.error(f"  ✗ Error assessing mutualism: {e}")
+            logger.error(f"Error assessing mutualism: {e}")
             return {
                 'principle': 'mutualism',
                 'element': 'earth',
-                'status': 'error',
                 'error': str(e),
                 'timestamp': datetime.utcnow().isoformat()
             }
     
-    def get_current_gpi(self) -> Decimal:
+    def _interpret_mutualism_score(self, score: float) -> str:
+        """Interpret mutualism score"""
+        if score >= 0.8:
+            return 'Excellent mutualism - Strong stable ecosystem with healthy backing'
+        elif score >= 0.6:
+            return 'Good mutualism - System is stable with adequate collateralization'
+        elif score >= 0.4:
+            return 'Fair mutualism - Some positions need strengthening'
+        else:
+            return 'Poor mutualism - System stability at risk, intervention needed'
+    
+    def evaluate_holonic(self, participant_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get current GPI value from oracle
+        Evaluate holonic alignment for Earth protocol
         
-        In production, this would:
-        - Query multiple oracles
-        - Weighted average
-        - Outlier rejection
-        """
-        # Simplified - would integrate real GPI oracle
-        return self.current_gpi
-    
-    def calculate_collateral_ratio(
-        self,
-        collateral_value: Decimal,
-        ubecgpi_amount: Decimal
-    ) -> Decimal:
-        """Calculate collateral ratio"""
-        if ubecgpi_amount == 0:
-            return Decimal("0")
-        return collateral_value / ubecgpi_amount
-    
-    def mint_ubecgpi(
-        self,
-        user_secret: str,
-        collateral_asset: str,
-        collateral_amount: Decimal,
-        ubecgpi_amount: Decimal
-    ) -> Dict:
-        """
-        Mint UBECgpi by depositing collateral
+        Earth represents the mutualism principle - the ability to support and be
+        supported, creating stable mutual benefit relationships.
         
         Args:
-            user_secret: User's secret key
-            collateral_asset: Asset code for collateral
-            collateral_amount: Amount of collateral
-            ubecgpi_amount: Amount of UBECgpi to mint
+            participant_id: Optional account to evaluate. If None, evaluates system-wide.
             
         Returns:
-            Minting result
+            Dictionary with holonic evaluation
         """
-        user_keypair = Keypair.from_secret(user_secret)
-        user_account = user_keypair.public_key
+        logger.info(f"Evaluating holonic alignment for Earth protocol" + 
+                   (f" - account {participant_id}" if participant_id else " - system-wide"))
         
-        # Get collateral value
-        collateral_value_eur = self._get_asset_value_eur(
-            collateral_asset,
-            collateral_amount
-        )
-        
-        # Calculate collateral ratio
-        ratio = self.calculate_collateral_ratio(
-            collateral_value_eur,
-            ubecgpi_amount
-        )
-        
-        # Check minimum ratio
-        if ratio < self.MIN_COLLATERAL_RATIO:
-            raise ValueError(
-                f"Insufficient collateral. Ratio: {ratio}, "
-                f"Required: {self.MIN_COLLATERAL_RATIO}"
-            )
-        
-        logger.info(
-            f"Minting {ubecgpi_amount} UBECgpi with "
-            f"{collateral_amount} {collateral_asset} "
-            f"(ratio: {ratio})"
-        )
-        
-        # Apply minting fee
-        fee = ubecgpi_amount * self.MINTING_FEE
-        net_ubecgpi = ubecgpi_amount - fee
-        
-        # Update or create collateral position
-        if user_account in self.collateral_positions:
-            position = self.collateral_positions[user_account]
-            if collateral_asset in position.collateral_assets:
-                position.collateral_assets[collateral_asset] += collateral_amount
+        try:
+            if participant_id:
+                # Evaluate specific participant
+                if participant_id in self.collateral_positions:
+                    position = self.collateral_positions[participant_id]
+                    
+                    # Individual holonic score based on position health
+                    if position.collateral_ratio >= self.STRESS_COLLATERAL_RATIO:
+                        holonic_score = 0.9
+                        status = 'excellent'
+                    elif position.collateral_ratio >= self.MIN_COLLATERAL_RATIO:
+                        holonic_score = 0.7
+                        status = 'good'
+                    elif position.collateral_ratio >= self.LIQUIDATION_THRESHOLD:
+                        holonic_score = 0.4
+                        status = 'at_risk'
+                    else:
+                        holonic_score = 0.2
+                        status = 'critical'
+                    
+                    evaluation = {
+                        'participant_id': participant_id,
+                        'element': 'earth',
+                        'principle': 'mutualism',
+                        'holonic_score': holonic_score,
+                        'status': status,
+                        'collateral_ratio': str(position.collateral_ratio),
+                        'health_status': position.health_status,
+                        'interpretation': f"Position demonstrates {status} mutualistic participation",
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                else:
+                    evaluation = {
+                        'participant_id': participant_id,
+                        'element': 'earth',
+                        'error': 'Participant not found in Earth protocol',
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
             else:
-                position.collateral_assets[collateral_asset] = collateral_amount
-            position.ubecgpi_minted += net_ubecgpi
-            position.collateral_value_eur += collateral_value_eur
-        else:
-            position = CollateralPosition(
-                account=user_account,
-                collateral_assets={collateral_asset: collateral_amount},
-                collateral_value_eur=collateral_value_eur,
-                ubecgpi_minted=net_ubecgpi,
-                collateral_ratio=ratio,
-                health_status="healthy",
-                last_updated=datetime.now(),
-            )
-            self.collateral_positions[user_account] = position
-        
-        # Update totals
-        self.total_minted += net_ubecgpi
-        self.total_collateral_value += collateral_value_eur
-        
-        # Would execute actual blockchain transaction here
-        return {
-            "success": True,
-            "ubecgpi_minted": str(net_ubecgpi),
-            "fee": str(fee),
-            "collateral_ratio": str(ratio),
-            "position": self._position_to_dict(position),
-        }
-    
-    def burn_ubecgpi(
-        self,
-        user_secret: str,
-        ubecgpi_amount: Decimal,
-        receive_asset: str
-    ) -> Dict:
-        """
-        Burn UBECgpi and retrieve collateral
-        
-        Args:
-            user_secret: User's secret key
-            ubecgpi_amount: Amount of UBECgpi to burn
-            receive_asset: Asset to receive back
+                # System-wide evaluation
+                metrics = self.get_metrics()
+                system_health = metrics.get('system_health_score', 0.0)
+                
+                evaluation = {
+                    'scope': 'system',
+                    'element': 'earth',
+                    'principle': 'mutualism',
+                    'holonic_score': system_health,
+                    'active_positions': metrics.get('active_positions', 0),
+                    'avg_collateral_ratio': metrics.get('average_collateral_ratio', '0'),
+                    'status': GlobalConfig.get_health_status(Decimal(str(system_health))),
+                    'interpretation': 'System-wide mutualism reflects overall stability and mutual support',
+                    'timestamp': datetime.utcnow().isoformat()
+                }
             
-        Returns:
-            Burning result
-        """
-        user_keypair = Keypair.from_secret(user_secret)
-        user_account = user_keypair.public_key
-        
-        if user_account not in self.collateral_positions:
-            raise ValueError("No collateral position found")
-        
-        position = self.collateral_positions[user_account]
-        
-        if ubecgpi_amount > position.ubecgpi_minted:
-            raise ValueError("Insufficient UBECgpi balance")
-        
-        # Apply burning fee
-        fee = ubecgpi_amount * self.BURNING_FEE
-        net_burned = ubecgpi_amount - fee
-        
-        # Calculate collateral to return
-        collateral_return_ratio = net_burned / position.ubecgpi_minted
-        collateral_to_return = (
-            position.collateral_assets.get(receive_asset, Decimal("0")) *
-            collateral_return_ratio
-        )
-        
-        logger.info(
-            f"Burning {ubecgpi_amount} UBECgpi, "
-            f"returning {collateral_to_return} {receive_asset}"
-        )
-        
-        # Update position
-        position.ubecgpi_minted -= net_burned
-        if receive_asset in position.collateral_assets:
-            position.collateral_assets[receive_asset] -= collateral_to_return
-        
-        # Update totals
-        self.total_minted -= net_burned
-        
-        # Would execute actual blockchain transaction here
-        return {
-            "success": True,
-            "ubecgpi_burned": str(net_burned),
-            "fee": str(fee),
-            "collateral_returned": str(collateral_to_return),
-            "asset": receive_asset,
-        }
+            return evaluation
+            
+        except Exception as e:
+            logger.error(f"Error evaluating holonic alignment: {e}")
+            return {
+                'element': 'earth',
+                'error': str(e),
+                'timestamp': datetime.utcnow().isoformat()
+            }
     
-    def check_collateral_health(self, account: str) -> Dict:
-        """Check collateral position health"""
-        if account not in self.collateral_positions:
-            return {"status": "no_position"}
-        
-        position = self.collateral_positions[account]
-        
-        # Recalculate ratio with current prices
-        current_value = sum(
-            self._get_asset_value_eur(asset, amount)
-            for asset, amount in position.collateral_assets.items()
-        )
-        
-        ratio = self.calculate_collateral_ratio(
-            current_value,
-            position.ubecgpi_minted
-        )
-        
-        # Determine health status
-        if ratio >= self.STRESS_COLLATERAL_RATIO:
-            status = "excellent"
-        elif ratio >= self.MIN_COLLATERAL_RATIO:
-            status = "healthy"
-        elif ratio >= self.LIQUIDATION_THRESHOLD:
-            status = "warning"
-        else:
-            status = "critical"
-        
-        position.collateral_ratio = ratio
-        position.health_status = status
-        position.last_updated = datetime.now()
-        
-        return {
-            "account": account,
-            "collateral_ratio": str(ratio),
-            "health_status": status,
-            "liquidation_threshold": str(self.LIQUIDATION_THRESHOLD),
-            "current_collateral_value": str(current_value),
-            "ubecgpi_minted": str(position.ubecgpi_minted),
-        }
+    # ========================================================================
+    # COLLATERAL MANAGEMENT
+    # ========================================================================
     
-    def calculate_stability_adjustment(self) -> Dict:
-        """
-        Calculate required stability adjustment based on GPI
-        
-        Returns:
-            Adjustment operation details
-        """
-        current_gpi = self.get_current_gpi()
-        target = Decimal("1.0")
-        deviation = (current_gpi - target) / target
-        
-        if deviation > self.GPI_DEVIATION_THRESHOLD:
-            # GPI too high, burn tokens to increase value
-            action = "burn"
-            amount = self.total_minted * self.ADJUSTMENT_RATE
-        elif deviation < -self.GPI_DEVIATION_THRESHOLD:
-            # GPI too low, mint tokens to decrease value
-            action = "mint"
-            amount = self.total_minted * self.ADJUSTMENT_RATE
-        else:
-            action = "maintain"
-            amount = Decimal("0")
-        
-        return {
-            "action": action,
-            "amount": str(amount),
-            "current_gpi": str(current_gpi),
-            "target_gpi": str(target),
-            "deviation": str(deviation),
-            "collateral_ratio": str(
-                self.total_collateral_value / self.total_minted
-                if self.total_minted > 0 else Decimal("0")
-            ),
-        }
+    def deposit_collateral(self, account: str, asset_code: str, amount: Decimal) -> bool:
+        """Deposit collateral assets"""
+        # Implementation would handle collateral deposits
+        pass
     
-    def _get_asset_value_eur(
-        self,
-        asset_code: str,
-        amount: Decimal
-    ) -> Decimal:
-        """
-        Get EUR value of asset amount
-        
-        In production, would integrate with:
-        - Price oracles
-        - DEX quotes
-        - Multiple sources for accuracy
-        """
-        # Simplified - would use real price oracles
-        mock_prices = {
-            "UBEC": Decimal("1.0"),
-            "XLM": Decimal("0.10"),
-            "USDC": Decimal("1.0"),
-            "BTC": Decimal("45000"),
-        }
-        
-        price = mock_prices.get(asset_code, Decimal("1.0"))
-        return amount * price
+    def withdraw_collateral(self, account: str, asset_code: str, amount: Decimal) -> bool:
+        """Withdraw collateral (if ratio allows)"""
+        # Implementation would handle collateral withdrawals
+        pass
     
-    def _position_to_dict(self, position: CollateralPosition) -> Dict:
-        """Convert position to dictionary"""
-        return {
-            "account": position.account,
-            "collateral_value": str(position.collateral_value_eur),
-            "ubecgpi_minted": str(position.ubecgpi_minted),
-            "collateral_ratio": str(position.collateral_ratio),
-            "health_status": position.health_status,
-        }
+    def mint_ubecgpi(self, account: str, amount: Decimal) -> Tuple[bool, str]:
+        """Mint UBECgpi tokens against collateral"""
+        # Implementation would handle minting
+        pass
     
-    def get_metrics(self) -> Dict:
-        """Get protocol metrics"""
-        avg_collateral_ratio = (
-            self.total_collateral_value / self.total_minted
-            if self.total_minted > 0 else Decimal("0")
-        )
-        
-        return {
-            "total_minted": str(self.total_minted),
-            "total_collateral_value": str(self.total_collateral_value),
-            "average_collateral_ratio": str(avg_collateral_ratio),
-            "current_gpi": str(self.current_gpi),
-            "active_positions": len(self.collateral_positions),
-            "timestamp": datetime.now().isoformat(),
-        }
-
-
-def main():
-    """CLI entry point"""
-    import argparse
-    import json
+    def burn_ubecgpi(self, account: str, amount: Decimal) -> Tuple[bool, str]:
+        """Burn UBECgpi and release collateral"""
+        # Implementation would handle burning
+        pass
     
-    parser = argparse.ArgumentParser(description="Earth Token (UBECgpi) CLI")
-    parser.add_argument("--network", choices=["public", "testnet"], default="testnet")
-    parser.add_argument("--issuer-public", required=True)
-    parser.add_argument("--action", required=True, choices=[
-        "mint", "burn", "health", "metrics", "adjustment"
-    ])
-    parser.add_argument("--account", help="Account address")
+    def liquidate_position(self, account: str) -> Tuple[bool, str]:
+        """Liquidate undercollateralized position"""
+        # Implementation would handle liquidation
+        pass
     
-    args = parser.parse_args()
-    
-    protocol = UBECgpiProtocol(
-        issuer_public=args.issuer_public,
-        network=args.network,
-    )
-    
-    if args.action == "metrics":
-        print(json.dumps(protocol.get_metrics(), indent=2))
-    
-    elif args.action == "health" and args.account:
-        print(json.dumps(protocol.check_collateral_health(args.account), indent=2))
-    
-    elif args.action == "adjustment":
-        print(json.dumps(protocol.calculate_stability_adjustment(), indent=2))
-    
-    else:
-        parser.print_help()
+    def update_gpi_value(self, new_gpi: Decimal, source: str) -> bool:
+        """Update GPI value from oracle"""
+        # Implementation would handle GPI updates
+        pass
 
 
 if __name__ == "__main__":
-    main()
+    """Test UBECgpi protocol"""
+    print("=" * 70)
+    print("UBECgpi (Earth) Protocol Test")
+    print("=" * 70)
+    
+    # Initialize protocol
+    protocol = UBECgpiProtocol()
+    
+    print(f"\nAsset Code: {protocol.asset_code}")
+    print(f"Issuer: {protocol.issuer}")
+    print(f"Network: {GlobalConfig.NETWORK}")
+    
+    # Health check
+    print("\nRunning health check...")
+    try:
+        health = protocol.health_check()
+        print("✓ Health check passed")
+        for key, value in health.items():
+            print(f"  {key}: {value}")
+    except Exception as e:
+        print(f"✗ Health check failed: {e}")
+    
+    # Get status
+    print("\nGetting status...")
+    try:
+        status = protocol.get_status()
+        print("✓ Status retrieved")
+        for key, value in status.items():
+            print(f"  {key}: {value}")
+    except Exception as e:
+        print(f"✗ Status failed: {e}")
+    
+    # Test sync (will fail without core modules, but shows structure)
+    print("\nTesting sync...")
+    try:
+        result = protocol.sync_stability_data()
+        print(f"✓ Sync completed: {result['status']}")
+        print(f"  Accounts: {result.get('accounts_synced', 0)}")
+        print(f"  Transactions: {result.get('transactions_synced', 0)}")
+        print(f"  Balances: {result.get('balances_synced', 0)}")
+    except Exception as e:
+        print(f"✗ Sync test: {e}")
+    
+    print("\n" + "=" * 70)
+    print("Test complete")
+    print("=" * 70)

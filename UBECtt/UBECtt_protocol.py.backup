@@ -25,10 +25,6 @@ Ubuntu Principle Alignment: REGENERATION
 "You never change things by fighting the existing reality.
 To change something, build a new model that makes the existing model obsolete."
 - R. Buckminster Fuller
-
-This project uses the services of Claude and Anthropic PBC to inform our decisions 
-and recommendations. This project was made possible with the assistance of Claude 
-and Anthropic PBC.
 """
 
 import os
@@ -363,50 +359,9 @@ class UBECttProtocol:
     
     def _store_action_to_db(self, action: TransformativeAction):
         """Store action to database"""
-        try:
-            query = """
-            INSERT INTO ubec_main.transformative_actions 
-            (action_id, agent_id, action_type, description, impact_scale,
-             timestamp, direct_beneficiaries, indirect_reach, regeneration_score,
-             catalytic_multiplier, verified, verifier_ids, evidence_urls,
-             ubectt_awarded, distribution_tx_hash, tags, related_actions, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (action_id) DO UPDATE SET
-                verified = EXCLUDED.verified,
-                verifier_ids = EXCLUDED.verifier_ids,
-                evidence_urls = EXCLUDED.evidence_urls,
-                ubectt_awarded = EXCLUDED.ubectt_awarded,
-                distribution_tx_hash = EXCLUDED.distribution_tx_hash
-            """
-            
-            params = (
-                action.action_id,
-                action.agent_id,
-                action.action_type.value,
-                action.description,
-                action.impact_scale.value,
-                action.timestamp,
-                action.direct_beneficiaries,
-                action.indirect_reach,
-                float(action.regeneration_score),
-                float(action.catalytic_multiplier),
-                action.verified,
-                action.verifier_ids,
-                action.evidence_urls,
-                float(action.ubectt_awarded),
-                action.distribution_tx_hash,
-                action.tags,
-                action.related_actions,
-                json.dumps(action.metadata)
-            )
-            
-            self.db.execute_query(query, params, fetch_all=False)
-            self.logger.debug(f"Stored action {action.action_id} to database")
-            
-        except Exception as e:
-            self.logger.error(f"Error storing action to database: {e}")
-            import traceback
-            self.logger.debug(traceback.format_exc())
+        # This would integrate with the existing database schema
+        # Implementation depends on the specific table structure
+        pass
     
     def verify_action(self, action_id: str, verifier_id: str, evidence_url: Optional[str] = None) -> bool:
         """
@@ -438,10 +393,6 @@ class UBECttProtocol:
             if len(action.verifier_ids) >= self.min_verification_threshold:
                 action.verified = True
                 self.logger.info(f"Action {action_id} is now verified")
-            
-            # Update database
-            if self.db:
-                self._store_action_to_db(action)
             
             return True
             
@@ -510,11 +461,6 @@ class UBECttProtocol:
             if dry_run:
                 self.logger.info(f"[DRY RUN] Would distribute {reward_amount} UBECtt to {action.agent_id[:8]}...")
                 action.ubectt_awarded = reward_amount
-                
-                # Update database
-                if self.db:
-                    self._store_action_to_db(action)
-                
                 return "DRY_RUN_TX_HASH"
             
             # Execute distribution via Stellar (if configured)
@@ -523,21 +469,11 @@ class UBECttProtocol:
                 if tx_hash:
                     action.ubectt_awarded = reward_amount
                     action.distribution_tx_hash = tx_hash
-                    
-                    # Update database
-                    if self.db:
-                        self._store_action_to_db(action)
-                    
                     self.logger.info(f"Distributed {reward_amount} UBECtt in tx {tx_hash[:16]}...")
                     return tx_hash
             else:
                 self.logger.warning("Stellar not configured - simulating distribution")
                 action.ubectt_awarded = reward_amount
-                
-                # Update database
-                if self.db:
-                    self._store_action_to_db(action)
-                
                 return "SIMULATED_TX_HASH"
             
             return None
@@ -634,57 +570,10 @@ class UBECttProtocol:
         try:
             self.phases[phase.phase_id] = phase
             self.logger.info(f"Created transformation phase: {phase.name}")
-            
-            # Store in database if available
-            if self.db:
-                self._store_phase_to_db(phase)
-            
             return True
         except Exception as e:
             self.logger.error(f"Error creating phase: {e}")
             return False
-    
-    def _store_phase_to_db(self, phase: TransformationPhase):
-        """Store phase to database"""
-        try:
-            query = """
-            INSERT INTO ubec_main.transformation_phases
-            (phase_id, name, description, start_date, end_date,
-             target_outcomes, key_indicators, participating_agents,
-             actions_completed, total_ubectt_distributed, phase_momentum,
-             is_active, completion_percentage)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (phase_id) DO UPDATE SET
-                actions_completed = EXCLUDED.actions_completed,
-                total_ubectt_distributed = EXCLUDED.total_ubectt_distributed,
-                phase_momentum = EXCLUDED.phase_momentum,
-                is_active = EXCLUDED.is_active,
-                completion_percentage = EXCLUDED.completion_percentage
-            """
-            
-            params = (
-                phase.phase_id,
-                phase.name,
-                phase.description,
-                phase.start_date,
-                phase.end_date,
-                phase.target_outcomes,
-                json.dumps({k: str(v) for k, v in phase.key_indicators.items()}),
-                phase.participating_agents,
-                phase.actions_completed,
-                float(phase.total_ubectt_distributed),
-                float(phase.phase_momentum),
-                phase.is_active,
-                float(phase.completion_percentage)
-            )
-            
-            self.db.execute_query(query, params, fetch_all=False)
-            self.logger.debug(f"Stored phase {phase.phase_id} to database")
-            
-        except Exception as e:
-            self.logger.error(f"Error storing phase to database: {e}")
-            import traceback
-            self.logger.debug(traceback.format_exc())
     
     def update_phase_progress(self, phase_id: str) -> bool:
         """
@@ -720,10 +609,6 @@ class UBECttProtocol:
             if phase_actions:
                 verified_count = sum(1 for a in phase_actions if a.verified)
                 phase.completion_percentage = Decimal(verified_count) / Decimal(max(phase.actions_completed, 1))
-            
-            # Update database
-            if self.db:
-                self._store_phase_to_db(phase)
             
             self.logger.info(f"Updated phase {phase.name}: {phase.completion_percentage*100:.1f}% complete")
             return True
@@ -911,7 +796,7 @@ class UBECttProtocol:
         Returns:
             Dictionary with regeneration assessment
         """
-        self.logger.info("Assessing regeneration principle for Fire element")
+        logger.info("Assessing regeneration principle for Fire element")
         
         try:
             metrics = self.get_system_transformation_metrics()
@@ -1136,106 +1021,80 @@ class UBECttProtocol:
             }
     
     def _sync_from_database(self):
-        """Load transformation data from database using proper DatabaseManager pattern"""
+        """Load transformation data from database"""
         if not self.db:
             return
         
         try:
-            # Load actions from database using execute_query
-            actions_query = """
+            # Load actions from database
+            cursor = self.db.cursor()
+            cursor.execute("""
                 SELECT action_id, agent_id, action_type, description, impact_scale,
                        timestamp, direct_beneficiaries, indirect_reach, 
                        regeneration_score, catalytic_multiplier, verified,
                        verifier_ids, evidence_urls, ubectt_awarded, 
                        distribution_tx_hash, tags, related_actions, metadata
-                FROM ubec_main.transformative_actions
+                FROM ubec_transformative_actions
                 WHERE timestamp > NOW() - INTERVAL '30 days'
                 ORDER BY timestamp DESC
-            """
+            """)
             
-            action_rows = self.db.execute_query(actions_query, fetch_all=True)
+            for row in cursor.fetchall():
+                action = TransformativeAction(
+                    action_id=row[0],
+                    agent_id=row[1],
+                    action_type=TransformationType(row[2]),
+                    description=row[3],
+                    impact_scale=ImpactScale(row[4]),
+                    timestamp=row[5],
+                    direct_beneficiaries=row[6] or 0,
+                    indirect_reach=row[7] or 0,
+                    regeneration_score=Decimal(str(row[8] or 0)),
+                    catalytic_multiplier=Decimal(str(row[9] or 1)),
+                    verified=row[10] or False,
+                    verifier_ids=row[11] or [],
+                    evidence_urls=row[12] or [],
+                    ubectt_awarded=Decimal(str(row[13] or 0)),
+                    distribution_tx_hash=row[14],
+                    tags=row[15] or [],
+                    related_actions=row[16] or [],
+                    metadata=row[17] or {}
+                )
+                self.actions[action.action_id] = action
             
-            if action_rows:
-                for row in action_rows:
-                    try:
-                        action = TransformativeAction(
-                            action_id=row[0],
-                            agent_id=row[1],
-                            action_type=TransformationType(row[2]),
-                            description=row[3],
-                            impact_scale=ImpactScale(row[4]),
-                            timestamp=row[5],
-                            direct_beneficiaries=row[6] or 0,
-                            indirect_reach=row[7] or 0,
-                            regeneration_score=Decimal(str(row[8] or 0)),
-                            catalytic_multiplier=Decimal(str(row[9] or 1)),
-                            verified=row[10] or False,
-                            verifier_ids=row[11] or [],
-                            evidence_urls=row[12] or [],
-                            ubectt_awarded=Decimal(str(row[13] or 0)),
-                            distribution_tx_hash=row[14],
-                            tags=row[15] or [],
-                            related_actions=row[16] or [],
-                            metadata=row[17] or {}
-                        )
-                        self.actions[action.action_id] = action
-                    except Exception as e:
-                        self.logger.warning(f"Error loading action {row[0]}: {e}")
-                        continue
-                
-                self.logger.info(f"Loaded {len(action_rows)} transformation actions from database")
-            else:
-                self.logger.info("No transformation actions found in database")
-            
-            # Load phases from database using execute_query
-            phases_query = """
+            # Load phases from database
+            cursor.execute("""
                 SELECT phase_id, name, description, start_date, end_date,
                        target_outcomes, key_indicators, participating_agents,
                        actions_completed, total_ubectt_distributed, 
                        phase_momentum, is_active, completion_percentage
-                FROM ubec_main.transformation_phases
+                FROM ubec_transformation_phases
                 WHERE is_active = TRUE
                 ORDER BY start_date DESC
-            """
+            """)
             
-            phase_rows = self.db.execute_query(phases_query, fetch_all=True)
+            for row in cursor.fetchall():
+                phase = TransformationPhase(
+                    phase_id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    start_date=row[3],
+                    end_date=row[4],
+                    target_outcomes=row[5] or [],
+                    key_indicators=row[6] or {},
+                    participating_agents=row[7] or [],
+                    actions_completed=row[8] or 0,
+                    total_ubectt_distributed=Decimal(str(row[9] or 0)),
+                    phase_momentum=Decimal(str(row[10] or 0)),
+                    is_active=row[11],
+                    completion_percentage=Decimal(str(row[12] or 0))
+                )
+                self.phases[phase.phase_id] = phase
             
-            if phase_rows:
-                for row in phase_rows:
-                    try:
-                        # Parse key_indicators JSON if it's a string
-                        key_indicators = row[6]
-                        if isinstance(key_indicators, str):
-                            key_indicators = json.loads(key_indicators)
-                        
-                        phase = TransformationPhase(
-                            phase_id=row[0],
-                            name=row[1],
-                            description=row[2],
-                            start_date=row[3],
-                            end_date=row[4],
-                            target_outcomes=row[5] or [],
-                            key_indicators={k: Decimal(str(v)) for k, v in (key_indicators or {}).items()},
-                            participating_agents=row[7] or [],
-                            actions_completed=row[8] or 0,
-                            total_ubectt_distributed=Decimal(str(row[9] or 0)),
-                            phase_momentum=Decimal(str(row[10] or 0)),
-                            is_active=row[11],
-                            completion_percentage=Decimal(str(row[12] or 0))
-                        )
-                        self.phases[phase.phase_id] = phase
-                    except Exception as e:
-                        self.logger.warning(f"Error loading phase {row[0]}: {e}")
-                        continue
-                
-                self.logger.info(f"Loaded {len(phase_rows)} transformation phases from database")
-            else:
-                self.logger.info("No active transformation phases found in database")
+            cursor.close()
             
         except Exception as e:
             self.logger.warning(f"Error loading from database: {e}")
-            import traceback
-            self.logger.debug(traceback.format_exc())
             # Continue with empty data rather than failing
 
 

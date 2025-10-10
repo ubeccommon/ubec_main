@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-10T06:20:00.521289  
+**Generated:** 2025-10-10T14:30:11.223683  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -31,6 +31,7 @@
 
 - **Ubuntu Principle:** Regeneration
 - **Role:** Transformation & Action
+- **Tables:** `transformation_phases`
 
 ### Core Infrastructure Tables
 
@@ -62,6 +63,12 @@ System health indicators
 
 **Values:** `excellent`, `good`, `fair`, `poor`, `critical`
 
+### impact_scale
+
+Custom type
+
+**Values:** `micro`, `meso`, `macro`, `meta`
+
 ### token_code
 
 Four UBEC protocol tokens
@@ -74,6 +81,12 @@ Stellar transaction operation types
 
 **Values:** `payment`, `create_account`, `change_trust`, `manage_offer`, `path_payment`, `account_merge`, `manage_data`, `bump_sequence`, `clawback`, `other`, `manage_buy_offer`, `manage_sell_offer`, `create_passive_sell_offer`
 
+### transformation_type
+
+Custom type
+
+**Values:** `individual_growth`, `community_building`, `resource_regeneration`, `knowledge_creation`, `system_evolution`, `cultural_shift`, `economic_transition`, `social_healing`
+
 ### ubuntu_principle
 
 Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
@@ -82,21 +95,21 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ## Database Summary
 
-- **Total Tables:** 32
-- **Total Columns:** 380
-- **Total Relationships:** 5
-- **Total Indexes:** 191
-- **Total Views:** 9
-- **Total Functions:** 64
-- **Total Custom Types:** 6
-- **Database Size:** 12 MB
+- **Total Tables:** 34
+- **Total Columns:** 421
+- **Total Relationships:** 6
+- **Total Indexes:** 214
+- **Total Views:** 13
+- **Total Functions:** 68
+- **Total Custom Types:** 8
+- **Database Size:** 13 MB
 
 ### Tables by Element
 
 - 🜁 **Air:** 6 tables
 - 🜄 **Water:** 0 tables
 - 🜃 **Earth:** 1 tables
-- 🜂 **Fire:** 0 tables
+- 🜂 **Fire:** 1 tables
 - 📊 **Core:** 5 tables
 
 ### Largest Tables
@@ -104,9 +117,9 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | Table | Rows | Size |
 |-------|------|------|
 | stellar_transactions | 408 | 408 kB |
-| stellar_accounts | 218 | 224 kB |
+| stellar_accounts | 218 | 248 kB |
 | ubec_balances | 213 | 280 kB |
-| asset_holder_analysis | 48 | 184 kB |
+| asset_holder_analysis | 63 | 184 kB |
 | ubec_distributions | 24 | 112 kB |
 | ubec_sync_status | 12 | 160 kB |
 | holonic_metrics | 5 | 144 kB |
@@ -167,7 +180,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain accounts with element tracking*
 
-**Statistics:** 218 rows | Table: 80 kB | Indexes: 144 kB | Total: 224 kB
+**Statistics:** 218 rows | Table: 80 kB | Indexes: 168 kB | Total: 248 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -596,7 +609,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Historical record of distribution checks and rebalancing actions*
 
-**Statistics:** 0 rows | Table: 16 kB | Indexes: 136 kB | Total: 152 kB
+**Statistics:** 0 rows | Table: 48 kB | Indexes: 136 kB | Total: 184 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -634,8 +647,59 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ---
 
+### 🜂 Fire Element (UBECtt)
+
+#### transformation_phases
+
+*Tracks transformation phases and their momentum in the Ubuntu Economic Commons (Fire Element - UBECtt)*
+
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 88 kB | Total: 96 kB
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('ubec_main.transformation_pha... | - |
+| phase_id | varchar(255) | ✗ | - | Unique identifier for the transformation phase |
+| name | varchar(255) | ✗ | - | Name of the transformation phase |
+| description | text | ✗ | - | Detailed description of the phase |
+| start_date | timestamp with time zone | ✗ | - | When the transformation phase began |
+| end_date | timestamp with time zone | ✓ | - | When the transformation phase ended (NULL if on... |
+| created_at | timestamp with time zone | ✗ | now() | - |
+| updated_at | timestamp with time zone | ✗ | now() | - |
+| target_outcomes | ARRAY | ✓ | '{}'::text[] | Array of target outcomes for this phase |
+| key_indicators | jsonb | ✓ | '{}'::jsonb | Key performance indicators tracked during this ... |
+| participating_agents | ARRAY | ✓ | '{}'::text[] | Array of Stellar account IDs participating in t... |
+| actions_completed | integer | ✓ | 0 | Number of transformative actions completed in t... |
+| total_ubectt_distributed | numeric(20,7) | ✓ | 0.0 | Total UBECtt tokens distributed during this phase |
+| phase_momentum | numeric(5,4) | ✓ | 0.0 | Rate of transformation in this phase (0.0 - 1.0) |
+| is_active | boolean | ✓ | true | Whether this phase is currently active |
+| completion_percentage | numeric(5,2) | ✓ | 0.0 | Percentage of phase completion (0 - 100) |
+| metadata | jsonb | ✓ | '{}'::jsonb | Additional metadata in JSON format |
+
+**Constraints:**
+
+- `transformation_phases_actions_completed_check` (CHECK)
+- `transformation_phases_completion_percentage_check` (CHECK)
+- `transformation_phases_phase_id_key` (UNIQUE)
+- `transformation_phases_phase_momentum_check` (CHECK)
+- `transformation_phases_pkey` (PRIMARY KEY)
+- `transformation_phases_total_ubectt_distributed_check` (CHECK)
+
+**Indexes:**
+
+- `idx_transformation_phases_active`
+- `idx_transformation_phases_agents`
+- `idx_transformation_phases_completion`
+- `idx_transformation_phases_end`
+- `idx_transformation_phases_metadata`
+- `idx_transformation_phases_momentum`
+- `idx_transformation_phases_start`
+- `transformation_phases_phase_id_key` (UNIQUE)
+- `transformation_phases_pkey` (PRIMARY, UNIQUE)
+
+---
+
 ## Views
 
-### stellar_operations_with_destination
+### active_verified_actions
 
 ```sql
