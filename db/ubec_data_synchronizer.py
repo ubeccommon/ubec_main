@@ -1,4 +1,4 @@
-# core/db/ubec_data_synchronizer.py
+# db/ubec_data_synchronizer.py
 """
 UBEC Data Synchronizer - Production Async Version
 
