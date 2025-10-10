@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-10T05:49:27.159513  
+**Generated:** 2025-10-10T06:20:00.521289  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -85,8 +85,8 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 - **Total Tables:** 32
 - **Total Columns:** 380
 - **Total Relationships:** 5
-- **Total Indexes:** 188
-- **Total Views:** 8
+- **Total Indexes:** 191
+- **Total Views:** 9
 - **Total Functions:** 64
 - **Total Custom Types:** 6
 - **Database Size:** 12 MB
@@ -110,7 +110,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | ubec_distributions | 24 | 112 kB |
 | ubec_sync_status | 12 | 160 kB |
 | holonic_metrics | 5 | 144 kB |
-| stellar_operations | 5 | 256 kB |
+| stellar_operations | 5 | 304 kB |
 | system_configuration | 5 | 96 kB |
 | agent_activity_history | 0 | 56 kB |
 
@@ -247,7 +247,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Statistics:** 5 rows | Table: 16 kB | Indexes: 240 kB | Total: 256 kB
+**Statistics:** 5 rows | Table: 16 kB | Indexes: 288 kB | Total: 304 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -288,11 +288,14 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 - `idx_stellar_operations_to`
 - `idx_stellar_operations_tx`
 - `idx_stellar_operations_type`
+- `idx_stellar_ops_accounts_asset`
 - `idx_stellar_ops_asset`
 - `idx_stellar_ops_created`
 - `idx_stellar_ops_from`
+- `idx_stellar_ops_from_asset`
 - `idx_stellar_ops_source`
 - `idx_stellar_ops_to`
+- `idx_stellar_ops_to_asset`
 - `stellar_operations_operation_id_key` (UNIQUE)
 - `stellar_operations_pkey` (PRIMARY, UNIQUE)
 
