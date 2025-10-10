@@ -30,6 +30,10 @@ class UBECHolonicEvaluator:
     3. Regenerative Impact: How account holders create positive environmental and social impacts
     4. Network Contribution: How account holders strengthen the network through participation
     5. Alignment with Ubuntu Philosophy: How account holders embody "I am because we are"
+    
+    This project uses the services of Claude and Anthropic PBC to inform our decisions 
+    and recommendations. This project was made possible with the assistance of Claude 
+    and Anthropic PBC.
     """
     
     def __init__(self, config_path="../config/settings.py", db_connection=None):
@@ -260,18 +264,19 @@ class UBECHolonicEvaluator:
             where_clause = " OR ".join(where_conditions)
         
         # Try the full query with holonic_metrics join if table exists
+        # NOTE: After V8 migration, holonic_metrics uses account_id, not agent_id
         if self.holonic_table_exists and 'last_activity_at' in available_column_names:
             query = f"""
             SELECT {select_clause}
             FROM {self.config['db_schema']}.agents a
             JOIN {self.config['db_schema']}.participants p ON a.participant_id = p.id
             LEFT JOIN (
-                SELECT DISTINCT ON (agent_id) agent_id, evaluation_date
+                SELECT DISTINCT ON (account_id) account_id, evaluation_date
                 FROM {self.config['db_schema']}.holonic_metrics
-                ORDER BY agent_id, evaluation_date DESC
-            ) hm ON a.id = hm.agent_id
+                ORDER BY account_id, evaluation_date DESC
+            ) hm ON p.account_id = hm.account_id
             WHERE (
-                hm.agent_id IS NULL OR
+                hm.account_id IS NULL OR
                 a.last_activity_at > hm.evaluation_date OR
                 (NOW() - hm.evaluation_date) > INTERVAL '{self.config['evaluation_interval_days']} days'
             )
@@ -1033,10 +1038,6 @@ class UBECHolonicEvaluator:
             logging.info(f"Added placeholder connections, network now has {len(G.edges())} edges")
         
         return G
-    
-    # [Continue with calculation methods - autonomy_integration, multi_scale, etc.]
-    # These remain largely the same as in the original code
-    # I'll include the key ones below:
     
     def calculate_autonomy_integration_metrics(self):
         """Calculate metrics related to the balance of autonomy and integration."""
@@ -1801,7 +1802,13 @@ class UBECHolonicEvaluator:
         logging.info("Completed overall holonic score calculation")
     
     def store_evaluation_results(self):
-        """Store evaluation results in the database."""
+        """
+        Store evaluation results in the database.
+        
+        UPDATED FOR V8 MIGRATION:
+        - Uses account_id (Stellar address) instead of agent_id (database ID)
+        - Uses extract_date_immutable() function in ON CONFLICT clause
+        """
         logging.info("Storing holonic evaluation results in database")
 
         if not self.holonic_table_exists:
@@ -1830,12 +1837,12 @@ class UBECHolonicEvaluator:
                     elif 'score' not in metrics[metric_name]:
                         metrics[metric_name]['score'] = 0
 
-                # Use the unique index name in ON CONFLICT for compatibility
-                # This works because we have: CREATE UNIQUE INDEX idx_holonic_metrics_unique_agent_date 
-                #                              ON holonic_metrics (agent_id, DATE(evaluation_date))
+                # UPDATED: Now uses account_id instead of agent_id
+                # The unique index is: idx_holonic_metrics_account_date_unique
+                # ON holonic_metrics (account_id, extract_date_immutable(evaluation_date))
                 query = f"""
                 INSERT INTO {self.config['db_schema']}.holonic_metrics (
-                    agent_id,
+                    account_id,
                     evaluation_date,
                     autonomy_integration_score,
                     multi_scale_score,
@@ -1848,7 +1855,7 @@ class UBECHolonicEvaluator:
                 ) VALUES (
                     %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s
                 )
-                ON CONFLICT ON CONSTRAINT idx_holonic_metrics_unique_agent_date
+                ON CONFLICT (account_id, {self.config['db_schema']}.extract_date_immutable(evaluation_date))
                 DO UPDATE SET
                     autonomy_integration_score = EXCLUDED.autonomy_integration_score,
                     multi_scale_score = EXCLUDED.multi_scale_score,
@@ -1861,8 +1868,9 @@ class UBECHolonicEvaluator:
                     updated_at = NOW()
                 """
 
+                # UPDATED: Now passes account_id (Stellar address) instead of agent_id (database ID)
                 params = [
-                    agent_id,
+                    data['account_id'],  # Stellar public key (e.g., 'GABC...')
                     metrics.get('autonomy_integration', {}).get('score', 0),
                     metrics.get('multi_scale_participation', {}).get('score', 0),
                     metrics.get('regenerative_impact', {}).get('score', 0),
@@ -1888,6 +1896,8 @@ class UBECHolonicEvaluator:
             except Exception as e:
                 error_count += 1
                 logging.error(f"Error storing evaluation result for agent {agent_id}: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
 
         logging.info(f"Stored {stored_count} evaluation results in database ({error_count} errors)")
         return stored_count

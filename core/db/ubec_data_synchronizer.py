@@ -1,4 +1,35 @@
 # db/ubec_data_synchronizer.py
+"""
+UBEC Data Synchronizer - Enhanced Production Version
+
+Synchronizes data between Stellar blockchain and the ubec_main database schema.
+Compatible with the four-element protocol architecture.
+
+Key Features:
+- Proper operation ordering (accounts before balances)
+- Transaction-safe operations
+- Comprehensive error handling
+- Rate limit management
+- Progress tracking
+- Idempotent operations
+
+Schema Mapping:
+- stellar_accounts: Core account data
+- ubec_balances: Token holdings with foreign key to stellar_accounts
+- stellar_transactions: Transaction records
+- stellar_operations: Operation details
+- ubec_sync_status: Synchronization tracking
+
+Four-Element Architecture:
+- 🜁 Air (UBEC) - Gateway & Universal Access
+- 🜄 Water (UBECrc) - Flow & Exchange  
+- 🜃 Earth (UBECgpi) - Stability & Value
+- 🜂 Fire (UBECtt) - Transformation & Action
+
+Author: UBEC Protocol Team
+Version: 2.1 (Enhanced Error Handling)
+Date: 2025-10-09
+"""
 
 import os
 import sys
@@ -7,6 +38,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
+from typing import Optional, Dict, List, Any, Tuple
 import requests
 from dotenv import load_dotenv
 
@@ -20,7 +52,6 @@ from db.connection import DatabaseManager, get_connection
 try:
     from config import settings
 except ImportError:
-    # If direct import fails, we'll load settings later in the init method
     pass
 
 # Configure precision for decimal calculations
@@ -29,33 +60,57 @@ getcontext().prec = 10
 logger = logging.getLogger(__name__)
 
 
+class SyncException(Exception):
+    """Custom exception for sync-related errors."""
+    pass
+
+
+class RateLimitException(Exception):
+    """Custom exception for rate limit errors."""
+    pass
+
+
 class UBECDataSynchronizer:
     """
-    Responsible for synchronizing data between the Stellar blockchain and the local database.
+    Synchronizes data between Stellar blockchain and ubec_main database.
     
-    This module handles all data retrieval operations to ensure that the database
-    contains up-to-date information needed by evaluation and analysis modules.
+    This class ensures proper operation ordering:
+    1. Create account records in stellar_accounts
+    2. Create balance records in ubec_balances (requires account to exist)
+    3. Store transaction/operation data
     
-    It provides methods to:
-    1. Fetch and store transaction history for individual accounts
-    2. Discover and track new UBEC token holders
-    3. Update account metadata and relationships
-    4. Run scheduled synchronization jobs
-    
-    The synchronizer separates the data retrieval concerns from the evaluation logic,
-    allowing each module to focus on its specific responsibilities.
+    All operations are designed to be idempotent and can be safely retried.
     """
+    
+    # Element mapping
+    ELEMENT_MAP = {
+        'UBEC': 'air',
+        'UBECrc': 'water',
+        'UBECgpi': 'earth',
+        'UBECtt': 'fire'
+    }
+    
+    # Operation type mapping for Stellar
+    OPERATION_TYPE_MAP = {
+        'payment': 'payment',
+        'exchange_in': 'path_payment_strict_receive',
+        'exchange_out': 'path_payment_strict_send',
+        'dex_manage_buy_offer': 'manage_buy_offer',
+        'dex_manage_sell_offer': 'manage_sell_offer',
+        'create_account': 'create_account',
+        'change_trust': 'change_trust'
+    }
     
     def __init__(self, config_path="../config/settings.py", db_manager=None):
         """
-        Initialize the data synchronizer with configuration and database connection.
+        Initialize the data synchronizer.
         
         Args:
-            config_path: Path to the settings.py file
+            config_path: Path to settings.py
             db_manager: Optional existing DatabaseManager instance
         """
         self.config_path = config_path
-        logging.info(f"Initializing UBEC Data Synchronizer with config path: {config_path}")
+        logger.info(f"Initializing UBEC Data Synchronizer with config: {config_path}")
         
         # Load settings
         self.settings = self._load_settings(config_path)
@@ -63,119 +118,80 @@ class UBECDataSynchronizer:
         # Set up database connection
         if db_manager:
             self.db = db_manager
-            logging.info("Using provided database manager")
+            logger.info("Using provided database manager")
         else:
             try:
                 self.db = DatabaseManager(schema=os.getenv('UBEC_DB_SCHEMA', 'ubec_main'))
-                logging.info("Created new database manager")
+                logger.info("Created new database manager")
             except Exception as e:
-                logging.error(f"Error creating database manager: {e}")
+                logger.error(f"Error creating database manager: {e}")
                 raise
         
         # Set up Stellar API connection
-        try:
-            from stellar_sdk import Server, Asset
-            self.network = self.settings.PUBLIC_NETWORK_PASSPHRASE
-            self.server = Server(horizon_url=self.settings.HORIZON_URL)
-            self.ubec_code = self.settings.UBEC_CODE
-            self.ubec_issuer = self.settings.UBEC_ISSUER
-            self.ubec_asset = Asset(self.settings.UBEC_CODE, self.ubec_issuer)
-            logging.info(f"Connected to Stellar network: {self.settings.HORIZON_URL}")
-        except ImportError:
-            logging.warning("Stellar SDK not available - blockchain queries will be disabled")
-            self.server = None
-            self.ubec_code = "UBEC"
-            self.ubec_issuer = "GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN"
+        self._initialize_stellar_connection()
         
         # Load accounts configuration
-        self.accounts = self.settings.ACCOUNTS
+        self.accounts = self.settings.ACCOUNTS if hasattr(self.settings, 'ACCOUNTS') else {}
 
         # Initialize rate limit tracking
-        self.rate_limit_remaining = 3000  # Default Stellar API limit
+        self.rate_limit_remaining = 3000
+        self.rate_limit_limit = 3000
         self.rate_limit_reset = 0
         
         # Initialize sync status tracking
         self._initialize_sync_tables()
         
-        logging.info("UBEC Data Synchronizer initialized successfully")
+        logger.info("✓ UBEC Data Synchronizer initialized successfully")
     
-    def _load_settings(self, config_path):
-        """
-        Load settings from the config file.
-        
-        Args:
-            config_path: Path to the settings file
-            
-        Returns:
-            module: Loaded settings module
-        """
+    def _load_settings(self, config_path: str) -> Any:
+        """Load settings from config file."""
         try:
-            # Try importing settings directly
             from config import settings
-            logging.info("Successfully imported settings from config package")
+            logger.info("Successfully imported settings from config package")
             return settings
         except ImportError:
-            logging.info(f"Direct import failed, trying to load from {config_path}")
+            logger.info(f"Direct import failed, trying to load from {config_path}")
             
             if not os.path.exists(config_path):
-                # Try to look in parent directory
                 parent_path = os.path.join(os.path.dirname(os.getcwd()), "config/settings.py")
                 if os.path.exists(parent_path):
                     config_path = parent_path
-                    logging.info(f"Found settings file at: {config_path}")
+                    logger.info(f"Found settings file at: {config_path}")
                 else:
-                    logging.error(f"Could not find settings file at {config_path} or {parent_path}")
-                    raise ImportError(f"Settings file not found at {config_path} or {parent_path}")
+                    logger.error(f"Could not find settings file")
+                    raise ImportError(f"Settings file not found")
             
-            # Create a module spec and load the module
             import importlib.util
             spec = importlib.util.spec_from_file_location("settings", config_path)
             settings_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(settings_module)
-            logging.info(f"Successfully loaded settings from {config_path}")
+            logger.info(f"Successfully loaded settings from {config_path}")
             return settings_module
     
-    def _initialize_sync_tables(self):
-        """
-        Initialize database tables needed for synchronization tracking.
-        Creates tables if they don't exist yet.
-        """
+    def _initialize_stellar_connection(self):
+        """Initialize connection to Stellar network."""
         try:
-            # Create sync_status table if it doesn't exist
-            sync_status_table = """
-            CREATE TABLE IF NOT EXISTS ubec_main.sync_status (
-                account_id VARCHAR(56) PRIMARY KEY,
-                last_sync TIMESTAMP NOT NULL DEFAULT NOW(),
-                last_block_height BIGINT,
-                last_ledger_sequence BIGINT,
-                last_transaction_id VARCHAR(64),
-                sync_count INTEGER DEFAULT 0,
-                status VARCHAR(20) DEFAULT 'active',
-                error_count INTEGER DEFAULT 0,
-                last_error TEXT,
-                last_error_at TIMESTAMP
-            )
-            """
-            self.db.execute_query(sync_status_table)
+            from stellar_sdk import Server, Asset
             
-            # Create sync_jobs table for scheduled jobs
-            sync_jobs_table = """
-            CREATE TABLE IF NOT EXISTS ubec_main.sync_jobs (
-                id SERIAL PRIMARY KEY,
-                job_type VARCHAR(50) NOT NULL,
-                schedule_interval INTERVAL NOT NULL,
-                last_run TIMESTAMP,
-                next_run TIMESTAMP NOT NULL,
-                enabled BOOLEAN DEFAULT TRUE,
-                parameters JSONB,
-                last_status VARCHAR(20),
-                error_message TEXT,
-                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-            )
-            """
-            self.db.execute_query(sync_jobs_table)
+            self.network = self.settings.PUBLIC_NETWORK_PASSPHRASE
+            self.server = Server(horizon_url=self.settings.HORIZON_URL)
+            self.ubec_code = self.settings.UBEC_CODE
+            self.ubec_issuer = self.settings.UBEC_ISSUER
+            self.ubec_asset = Asset(self.settings.UBEC_CODE, self.ubec_issuer)
             
+            logger.info(f"✓ Connected to Stellar: {self.settings.HORIZON_URL}")
+            logger.info(f"  Token: {self.ubec_code}")
+            logger.info(f"  Issuer: {self.ubec_issuer}")
+            
+        except ImportError:
+            logger.warning("⚠ Stellar SDK not available - blockchain queries disabled")
+            self.server = None
+            self.ubec_code = "UBEC"
+            self.ubec_issuer = "GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN"
+    
+    def _initialize_sync_tables(self):
+        """Initialize sync tracking tables if they don't exist."""
+        try:
             # Create holder_discovery_history table
             discovery_table = """
             CREATE TABLE IF NOT EXISTS ubec_main.holder_discovery_history (
@@ -192,7 +208,7 @@ class UBECDataSynchronizer:
             """
             self.db.execute_query(discovery_table)
             
-            # Create api_rate_limits table to track rate limits
+            # Create api_rate_limits table
             rate_limit_table = """
             CREATE TABLE IF NOT EXISTS ubec_main.api_rate_limits (
                 id SERIAL PRIMARY KEY,
@@ -205,108 +221,25 @@ class UBECDataSynchronizer:
             """
             self.db.execute_query(rate_limit_table)
             
-            # Add exchange-specific columns to stellar_operations table if they don't exist
-            try:
-                exchange_columns_query = """
-                ALTER TABLE ubec_main.stellar_operations 
-                ADD COLUMN IF NOT EXISTS exchange_source_asset VARCHAR(12),
-                ADD COLUMN IF NOT EXISTS exchange_source_amount DECIMAL(18,8),
-                ADD COLUMN IF NOT EXISTS exchange_dest_asset VARCHAR(12),
-                ADD COLUMN IF NOT EXISTS exchange_dest_amount DECIMAL(18,8)
-                """
-                self.db.execute_query(exchange_columns_query)
-            except Exception as e:
-                # Table might not exist yet or columns might already be there
-                logging.debug(f"Could not add exchange columns (may already exist): {e}")
-            
-            logging.info("Sync tracking tables initialized successfully")
+            logger.info("✓ Sync tracking tables initialized")
             return True
+            
         except Exception as e:
-            logging.error(f"Error initializing sync tables: {e}")
+            logger.error(f"Error initializing sync tables: {e}")
             return False
     
-    def _get_last_sync_time(self, account_id):
-        """
-        Get the last time an account was synchronized.
-        
-        Args:
-            account_id: Stellar account address
-            
-        Returns:
-            datetime or None: Last sync time or None if never synced
-        """
-        try:
-            query = "SELECT last_sync FROM ubec_main.sync_status WHERE account_id = %s"
-            result = self.db.execute_query(query, [account_id], fetch_one=True)
-            
-            if result and 'last_sync' in result:
-                return result['last_sync']
-            return None
-        except Exception as e:
-            logging.error(f"Error getting last sync time for {account_id}: {e}")
-            return None
+    # ========================================================================
+    # RATE LIMITING
+    # ========================================================================
     
-    def _update_sync_time(self, account_id, transaction_id=None, error=None):
-        """
-        Update the sync status for an account.
-        
-        Args:
-            account_id: Stellar account address
-            transaction_id: Optional ID of last processed transaction
-            error: Optional error message if sync failed
-            
-        Returns:
-            bool: Success status
-        """
-        try:
-            if error:
-                # Update with error information
-                query = """
-                INSERT INTO ubec_main.sync_status (
-                    account_id, last_sync, last_transaction_id, 
-                    error_count, last_error, last_error_at, status
-                ) VALUES (
-                    %s, NOW(), %s, 1, %s, NOW(), 'error'
-                )
-                ON CONFLICT (account_id) DO UPDATE SET
-                    last_sync = NOW(),
-                    last_transaction_id = COALESCE(%s, sync_status.last_transaction_id),
-                    error_count = sync_status.error_count + 1,
-                    last_error = %s,
-                    last_error_at = NOW(),
-                    status = 'error'
-                """
-                self.db.execute_query(query, [account_id, transaction_id, error, transaction_id, error])
-            else:
-                # Update with successful sync
-                query = """
-                INSERT INTO ubec_main.sync_status (
-                    account_id, last_sync, last_transaction_id, sync_count, status
-                ) VALUES (
-                    %s, NOW(), %s, 1, 'active'
-                )
-                ON CONFLICT (account_id) DO UPDATE SET
-                    last_sync = NOW(),
-                    last_transaction_id = COALESCE(%s, sync_status.last_transaction_id),
-                    sync_count = sync_status.sync_count + 1,
-                    status = 'active'
-                """
-                self.db.execute_query(query, [account_id, transaction_id, transaction_id])
-            
-            return True
-        except Exception as e:
-            logging.error(f"Error updating sync status for {account_id}: {e}")
-            return False
-
-    def _update_rate_limits(self, response_headers):
+    def _update_rate_limits(self, response_headers: Dict[str, str]):
         """
         Update rate limit information from API response headers.
         
         Args:
-            response_headers: Headers from Stellar API response
+            response_headers: HTTP response headers from Stellar API
         """
         try:
-            # Extract rate limit information from headers
             if 'X-Ratelimit-Limit' in response_headers:
                 self.rate_limit_limit = int(response_headers['X-Ratelimit-Limit'])
             
@@ -316,109 +249,385 @@ class UBECDataSynchronizer:
             if 'X-RateLimit-Reset' in response_headers:
                 self.rate_limit_reset = int(response_headers['X-RateLimit-Reset'])
             
-            # Store in database
-            query = """
-            INSERT INTO ubec_main.api_rate_limits (
-                api_name, rate_limit_remaining, rate_limit_limit, rate_limit_reset
-            ) VALUES (
-                'stellar_horizon', %s, %s, %s
-            )
-            ON CONFLICT (api_name) DO UPDATE SET
-                rate_limit_remaining = %s,
-                rate_limit_limit = %s,
-                rate_limit_reset = %s,
-                last_updated = NOW()
-            """
+            # Log if getting low
+            if self.rate_limit_remaining < 100:
+                logger.warning(f"⚠ Rate limit low: {self.rate_limit_remaining} remaining")
+            else:
+                logger.debug(f"Rate limits: {self.rate_limit_remaining}/{self.rate_limit_limit}")
             
-            self.db.execute_query(query, [
-                self.rate_limit_remaining,
-                self.rate_limit_limit if hasattr(self, 'rate_limit_limit') else 3000,
-                self.rate_limit_reset,
-                self.rate_limit_remaining,
-                self.rate_limit_limit if hasattr(self, 'rate_limit_limit') else 3000,
-                self.rate_limit_reset
-            ])
+            # Store in database (optional - only if you want to track historical data)
+            if self.rate_limit_remaining < 50:  # Only log when getting critically low
+                try:
+                    query = """
+                    INSERT INTO ubec_main.api_rate_limits (
+                        api_name, rate_limit_remaining, rate_limit_limit, rate_limit_reset
+                    ) VALUES ('stellar_horizon', %s, %s, %s)
+                    """
+                    self.db.execute_query(query, [
+                        self.rate_limit_remaining,
+                        self.rate_limit_limit,
+                        self.rate_limit_reset
+                    ])
+                except Exception as e:
+                    logger.debug(f"Could not log rate limit to DB: {e}")
             
-            logging.debug(f"Updated rate limits: {self.rate_limit_remaining} remaining, reset in {self.rate_limit_reset}s")
         except Exception as e:
-            logging.warning(f"Error updating rate limits: {e}")
+            logger.warning(f"Error updating rate limits: {e}")
     
-    def _check_rate_limit(self, buffer=10):
+    def _check_rate_limit(self, buffer: int = 10) -> bool:
         """
-        Check if we're approaching rate limits and wait if necessary.
+        Check if approaching rate limits and wait if necessary.
         
         Args:
             buffer: Number of requests to keep as buffer
             
         Returns:
-            bool: True if okay to proceed, False if rate limited
+            bool: True if safe to proceed
         """
         if not hasattr(self, 'rate_limit_remaining'):
             return True
-            
-        # If we're approaching the limit, wait for reset
+        
         if self.rate_limit_remaining <= buffer:
             now = int(time.time())
             
             if self.rate_limit_reset > now:
-                wait_time = self.rate_limit_reset - now + 2  # Add 2 seconds buffer
-                logging.warning(f"Rate limit approaching ({self.rate_limit_remaining} remaining). Waiting {wait_time}s for reset.")
+                wait_time = self.rate_limit_reset - now + 2
+                logger.warning(f"⚠ Rate limit reached. Waiting {wait_time}s until reset")
                 time.sleep(wait_time)
-                self.rate_limit_remaining = 3000  # Reset after waiting
+                self.rate_limit_remaining = self.rate_limit_limit
                 return True
         
         return True
     
-    def _handle_rate_limit_error(self, response):
+    def _handle_rate_limit_error(self, response) -> int:
         """
-        Handle rate limit error response from Stellar API.
+        Handle rate limit error from Stellar API.
         
         Args:
-            response: Response object with rate limit error
+            response: HTTP response object
             
         Returns:
             int: Seconds to wait before retrying
         """
         try:
-            # Extract retry after header if available
-            retry_after = 5  # Default to 5 seconds
+            retry_after = 5
             
-            if 'Retry-After' in response.headers:
-                retry_after = int(response.headers['Retry-After'])
-            elif 'X-RateLimit-Reset' in response.headers:
-                reset_time = int(response.headers['X-RateLimit-Reset'])
-                current_time = int(time.time())
-                retry_after = max(1, reset_time - current_time)
+            if hasattr(response, 'headers'):
+                if 'Retry-After' in response.headers:
+                    retry_after = int(response.headers['Retry-After'])
+                elif 'X-RateLimit-Reset' in response.headers:
+                    reset_time = int(response.headers['X-RateLimit-Reset'])
+                    current_time = int(time.time())
+                    retry_after = max(1, reset_time - current_time)
+                
+                self._update_rate_limits(response.headers)
             
-            # Update rate limit tracking
-            self._update_rate_limits(response.headers)
-            
-            logging.warning(f"Rate limit hit, waiting for {retry_after} seconds")
+            logger.warning(f"⚠ Rate limit hit, waiting {retry_after}s")
             return retry_after
             
         except Exception as e:
-            logging.error(f"Error handling rate limit: {e}")
-            return 30  # Default to 30 seconds if we can't determine retry time
+            logger.error(f"Error handling rate limit: {e}")
+            return 30  # Default to 30 seconds
     
-    def fetch_account_history(self, account, days=30, max_retries=3, all_operations=True):
+    # ========================================================================
+    # ACCOUNT MANAGEMENT (stellar_accounts table)
+    # ========================================================================
+    
+    def _validate_account_id(self, account_id: str) -> bool:
         """
-        Fetch transaction history for a specific account from the Stellar blockchain.
+        Validate Stellar account ID format.
+        
+        Args:
+            account_id: Stellar account address
+            
+        Returns:
+            bool: True if valid
+        """
+        if not account_id:
+            return False
+        
+        # Stellar public keys start with G and are 56 characters
+        if not account_id.startswith('G') or len(account_id) != 56:
+            return False
+        
+        # Basic character validation (Stellar uses base32)
+        import re
+        if not re.match(r'^G[A-Z2-7]{55}$', account_id):
+            return False
+        
+        return True
+    
+    def _save_account(self, account_id: str, element: Optional[str] = None, 
+                     token_code: Optional[str] = None, metadata: Optional[Dict] = None) -> Optional[int]:
+        """
+        Save or update account in stellar_accounts table.
+        
+        CRITICAL: This must be called BEFORE saving any balances for this account.
+        
+        Args:
+            account_id: Stellar account address (must be valid G-address)
+            element: Element type (air, water, earth, fire)
+            token_code: Primary token held (UBEC, UBECrc, UBECgpi, UBECtt)
+            metadata: Additional metadata dict
+            
+        Returns:
+            int: Account ID from database, or None if failed
+        """
+        try:
+            # Validate account ID
+            if not self._validate_account_id(account_id):
+                logger.error(f"Invalid account ID format: {account_id}")
+                return None
+            
+            # If element not provided but token_code is, derive element
+            if not element and token_code:
+                element = self.ELEMENT_MAP.get(token_code, 'air')
+            
+            # SIMPLIFIED APPROACH: Use basic insert first, then update with full data
+            # This avoids complex type casting issues
+            
+            # Step 1: Ensure basic account record exists
+            basic_query = """
+            INSERT INTO ubec_main.stellar_accounts 
+            (account_id, created_at, last_activity_at)
+            VALUES (%s, NOW(), NOW())
+            ON CONFLICT (account_id) DO NOTHING
+            """
+            
+            try:
+                self.db.execute_query(basic_query, [account_id])
+            except Exception as insert_error:
+                logger.error(f"✗ Error in basic insert for {account_id[:8]}...: {insert_error}")
+                # Continue anyway - might already exist
+            
+            # Step 2: Update with full data if provided
+            if element and token_code:
+                update_query = """
+                UPDATE ubec_main.stellar_accounts 
+                SET primary_element = %s::element_type,
+                    last_activity_at = NOW()
+                WHERE account_id = %s
+                """
+                
+                try:
+                    self.db.execute_query(update_query, [element, account_id])
+                except Exception as update_error:
+                    logger.error(f"✗ Error updating element for {account_id[:8]}...: {update_error}")
+                    # Continue - at least we have the basic record
+            
+            # Step 3: Verify account exists and get ID
+            verify_query = """
+            SELECT id FROM ubec_main.stellar_accounts 
+            WHERE account_id = %s
+            """
+            
+            result = self.db.execute_query(verify_query, [account_id], fetch_one=True)
+            
+            if result:
+                if isinstance(result, dict) and 'id' in result:
+                    account_db_id = result['id']
+                    logger.debug(f"✓ Saved/verified account {account_id[:8]}... (id={account_db_id})")
+                    return account_db_id
+                elif isinstance(result, (list, tuple)) and len(result) > 0:
+                    # Some DB drivers return tuples
+                    account_db_id = result[0] if isinstance(result[0], int) else result[0]['id']
+                    logger.debug(f"✓ Saved/verified account {account_id[:8]}... (id={account_db_id})")
+                    return account_db_id
+                else:
+                    logger.error(f"✗ Unexpected result format: {type(result)} = {result}")
+                    return None
+            else:
+                logger.error(f"✗ Account not found after insert: {account_id[:8]}...")
+                return None
+            
+        except Exception as e:
+            logger.error(f"✗ Error saving account {account_id[:8]}...: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    def _account_exists(self, account_id: str) -> bool:
+        """
+        Check if account exists in database.
+        
+        Args:
+            account_id: Stellar account address
+            
+        Returns:
+            bool: True if account exists
+        """
+        try:
+            query = "SELECT id FROM ubec_main.stellar_accounts WHERE account_id = %s"
+            result = self.db.execute_query(query, [account_id], fetch_one=True)
+            return result is not None
+        except Exception as e:
+            logger.error(f"Error checking account existence: {e}")
+            return False
+    
+    def _ensure_account_exists(self, account_id: str, element: Optional[str] = None, 
+                               token_code: Optional[str] = None) -> bool:
+        """
+        Ensure account exists in database, creating if necessary.
+        
+        This is a critical safety check that must be called before any balance operations.
+        
+        Args:
+            account_id: Stellar account address
+            element: Element type
+            token_code: Token code
+            
+        Returns:
+            bool: True if account exists or was created successfully
+        """
+        try:
+            # Check if exists
+            if self._account_exists(account_id):
+                logger.debug(f"Account {account_id[:8]}... already exists")
+                return True
+            
+            # Create account
+            account_id_result = self._save_account(account_id, element, token_code)
+            
+            if account_id_result:
+                logger.debug(f"✓ Created account {account_id[:8]}...")
+                return True
+            else:
+                logger.error(f"✗ Failed to create account {account_id[:8]}...")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error ensuring account exists: {e}")
+            return False
+    
+    # ========================================================================
+    # BALANCE MANAGEMENT (ubec_balances table)
+    # ========================================================================
+    
+    def _save_balance(self, account_id: str, token_code: str, element: str, 
+                     balance: Decimal, distribution_category: Optional[str] = None) -> bool:
+        """
+        Save or update balance in ubec_balances table.
+        
+        PREREQUISITE: Account MUST exist in stellar_accounts table first!
+        This method will fail with foreign key violation if account doesn't exist.
+        
+        Args:
+            account_id: Stellar account address
+            token_code: Token code (UBEC, UBECrc, UBECgpi, UBECtt)
+            element: Element type (air, water, earth, fire)
+            balance: Token balance (Decimal for precision)
+            distribution_category: Optional category (general_circulation, stewardship, administration)
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            # Validate inputs
+            if not self._validate_account_id(account_id):
+                logger.error(f"Invalid account ID: {account_id}")
+                return False
+            
+            if token_code not in self.ELEMENT_MAP:
+                logger.error(f"Invalid token code: {token_code}")
+                return False
+            
+            if balance < 0:
+                logger.error(f"Negative balance not allowed: {balance}")
+                return False
+            
+            # CRITICAL SAFETY CHECK
+            if not self._account_exists(account_id):
+                logger.error(f"✗ Cannot save balance - account {account_id[:8]}... does not exist!")
+                logger.error(f"  You must call _ensure_account_exists() first!")
+                return False
+            
+            query = """
+            INSERT INTO ubec_main.ubec_balances 
+            (account_id, token_code, element, balance, distribution_category, 
+             last_modified_at, sync_timestamp)
+            VALUES (%s, %s::token_code, %s::element_type, %s, %s::distribution_category, NOW(), NOW())
+            ON CONFLICT (account_id, token_code) DO UPDATE 
+            SET balance = EXCLUDED.balance,
+                last_modified_at = NOW(),
+                sync_timestamp = NOW(),
+                distribution_category = COALESCE(
+                    EXCLUDED.distribution_category, 
+                    ubec_balances.distribution_category
+                )
+            """
+            
+            self.db.execute_query(query, [
+                account_id, 
+                token_code, 
+                element, 
+                str(balance),
+                distribution_category
+            ])
+            
+            logger.debug(f"✓ Saved balance: {account_id[:8]}... = {balance} {token_code}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"✗ Error saving balance for {account_id[:8]}...: {e}")
+            
+            # Check if it's the foreign key error we're trying to prevent
+            if 'foreign key constraint "fk_balance_account"' in str(e):
+                logger.error(f"  FOREIGN KEY VIOLATION - Account must be created first!")
+                logger.error(f"  Always call _ensure_account_exists() before _save_balance()")
+            
+            import traceback
+            logger.debug(traceback.format_exc())
+            return False
+    
+    def _determine_distribution_category(self, balance: Decimal) -> str:
+        """
+        Determine distribution category based on balance.
+        
+        This is a placeholder implementation. Adjust based on your tokenomics rules.
+        
+        Args:
+            balance: Token balance
+            
+        Returns:
+            str: Distribution category
+        """
+        # Default implementation - all go to general_circulation
+        # You can add logic here based on:
+        # - Balance thresholds
+        # - Account type/metadata
+        # - Historical behavior
+        # - Governance decisions
+        
+        if balance < 100:
+            return 'general_circulation'
+        elif balance < 10000:
+            return 'general_circulation'
+        else:
+            # Large holders might need manual classification
+            return 'general_circulation'  # Default
+    
+    # ========================================================================
+    # TRANSACTION FETCHING FROM STELLAR
+    # ========================================================================
+    
+    def fetch_account_history(self, account: str, days: int = 30, 
+                             max_retries: int = 3) -> List[Dict[str, Any]]:
+        """
+        Fetch transaction history for an account from Stellar blockchain.
         
         Args:
             account: Stellar account address
             days: Number of days of history to fetch
-            max_retries: Maximum number of retry attempts for rate limiting
-            all_operations: Whether to include all operations or just UBEC payments
+            max_retries: Maximum retry attempts for rate limiting
             
         Returns:
-            list: Transaction history for the account
+            list: Transaction history
         """
         if not self.server:
-            logging.error("Stellar SDK not available - cannot fetch account history")
+            logger.error("✗ Stellar SDK not available")
             return []
-            
-        logging.info(f"Fetching transaction history for account {account} over the past {days} days")
-        logging.info(f"Operation mode: {'All operations' if all_operations else 'UBEC payments only'}")
+        
+        logger.info(f"Fetching {days} days of history for {account[:8]}...")
         
         transactions = []
         start_time = datetime.now() - timedelta(days=days)
@@ -426,28 +635,22 @@ class UBECDataSynchronizer:
         retry_count = 0
         
         try:
-            # Query operations directly instead of transactions first
-            # This can capture more operation types including trades/exchanges
             while True:
                 try:
-                    # Check if we're approaching rate limits
                     self._check_rate_limit()
                     
-                    # Query operations for the account instead of transactions
+                    # Query operations for the account
                     op_endpoint = self.server.operations().for_account(account).include_failed(False).limit(100)
                     
                     if cursor:
                         op_endpoint = op_endpoint.cursor(cursor)
                     
-                    # Make the API call
                     op_response = op_endpoint.call()
                     
-                    # Update rate limit tracking
                     if hasattr(op_response, 'headers'):
                         self._update_rate_limits(op_response.headers)
                     
-                    # Reset retry count on successful request
-                    retry_count = 0
+                    retry_count = 0  # Reset on successful call
                     
                     if 'records' not in op_response.get('_embedded', {}):
                         break
@@ -459,21 +662,16 @@ class UBECDataSynchronizer:
                     # Process operations
                     for op in records:
                         try:
-                            # Check if operation date is within our window
+                            # Check time bounds
                             if 'created_at' in op:
                                 op_time = datetime.strptime(op['created_at'], "%Y-%m-%dT%H:%M:%SZ")
                                 if op_time < start_time:
-                                    # We've gone beyond our time window
                                     continue
                             
                             op_type = op.get('type', '')
                             
-                            # Log operation details at debug level
-                            logging.debug(f"Found operation: {op_type}, ID: {op.get('id', 'unknown')}")
-                            
-                            # Handle different operation types
+                            # Handle payment operations
                             if op_type == 'payment' and op.get('asset_code') == self.ubec_code:
-                                # Standard payment
                                 tx_data = {
                                     'id': op['id'],
                                     'hash': op.get('transaction_hash', ''),
@@ -485,207 +683,58 @@ class UBECDataSynchronizer:
                                     'operation_type': 'payment'
                                 }
                                 transactions.append(tx_data)
-                                
-                            elif op_type == 'path_payment_strict_receive' and (
-                                    op.get('source_asset_code') == self.ubec_code or 
-                                    op.get('asset_code') == self.ubec_code):
-                                # Path payment (exchange) operation
-                                # Determine direction - selling or buying UBEC
-                                if op.get('source_asset_code') == self.ubec_code:
-                                    # Selling UBEC for another asset
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': op.get('to', ''),
-                                        'amount': op.get('source_amount', '0'),
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'exchange_out',
-                                        'exchange_details': {
-                                            'source_asset': self.ubec_code,
-                                            'source_amount': op.get('source_amount', '0'),
-                                            'destination_asset': op.get('asset_code', ''),
-                                            'destination_amount': op.get('amount', '0')
-                                        }
-                                    }
-                                else:
-                                    # Buying UBEC with another asset
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': op.get('to', ''),
-                                        'amount': op.get('amount', '0'),
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'exchange_in',
-                                        'exchange_details': {
-                                            'source_asset': op.get('source_asset_code', ''),
-                                            'source_amount': op.get('source_amount', '0'),
-                                            'destination_asset': self.ubec_code,
-                                            'destination_amount': op.get('amount', '0')
-                                        }
-                                    }
-                                transactions.append(tx_data)
-                                
-                            elif op_type == 'path_payment_strict_send' and (
-                                    op.get('source_asset_code') == self.ubec_code or 
-                                    op.get('asset_code') == self.ubec_code):
-                                # Another type of path payment
-                                if op.get('source_asset_code') == self.ubec_code:
-                                    # Selling UBEC for another asset
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': op.get('to', ''),
-                                        'amount': op.get('source_amount', '0'),
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'exchange_out',
-                                        'exchange_details': {
-                                            'source_asset': self.ubec_code,
-                                            'source_amount': op.get('source_amount', '0'),
-                                            'destination_asset': op.get('asset_code', ''),
-                                            'destination_amount': op.get('amount', '0')
-                                        }
-                                    }
-                                else:
-                                    # Buying UBEC with another asset
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': op.get('to', ''),
-                                        'amount': op.get('amount', '0'),
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'exchange_in',
-                                        'exchange_details': {
-                                            'source_asset': op.get('source_asset_code', ''),
-                                            'source_amount': op.get('source_amount', '0'),
-                                            'destination_asset': self.ubec_code,
-                                            'destination_amount': op.get('amount', '0')
-                                        }
-                                    }
-                                transactions.append(tx_data)
-                                
-                            elif op_type == 'manage_buy_offer' or op_type == 'manage_sell_offer':
-                                # Direct offer management (not a path payment)
-                                selling_asset_code = op.get('selling_asset_code', '')
-                                buying_asset_code = op.get('buying_asset_code', '')
-                                
-                                if selling_asset_code == self.ubec_code or buying_asset_code == self.ubec_code:
-                                    if selling_asset_code == self.ubec_code:
-                                        # Selling UBEC
-                                        tx_data = {
-                                            'id': op['id'],
-                                            'hash': op.get('transaction_hash', ''),
-                                            'created_at': op.get('created_at', ''),
-                                            'source_account': op.get('source_account', ''),
-                                            'destination': 'market',  # DEX
-                                            'amount': op.get('amount', '0'),
-                                            'asset_code': self.ubec_code,
-                                            'operation_type': 'dex_offer_sell',
-                                            'exchange_details': {
-                                                'source_asset': selling_asset_code,
-                                                'source_amount': op.get('amount', '0'),
-                                                'destination_asset': buying_asset_code,
-                                                'price': op.get('price', '0')
-                                            }
-                                        }
-                                    else:
-                                        # Buying UBEC
-                                        tx_data = {
-                                            'id': op['id'],
-                                            'hash': op.get('transaction_hash', ''),
-                                            'created_at': op.get('created_at', ''),
-                                            'source_account': op.get('source_account', ''),
-                                            'destination': 'market',  # DEX
-                                            'amount': op.get('amount', '0'),
-                                            'asset_code': self.ubec_code,
-                                            'operation_type': 'dex_offer_buy',
-                                            'exchange_details': {
-                                                'source_asset': selling_asset_code,
-                                                'destination_asset': buying_asset_code,
-                                                'price': op.get('price', '0')
-                                            }
-                                        }
-                                    transactions.append(tx_data)
-                                    
-                            elif all_operations and (op_type == 'create_passive_sell_offer' and 
-                                                  (op.get('selling_asset_code') == self.ubec_code or 
-                                                   op.get('buying_asset_code') == self.ubec_code)):
-                                # Passive offers (similar to regular offers)
-                                selling_asset_code = op.get('selling_asset_code', '')
-                                buying_asset_code = op.get('buying_asset_code', '')
-                                
-                                if selling_asset_code == self.ubec_code:
-                                    # Selling UBEC
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': 'market',  # DEX
-                                        'amount': op.get('amount', '0'),
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'dex_passive_sell',
-                                        'exchange_details': {
-                                            'source_asset': selling_asset_code,
-                                            'source_amount': op.get('amount', '0'),
-                                            'destination_asset': buying_asset_code,
-                                            'price': op.get('price', '0')
-                                        }
-                                    }
-                                else:
-                                    # Buying UBEC
-                                    tx_data = {
-                                        'id': op['id'],
-                                        'hash': op.get('transaction_hash', ''),
-                                        'created_at': op.get('created_at', ''),
-                                        'source_account': op.get('source_account', ''),
-                                        'destination': 'market',  # DEX
-                                        'amount': '0',  # Amount determined by price and offer
-                                        'asset_code': self.ubec_code,
-                                        'operation_type': 'dex_passive_buy',
-                                        'exchange_details': {
-                                            'source_asset': selling_asset_code,
-                                            'destination_asset': buying_asset_code,
-                                            'price': op.get('price', '0')
-                                        }
-                                    }
-                                transactions.append(tx_data)
                             
-                            elif all_operations and (
-                                    account == op.get('source_account') or 
-                                    account == op.get('from') or 
-                                    account == op.get('to') or 
-                                    account == op.get('account')):
-                                # Other operation types involving this account
-                                # Include only if the operation involves UBEC or we're including all operations
-                                is_ubec_related = False
-                                for field in ['asset_code', 'selling_asset_code', 'buying_asset_code']:
-                                    if op.get(field) == self.ubec_code:
-                                        is_ubec_related = True
-                                        break
-                                
-                                if is_ubec_related or all_operations:
+                            # Handle path payments (exchanges)
+                            elif 'path_payment' in op_type:
+                                if (op.get('source_asset_code') == self.ubec_code or 
+                                    op.get('asset_code') == self.ubec_code):
+                                    
+                                    operation_type = 'exchange_out' if op.get('source_asset_code') == self.ubec_code else 'exchange_in'
+                                    
                                     tx_data = {
                                         'id': op['id'],
                                         'hash': op.get('transaction_hash', ''),
                                         'created_at': op.get('created_at', ''),
                                         'source_account': op.get('source_account', ''),
-                                        'destination': op.get('to', op.get('from', '')),
+                                        'destination': op.get('to', ''),
                                         'amount': op.get('amount', '0'),
-                                        'asset_code': op.get('asset_code', ''),
-                                        'operation_type': op_type
+                                        'asset_code': self.ubec_code,
+                                        'operation_type': operation_type,
+                                        'exchange_details': {
+                                            'source_asset': op.get('source_asset_code', ''),
+                                            'source_amount': op.get('source_amount', '0'),
+                                            'destination_asset': op.get('asset_code', ''),
+                                            'destination_amount': op.get('amount', '0')
+                                        }
+                                    }
+                                    transactions.append(tx_data)
+                            
+                            # Handle DEX offers
+                            elif op_type in ['manage_buy_offer', 'manage_sell_offer']:
+                                selling_asset = op.get('selling_asset_code', '')
+                                buying_asset = op.get('buying_asset_code', '')
+                                
+                                if selling_asset == self.ubec_code or buying_asset == self.ubec_code:
+                                    tx_data = {
+                                        'id': op['id'],
+                                        'hash': op.get('transaction_hash', ''),
+                                        'created_at': op.get('created_at', ''),
+                                        'source_account': op.get('source_account', ''),
+                                        'destination': 'market',
+                                        'amount': op.get('amount', '0'),
+                                        'asset_code': self.ubec_code,
+                                        'operation_type': f'dex_{op_type}',
+                                        'exchange_details': {
+                                            'selling_asset': selling_asset,
+                                            'buying_asset': buying_asset,
+                                            'price': op.get('price', '0')
+                                        }
                                     }
                                     transactions.append(tx_data)
                         
                         except Exception as e:
-                            logging.warning(f"Error processing operation {op.get('id', 'unknown')}: {e}")
+                            logger.warning(f"Error processing operation: {e}")
+                            continue
                     
                     # Check for next page
                     if 'next' not in op_response.get('_links', {}):
@@ -697,1152 +746,588 @@ class UBECDataSynchronizer:
                     else:
                         break
                     
-                    # Add delay between pages to avoid rate limiting
-                    time.sleep(1)
+                    time.sleep(0.5)  # Small delay between pages
                     
                 except Exception as e:
-                    # Check if it's a rate limit error (429)
+                    # Handle rate limiting
                     if hasattr(e, 'status_code') and e.status_code == 429:
                         retry_count += 1
                         
-                        # Check if we've reached the maximum retry attempts
                         if retry_count > max_retries:
-                            logging.error(f"Maximum retry attempts reached for account {account}. Aborting.")
+                            logger.error(f"✗ Max retries ({max_retries}) reached for {account[:8]}...")
                             break
                         
-                        # Handle rate limit error
-                        if hasattr(e, 'response') and e.response:
-                            wait_time = self._handle_rate_limit_error(e.response)
-                        else:
-                            # No response object, use exponential backoff
-                            wait_time = 5 * retry_count
-                        
-                        logging.warning(f"Rate limit hit, retry {retry_count}/{max_retries}. Waiting for {wait_time} seconds")
+                        wait_time = self._handle_rate_limit_error(e.response if hasattr(e, 'response') else None)
+                        logger.warning(f"⚠ Rate limit, retry {retry_count}/{max_retries}, waiting {wait_time}s")
                         time.sleep(wait_time)
                         continue
-                        
-                    # For other errors, log and continue to next page if possible
-                    logging.error(f"Error fetching operation history for {account}: {e}")
-                    if cursor:  # Try to skip to the next page
-                        continue
-                    else:
-                        break  # No cursor, cannot continue
                     
-        except Exception as e:
-            logging.error(f"Error fetching operation history for {account}: {e}")
+                    logger.error(f"✗ Error fetching history: {e}")
+                    if cursor:
+                        continue  # Try to continue with next page
+                    else:
+                        break
         
-        logging.info(f"Retrieved {len(transactions)} operations for account {account}")
+        except Exception as e:
+            logger.error(f"✗ Error fetching operations for {account[:8]}...: {e}")
+        
+        logger.info(f"✓ Retrieved {len(transactions)} operations for {account[:8]}...")
         return transactions
-
-    def sync_account_transactions(self, account_id, days_back=30, force_update=False, all_operations=True):
-        """
-        Fetch and store transaction history for a specific account.
-        
-        Args:
-            account_id: Stellar account address
-            days_back: Number of days of history to fetch
-            force_update: Whether to force update existing transactions
-            all_operations: Whether to include all operations or just UBEC payments
-            
-        Returns:
-            int: Number of new transactions stored
-        """
-        logging.info(f"Syncing transactions for account {account_id}, looking back {days_back} days")
-        logging.info(f"Mode: {'All operations' if all_operations else 'UBEC payments only'}, Force update: {force_update}")
-        
-        # Check if we need to fetch transactions (based on last sync time)
-        if not force_update:
-            last_sync = self._get_last_sync_time(account_id)
-            if last_sync and (datetime.now() - last_sync).total_seconds() < 3600:  # Less than 1 hour
-                logging.info(f"Account {account_id} was synced recently, skipping")
-                return 0
-        
-        try:
-            # Fetch transactions from Stellar blockchain
-            transactions = self.fetch_account_history(account_id, days_back, all_operations=all_operations)
-            
-            # Store transactions in database
-            count = self._store_transactions(account_id, transactions)
-            
-            # Update last sync time
-            last_tx_id = transactions[0]['id'] if transactions else None
-            self._update_sync_time(account_id, transaction_id=last_tx_id)
-            
-            logging.info(f"Synced {count} new transactions for account {account_id}")
-            return count
-        except Exception as e:
-            logging.error(f"Error syncing account {account_id}: {e}")
-            self._update_sync_time(account_id, error=str(e))
-            return 0
     
-    def _store_transactions(self, account_id, transactions):
+    # ========================================================================
+    # TRANSACTION STORAGE (stellar_transactions & stellar_operations)
+    # ========================================================================
+    
+    def _store_transactions(self, account_id: str, transactions: List[Dict[str, Any]]) -> int:
         """
-        Store transactions in the database.
-
+        Store transactions in stellar_transactions and stellar_operations tables.
+        
         Args:
             account_id: Account ID
-            transactions: List of transactions
-
+            transactions: List of transaction dicts
+            
         Returns:
-            int: Number of new transactions stored
+            int: Number of transactions stored
         """
         if not transactions:
             return 0
-
+        
         count = 0
+        
         try:
-            # First ensure participant record exists
-            participant_query = """
-            INSERT INTO ubec_main.participants (account_id, joined_at, account_type) 
-            VALUES (%s, %s, 'holder') 
-            ON CONFLICT (account_id) DO 
-            UPDATE SET last_activity_at = NOW()
-            RETURNING id
-            """
-
-            earliest_date = min([
-                datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ") 
-                for tx in transactions 
-                if 'created_at' in tx
-            ], default=datetime.now())
-
-            result = self.db.execute_query(participant_query, [account_id, earliest_date], fetch_one=True)
-            participant_id = result['id'] if result else None
-
-            if not participant_id:
-                logging.error(f"Could not create or find participant record for {account_id}")
+            # Ensure main account exists first
+            if not self._ensure_account_exists(account_id):
+                logger.error(f"✗ Cannot store transactions - account {account_id[:8]}... doesn't exist")
                 return 0
-
-            # Get or create agent record
-            agent_query = "SELECT id FROM ubec_main.agents WHERE agent_id = %s"
-            result = self.db.execute_query(agent_query, [account_id], fetch_one=True)
-            agent_id = result['id'] if result else None
-
-            if not agent_id and participant_id:
-                agent_insert = """
-                INSERT INTO ubec_main.agents (participant_id, agent_id, role) 
-                VALUES (%s, %s, 'regular')
-                RETURNING id
-                """
-                result = self.db.execute_query(agent_insert, [participant_id, account_id], fetch_one=True)
-                agent_id = result['id'] if result else None
-
-            if not agent_id:
-                logging.warning(f"Could not find or create agent record for {account_id}")
-
+            
+            # CRITICAL FIX: Ensure ALL source accounts exist before storing transactions
+            # Extract all unique source accounts from transactions
+            source_accounts = set()
+            for tx in transactions:
+                source_acc = tx.get('source_account')
+                if source_acc and self._validate_account_id(source_acc):
+                    source_accounts.add(source_acc)
+            
+            # Ensure all source accounts exist in database
+            logger.debug(f"Ensuring {len(source_accounts)} source accounts exist...")
+            for source_acc in source_accounts:
+                if not self._ensure_account_exists(source_acc):
+                    logger.warning(f"⚠ Could not create source account {source_acc[:8]}...")
+            
             # Process each transaction
             for tx in transactions:
                 try:
-                    # Add to transaction queue if not exists
-                    try:
-                        tx_check_query = "SELECT transaction_id FROM ubec_main.transaction_queue WHERE transaction_id = %s"
-                        tx_existing = self.db.execute_query(tx_check_query, [tx['hash']], fetch_one=True)
-
-                        if not tx_existing:
-                            tx_queue_insert = """
-                            INSERT INTO ubec_main.transaction_queue (
-                                transaction_id, account_id, created_at, status, priority
-                            ) VALUES (%s, %s, %s, %s, %s)
-                            """
-                            self.db.execute_query(tx_queue_insert, [
-                                tx['hash'],
-                                tx['source_account'],
-                                datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ"),
-                                'processed',
-                                5
-                            ])
-                            logging.debug(f"Added transaction {tx['hash']} to transaction_queue")
-                    except Exception as e:
-                        logging.debug(f"Could not add to transaction_queue (may not exist): {e}")
-
-                    # Check if operation already exists
-                    check_query = "SELECT operation_id FROM ubec_main.stellar_operations WHERE operation_id = %s"
+                    # Check if operation already exists (idempotent)
+                    check_query = "SELECT id FROM ubec_main.stellar_operations WHERE operation_id = %s"
                     existing = self.db.execute_query(check_query, [tx['id']], fetch_one=True)
-
-                    if not existing:
-                        # Insert the operation
-                        op_insert = """
-                        INSERT INTO ubec_main.stellar_operations (
-                            operation_id, transaction_id, created_at, operation_type,
-                            source_account, destination_account, asset_code, asset_issuer, amount
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """
-                        self.db.execute_query(op_insert, [
-                            tx['id'],
-                            tx['hash'],
-                            datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ"),
-                            tx['operation_type'],
-                            tx['source_account'],
-                            tx.get('destination'),
-                            tx.get('asset_code'),
-                            self.ubec_issuer,
-                            tx.get('amount')
-                        ])
-
-                        # Try to call process_asset_transfer function if it exists
-                        try:
-                            if tx.get('destination') and tx.get('amount'):
-                                process_query = """
-                                SELECT process_asset_transfer(
-                                    %s::character varying, 
-                                    %s::character varying, 
-                                    %s::character varying, 
-                                    %s::character varying, 
-                                    %s::numeric, 
-                                    %s::character varying
-                                )
-                                """
-                                self.db.execute_query(process_query, [
-                                    tx.get('asset_code', self.ubec_code),
-                                    self.ubec_issuer,
-                                    tx['source_account'],
-                                    tx['destination'],
-                                    tx.get('amount'),
-                                    tx['hash']
-                                ])
-                        except Exception as e:
-                            logging.debug(f"process_asset_transfer function not available or failed: {e}")
-
-                        # Add participant activity
-                        try:
-                            activity_type = 'TRANSFER_OUT' if tx['source_account'] == account_id else 'TRANSFER_IN'
-
-                            activity_insert = """
-                            INSERT INTO ubec_main.participant_activities (
-                                participant_id, activity_type, amount, details, transaction_hash
-                            ) VALUES (%s, %s, %s, %s, %s)
-                            """
-
-                            details = {
-                                'asset_code': tx.get('asset_code', self.ubec_code),
-                                'source': tx['source_account'],
-                                'destination': tx.get('destination'),
-                                'operation_type': tx['operation_type']
-                            }
-
-                            self.db.execute_query(activity_insert, [
-                                participant_id,
-                                activity_type,
-                                tx.get('amount'),
-                                json.dumps(details),
-                                tx['hash']
-                            ])
-                        except Exception as e:
-                            logging.debug(f"Could not add participant activity (table may not exist): {e}")
-
-                        # Update agent reciprocity credits if applicable
-                        try:
-                            if agent_id and (tx['source_account'] == account_id or tx.get('destination') == account_id):
-                                rc_type = 'DEBIT' if tx['source_account'] == account_id else 'CREDIT'
-                                balance_query = "SELECT reciprocity_credits FROM ubec_main.agents WHERE id = %s"
-                                balance_result = self.db.execute_query(balance_query, [agent_id], fetch_one=True)
-                                current_balance = Decimal(balance_result['reciprocity_credits']) if balance_result else Decimal('0')
-                                new_balance = current_balance + Decimal(tx.get('amount', '0')) if rc_type == 'CREDIT' else max(current_balance - Decimal(tx.get('amount', '0')), Decimal('0'))
-
-                                update_balance = """
-                                UPDATE ubec_main.agents 
-                                SET reciprocity_credits = %s,
-                                    last_activity_timestamp = %s
-                                WHERE id = %s
-                                """
-                                tx_timestamp = int(datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ").timestamp())
-                                self.db.execute_query(update_balance, [str(new_balance), tx_timestamp, agent_id])
-
-                                # Add to RC ledger
-                                rc_insert = """
-                                INSERT INTO ubec_main.rc_ledger (
-                                    agent_id, transaction_type, amount, balance_after,
-                                    timestamp, reference_id, details
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                """
-
-                                rc_details = {
-                                    'source': tx['source_account'],
-                                    'destination': tx.get('destination'),
-                                    'asset_code': tx.get('asset_code', self.ubec_code),
-                                    'operation_type': tx['operation_type'],
-                                    'transaction_hash': tx['hash']
-                                }
-
-                                self.db.execute_query(rc_insert, [
-                                    agent_id,
-                                    rc_type,
-                                    tx.get('amount'),
-                                    str(new_balance),
-                                    tx_timestamp,
-                                    tx['id'],
-                                    json.dumps(rc_details)
-                                ])
-                        except Exception as e:
-                            logging.debug(f"Could not update reciprocity credits (tables may not exist): {e}")
-
+                    
+                    if existing:
+                        continue  # Skip existing operations
+                    
+                    # Determine element and token
+                    asset_code = tx.get('asset_code', self.ubec_code)
+                    element = self.ELEMENT_MAP.get(asset_code, 'air')
+                    
+                    # Ensure transaction record exists
+                    tx_query = """
+                    INSERT INTO ubec_main.stellar_transactions 
+                    (transaction_hash, ledger_sequence, primary_element, involves_tokens, 
+                     source_account, created_at, successful)
+                    VALUES (%s, %s, %s::element_type, %s::token_code[], %s, %s, %s)
+                    ON CONFLICT (transaction_hash) DO NOTHING
+                    """
+                    
+                    # For now, use a dummy ledger sequence (would need full tx to get real value)
+                    ledger_seq = 0
+                    
+                    self.db.execute_query(tx_query, [
+                        tx['hash'],
+                        ledger_seq,
+                        element,
+                        [asset_code],
+                        tx['source_account'],
+                        datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ"),
+                        True
+                    ])
+                    
+                    # Insert the operation
+                    op_query = """
+                    INSERT INTO ubec_main.stellar_operations (
+                        operation_id, transaction_hash, operation_element, asset_code,
+                        type, source_account, from_account, to_account, amount,
+                        asset_issuer, details, created_at
+                    ) VALUES (%s, %s, %s::element_type, %s::token_code, %s::transaction_type, 
+                              %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    """
+                    
+                    # Prepare operation details
+                    details = {}
+                    if 'exchange_details' in tx:
+                        details['exchange'] = tx['exchange_details']
+                    
+                    # Map operation type
+                    op_type = self.OPERATION_TYPE_MAP.get(tx['operation_type'], 'payment')
+                    
+                    self.db.execute_query(op_query, [
+                        tx['id'],
+                        tx['hash'],
+                        element,
+                        asset_code,
+                        op_type,
+                        tx['source_account'],
+                        tx['source_account'],
+                        tx.get('destination'),
+                        tx.get('amount'),
+                        self.ubec_issuer,
+                        json.dumps(details) if details else None,
+                        datetime.strptime(tx['created_at'], "%Y-%m-%dT%H:%M:%SZ")
+                    ])
+                    
                     count += 1
+                    
                     if count % 10 == 0:
-                        logging.info(f"Processed {count} new transactions so far")
-                        
+                        logger.info(f"  Stored {count} operations...")
+                    
                 except Exception as e:
-                    logging.error(f"Error storing transaction {tx.get('id', 'unknown')}: {e}")
-
-            logging.info(f"Successfully stored {count} new transactions for {account_id}")
+                    logger.error(f"✗ Error storing transaction {tx.get('id', 'unknown')}: {e}")
+                    continue
+            
+            logger.info(f"✓ Stored {count} new operations for {account_id[:8]}...")
             return count
+            
         except Exception as e:
-            logging.error(f"Error storing transactions for {account_id}: {e}")
+            logger.error(f"✗ Error in _store_transactions: {e}")
             return count
     
-    def get_all_holders(self, min_balance=0):
+    # ========================================================================
+    # SYNC STATUS TRACKING
+    # ========================================================================
+    
+    def _update_sync_status(self, token_code: str, sync_type: str, status: str, 
+                           records_synced: int = 0, error: Optional[str] = None):
         """
-        Get all UBEC token holders from the database.
+        Update sync status in ubec_sync_status table.
         
         Args:
-            min_balance: Minimum balance to include
-            
-        Returns:
-            list: All UBEC holders
+            token_code: Token being synced (UBEC, UBECrc, etc.)
+            sync_type: Type of sync (accounts, transactions, balances)
+            status: Status (active, error, complete)
+            records_synced: Number of records synced
+            error: Error message if any
         """
         try:
+            element = self.ELEMENT_MAP.get(token_code, 'air')
+            
             query = """
-            SELECT account_id, balance, classification
-            FROM ubec_main.asset_holders
-            WHERE asset_code = %s AND asset_issuer = %s AND balance >= %s
+            INSERT INTO ubec_main.ubec_sync_status 
+            (element, token_code, sync_type, status, last_sync_time, 
+             records_synced, errors_encountered, error_log, updated_at)
+            VALUES (%s::element_type, %s::token_code, %s, %s, NOW(), 
+                    %s, %s, %s::jsonb, NOW())
+            ON CONFLICT (element, token_code, sync_type) DO UPDATE
+            SET status = EXCLUDED.status,
+                last_sync_time = NOW(),
+                records_synced = ubec_sync_status.records_synced + EXCLUDED.records_synced,
+                errors_encountered = CASE 
+                    WHEN EXCLUDED.error_log IS NOT NULL 
+                    THEN ubec_sync_status.errors_encountered + 1 
+                    ELSE ubec_sync_status.errors_encountered 
+                END,
+                error_log = EXCLUDED.error_log,
+                updated_at = NOW()
             """
             
-            holders = self.db.execute_query(query, [self.ubec_code, self.ubec_issuer, min_balance])
+            error_json = json.dumps({
+                'error': error, 
+                'timestamp': datetime.now().isoformat()
+            }) if error else None
             
-            logging.info(f"Found {len(holders)} UBEC holders with balance >= {min_balance}")
-            return holders
+            self.db.execute_query(query, [
+                element,
+                token_code,
+                sync_type,
+                status,
+                records_synced,
+                1 if error else 0,
+                error_json
+            ])
+            
         except Exception as e:
-            logging.error(f"Error getting UBEC holders: {e}")
-            return []
+            logger.error(f"Error updating sync status: {e}")
     
-    def sync_all_holders(self, min_balance=0, days_back=30, max_accounts=100, batch_size=10, batch_delay=5):
+    # ========================================================================
+    # HIGH-LEVEL SYNC OPERATIONS
+    # ========================================================================
+    
+    def sync_account_transactions(self, account_id: str, days_back: int = 30) -> int:
         """
-        Synchronize transaction history for all UBEC holders.
+        Fetch and store transaction history for an account.
         
         Args:
-            min_balance: Minimum balance to consider an account active
-            days_back: Number of days of history to fetch
-            max_accounts: Maximum number of accounts to process in one run
-            batch_size: Number of accounts to process in one batch
-            batch_delay: Delay in seconds between batches
+            account_id: Stellar account address
+            days_back: Number of days to look back
             
         Returns:
-            int: Number of accounts synchronized
+            int: Number of new transactions stored
         """
-        # Get all UBEC holders from database
-        holders = self.get_all_holders(min_balance)
+        logger.info(f"Syncing transactions for {account_id[:8]}... ({days_back} days)")
         
-        # Limit to max_accounts
-        if len(holders) > max_accounts:
-            logging.info(f"Limiting sync to {max_accounts} of {len(holders)} accounts")
-            holders = holders[:max_accounts]
-        
-        count = 0
-        batch_count = 0
-        
-        # Process accounts in batches
-        for i in range(0, len(holders), batch_size):
-            batch = holders[i:i+batch_size]
-            logging.info(f"Processing batch {batch_count+1}/{(len(holders) + batch_size - 1) // batch_size}")
+        try:
+            # Fetch from blockchain
+            transactions = self.fetch_account_history(account_id, days_back)
             
-            for holder in batch:
-                account_id = holder.get('account_id')
-                if account_id:
-                    try:
-                        new_txs = self.sync_account_transactions(account_id, days_back)
-                        if new_txs > 0:
-                            count += 1
-                    except Exception as e:
-                        logging.error(f"Error syncing account {account_id}: {e}")
+            # Store in database
+            count = self._store_transactions(account_id, transactions)
             
-            batch_count += 1
+            logger.info(f"✓ Synced {count} transactions for {account_id[:8]}...")
+            return count
             
-            # Wait between batches to avoid rate limits
-            if i + batch_size < len(holders):
-                logging.info(f"Waiting {batch_delay} seconds before next batch")
-                time.sleep(batch_delay)
-        
-        logging.info(f"Synchronized {count} accounts with new transactions")
-        return count
+        except Exception as e:
+            logger.error(f"✗ Error syncing account {account_id[:8]}...: {e}")
+            return 0
     
-    def discover_new_holders(self, days_back=30, batch_size=10, batch_delay=3):
+    def discover_new_holders(self, days_back: int = 30, batch_size: int = 10, 
+                            batch_delay: int = 3) -> int:
         """
-        Discover new UBEC holders by looking at transaction destinations.
-
+        Discover new token holders from recent transactions.
+        
+        This looks at recent operations to find accounts that received tokens
+        but aren't yet in our database.
+        
         Args:
-            days_back: Number of days to look back
-            batch_size: Number of accounts to process in one batch
-            batch_delay: Delay in seconds between batches
-
+            days_back: Days to look back
+            batch_size: Accounts per batch
+            batch_delay: Delay between batches (seconds)
+            
         Returns:
             int: Number of new holders discovered
         """
         try:
+            logger.info(f"Discovering new holders from last {days_back} days...")
+            
+            # Find accounts from recent operations
             query = """
-            SELECT DISTINCT destination_account 
+            SELECT DISTINCT to_account as account_id
             FROM ubec_main.stellar_operations 
-            WHERE asset_code = %s 
-            AND asset_issuer = %s 
+            WHERE asset_code = %s::token_code
             AND created_at > NOW() - INTERVAL '%s days'
-            AND destination_account NOT IN (
-                SELECT account_id FROM ubec_main.asset_holders 
-                WHERE asset_code = %s AND asset_issuer = %s
+            AND to_account NOT IN (
+                SELECT account_id FROM ubec_main.stellar_accounts
             )
             """
-
-            results = self.db.execute_query(query, [
-                self.ubec_code, self.ubec_issuer, days_back,
-                self.ubec_code, self.ubec_issuer
-            ])
-
-            new_accounts = [result['destination_account'] for result in results if result['destination_account']]
-
-            # Add core accounts if not already tracked
-            core_accounts = [self.accounts['general'], self.accounts['administration']]
-            core_accounts.extend(self.accounts['stewardship'])
-
-            for account in core_accounts:
-                check_query = """
-                SELECT account_id FROM ubec_main.asset_holders 
-                WHERE account_id = %s AND asset_code = %s AND asset_issuer = %s
-                """
-
-                existing = self.db.execute_query(check_query, [account, self.ubec_code, self.ubec_issuer], fetch_one=True)
-
-                if not existing:
-                    new_accounts.append(account)
-
-            new_accounts = list(set(new_accounts))
-
-            # Filter valid accounts
-            valid_accounts = []
-            for account in new_accounts:
-                if account and isinstance(account, str) and account.startswith('G') and len(account) == 56:
-                    valid_accounts.append(account)
-                else:
-                    logging.warning(f"Skipping invalid account ID: {account}")
-
-            logging.info(f"Found {len(valid_accounts)} potential new UBEC holders")
-
+            
+            results = self.db.execute_query(query, [self.ubec_code, days_back])
+            new_accounts = [r['account_id'] for r in results if r['account_id']]
+            
+            logger.info(f"Found {len(new_accounts)} potential new holders")
+            
+            if not new_accounts:
+                return 0
+            
             count = 0
-            batch_count = 0
-
-            # Process in batches
-            for i in range(0, len(valid_accounts), batch_size):
-                batch = valid_accounts[i:i+batch_size]
-                logging.info(f"Processing batch {batch_count+1}/{(len(valid_accounts) + batch_size - 1) // batch_size}")
-
+            element = self.ELEMENT_MAP.get(self.ubec_code, 'air')
+            
+            for i in range(0, len(new_accounts), batch_size):
+                batch = new_accounts[i:i+batch_size]
+                batch_num = (i // batch_size) + 1
+                total_batches = (len(new_accounts) + batch_size - 1) // batch_size
+                
+                logger.info(f"Processing batch {batch_num}/{total_batches}...")
+                
                 for account in batch:
-                    try:
-                        # Create participant record
-                        participant_query = """
-                        INSERT INTO ubec_main.participants (account_id, joined_at, account_type) 
-                        VALUES (%s, NOW(), 'holder') 
-                        ON CONFLICT (account_id) DO NOTHING
-                        """
-                        self.db.execute_query(participant_query, [account])
-
-                        # Check balance on blockchain
-                        if self.server:
-                            try:
-                                self._check_rate_limit()
-
-                                stellar_account = self.server.accounts().account_id(account).call()
-
-                                if hasattr(stellar_account, 'headers'):
-                                    self._update_rate_limits(stellar_account.headers)
-
-                                ubec_balance = Decimal('0')
-                                for balance in stellar_account.get('balances', []):
-                                    if (balance.get('asset_type') == 'credit_alphanum4' and 
-                                        balance.get('asset_code') == self.ubec_code and 
-                                        balance.get('asset_issuer') == self.ubec_issuer):
-                                        ubec_balance = Decimal(balance.get('balance', '0'))
-                                        break
-
-                                if ubec_balance > 0:
-                                    # Store in asset_holders
-                                    asset_query = """
-                                    INSERT INTO ubec_main.asset_holders (
-                                        account_id, asset_code, asset_issuer, balance, 
-                                        classification, is_active, last_updated_at
-                                    ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                                    ON CONFLICT (account_id, asset_code, asset_issuer) DO UPDATE SET
-                                        balance = %s,
-                                        classification = %s,
-                                        is_active = TRUE,
-                                        last_updated_at = NOW()
-                                    """
-
-                                    classification = 'whale' if ubec_balance > 1000 else 'retail'
-
-                                    self.db.execute_query(asset_query, [
-                                        account, self.ubec_code, self.ubec_issuer, 
-                                        str(ubec_balance), classification, True,
-                                        str(ubec_balance), classification
-                                    ])
-
-                                    # Record discovery
-                                    discovery_query = """
-                                    INSERT INTO ubec_main.holder_discovery_history (
-                                        account_id, discovery_source, initial_balance, is_new, added_to_tracking
-                                    ) VALUES (%s, %s, %s, %s, %s)
-                                    """
-                                    self.db.execute_query(discovery_query, [
-                                        account, 'blockchain_query', str(ubec_balance), True, True
-                                    ])
-
-                                    count += 1
-                                    time.sleep(0.2)  # Small delay between accounts
-                                    
-                            except Exception as e:
-                                if hasattr(e, 'status_code') and e.status_code == 429:
-                                    # Rate limit hit
-                                    if hasattr(e, 'response') and e.response:
-                                        wait_time = self._handle_rate_limit_error(e.response)
-                                    else:
-                                        wait_time = 30
-
-                                    logging.warning(f"Rate limit hit checking account {account}. Waiting {wait_time}s")
-                                    time.sleep(wait_time)
-                                    continue
-                                else:
-                                    logging.warning(f"Error checking account {account} on blockchain: {e}")
-                                    
-                    except Exception as e:
-                        logging.error(f"Error processing new account {account}: {e}")
-
-                batch_count += 1
-
-                # Wait between batches
-                if i + batch_size < len(valid_accounts):
-                    logging.info(f"Waiting {batch_delay} seconds before next batch")
-                    time.sleep(batch_delay)
-
-            logging.info(f"Discovered {count} new UBEC holders")
-            return count
-            
-        except Exception as e:
-            logging.error(f"Error discovering new holders: {e}")
-            return 0
-
-    def update_account_metadata(self, account_id, metadata=None):
-        """
-        Update metadata for a specific account.
-        
-        Args:
-            account_id: Stellar account address
-            metadata: Dict with metadata (or None to infer from account type)
-            
-        Returns:
-            bool: Success status
-        """
-        try:
-            if not metadata:
-                # Generate metadata based on known accounts
-                metadata = {}
-                
-                if account_id == self.accounts['general']:
-                    metadata = {
-                        'name': 'General Distribution',
-                        'type': 'core',
-                        'tags': ['core', 'distribution']
-                    }
-                elif account_id == self.accounts['administration']:
-                    metadata = {
-                        'name': 'Administration',
-                        'type': 'core',
-                        'tags': ['core', 'administration']
-                    }
-                elif account_id in self.accounts['stewardship']:
-                    index = self.accounts['stewardship'].index(account_id)
-                    labels = ["Management", "Infrastructure", "Liquidity"]
-                    if index < len(labels):
-                        metadata = {
-                            'name': f'Stewardship {labels[index]}',
-                            'type': 'core',
-                            'tags': ['core', 'stewardship', labels[index].lower()]
-                        }
-                    else:
-                        metadata = {
-                            'name': f'Stewardship Account {index+1}',
-                            'type': 'core',
-                            'tags': ['core', 'stewardship']
-                        }
-            
-            if not metadata:
-                logging.warning(f"No metadata available for {account_id}")
-                return False
-            
-            # Update metadata in participants table
-            query = """
-            UPDATE ubec_main.participants 
-            SET metadata = %s
-            WHERE account_id = %s
-            """
-            
-            self.db.execute_query(query, [json.dumps(metadata), account_id])
-            
-            logging.info(f"Updated metadata for account {account_id}")
-            return True
-        except Exception as e:
-            logging.error(f"Error updating metadata for {account_id}: {e}")
-            return False
-    
-    def setup_core_accounts(self):
-        """
-        Make sure all core accounts are properly set up in the database.
-        This includes the general, administration, and stewardship accounts.
-        
-        Returns:
-            int: Number of accounts set up
-        """
-        count = 0
-        try:
-            # Add general account
-            self.sync_account_transactions(self.accounts['general'], days_back=30)
-            self.update_account_metadata(self.accounts['general'])
-            count += 1
-            
-            # Add administration account
-            self.sync_account_transactions(self.accounts['administration'], days_back=30)
-            self.update_account_metadata(self.accounts['administration'])
-            count += 1
-            
-            # Add stewardship accounts with delay between each to avoid rate limits
-            for i, account in enumerate(self.accounts['stewardship']):
-                self.sync_account_transactions(account, days_back=30)
-                self.update_account_metadata(account)
-                count += 1
-                
-                # Add delay between accounts
-                if i < len(self.accounts['stewardship']) - 1:
-                    time.sleep(2)  # 2 second delay between core accounts
-
-            # Make sure all participants have agent records
-            self.ensure_agents_for_all_participants()
-            
-            logging.info(f"Set up {count} core accounts")
-            return count
-
-        except Exception as e:
-            logging.error(f"Error setting up core accounts: {e}")
-            return count
-
-    def ensure_agents_for_all_participants(self):
-        """
-        Ensure all participants have corresponding agent records,
-        regardless of transaction history.
-
-        Returns:
-            int: Number of new agent records created
-        """
-        logging.info("Ensuring all participants have agent records")
-
-        try:
-            query = """
-            SELECT p.id, p.account_id
-            FROM ubec_main.participants p
-            LEFT JOIN ubec_main.agents a ON p.id = a.participant_id
-            WHERE a.id IS NULL
-            """
-
-            participants_without_agents = self.db.execute_query(query)
-
-            if not participants_without_agents:
-                logging.info("All participants already have agent records")
-                return 0
-
-            created_count = 0
-            for participant in participants_without_agents:
-                agent_insert = """
-                INSERT INTO ubec_main.agents
-                (participant_id, agent_id, role, tier, reciprocity_score, 
-                 reciprocity_credits, last_activity_timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """
-
-                participant_id = participant['id']
-                account_id = participant['account_id']
-
-                # Determine role
-                role = 'regular'
-                for core_type, addresses in self.accounts.items():
-                    if isinstance(addresses, list):
-                        if account_id in addresses:
-                            role = 'core_' + core_type
-                            break
-                    elif account_id == addresses:
-                        role = 'core_' + core_type
-                        break
-
-                timestamp = int(datetime.now().timestamp())
-                result = self.db.execute_query(agent_insert, [
-                    participant_id, account_id, role, 'basic', 0, 0, timestamp
-                ], fetch_one=True)
-
-                if result:
-                    created_count += 1
-
-            logging.info(f"Created {created_count} new agent records")
-            return created_count
-
-        except Exception as e:
-            logging.error(f"Error ensuring agents for all participants: {e}")
-            return 0
-   
-    def create_scheduled_sync_job(self, job_type, interval_hours=24, parameters=None):
-        """
-        Create a new scheduled sync job.
-        
-        Args:
-            job_type: Type of sync job (e.g., 'discover', 'all_holders', 'core_accounts')
-            interval_hours: How often to run the job (in hours)
-            parameters: Optional parameters for the job
-            
-        Returns:
-            int: Job ID
-        """
-        try:
-            query = """
-            INSERT INTO ubec_main.sync_jobs (
-                job_type, schedule_interval, next_run, parameters, enabled
-            ) VALUES (
-                %s, INTERVAL '%s hours', NOW() + INTERVAL '%s hours', %s, TRUE
-            )
-            RETURNING id
-            """
-            
-            result = self.db.execute_query(query, [
-                job_type, 
-                interval_hours, 
-                interval_hours, 
-                json.dumps(parameters) if parameters else None
-            ], fetch_one=True)
-            
-            job_id = result['id'] if result else None
-            
-            if job_id:
-                logging.info(f"Created {job_type} sync job with ID {job_id}, interval {interval_hours} hours")
-                return job_id
-            
-            logging.error("Failed to create sync job")
-            return None
-        except Exception as e:
-            logging.error(f"Error creating sync job: {e}")
-            return None
-    
-    def run_scheduled_jobs(self):
-        """
-        Run all due scheduled jobs.
-        
-        Returns:
-            int: Number of jobs run
-        """
-        try:
-            # Find jobs that need to run
-            query = """
-            SELECT id, job_type, parameters 
-            FROM ubec_main.sync_jobs 
-            WHERE next_run <= NOW() AND enabled = TRUE
-            """
-            
-            jobs = self.db.execute_query(query)
-            
-            if not jobs:
-                logging.info("No scheduled jobs due to run")
-                return 0
-            
-            count = 0
-            for job in jobs:
-                job_id = job['id']
-                job_type = job['job_type']
-                parameters = job['parameters'] or {}
-                
-                try:
-                    if isinstance(parameters, str):
-                        parameters = json.loads(parameters)
-                except Exception:
-                    parameters = {}
-                
-                logging.info(f"Running job {job_id}: {job_type}")
-                
-                try:
-                    # Run the job based on type
-                    if job_type == 'discover':
-                        days = parameters.get('days_back', 30)
-                        batch_size = parameters.get('batch_size', 10)
-                        batch_delay = parameters.get('batch_delay', 3)
-                        self.discover_new_holders(days_back=days, batch_size=batch_size, batch_delay=batch_delay)
-                    elif job_type == 'all_holders':
-                        min_balance = parameters.get('min_balance', 0)
-                        days = parameters.get('days_back', 7)
-                        max_accounts = parameters.get('max_accounts', 100)
-                        batch_size = parameters.get('batch_size', 10)
-                        batch_delay = parameters.get('batch_delay', 5)
-                        self.sync_all_holders(
-                            min_balance=min_balance, 
-                            days_back=days, 
-                            max_accounts=max_accounts,
-                            batch_size=batch_size,
-                            batch_delay=batch_delay
-                        )
-                    elif job_type == 'core_accounts':
-                        self.setup_core_accounts()
-                    elif job_type == 'ensure_agents':
-                        self.ensure_agents_for_all_participants()
-                    else:
-                        logging.warning(f"Unknown job type: {job_type}")
+                    if not self._validate_account_id(account):
                         continue
                     
-                    # Update job's next run time
-                    update_query = """
-                    UPDATE ubec_main.sync_jobs 
-                    SET last_run = NOW(), 
-                        next_run = NOW() + schedule_interval,
-                        last_status = 'success',
-                        error_message = NULL,
-                        updated_at = NOW()
-                    WHERE id = %s
-                    """
-                    
-                    self.db.execute_query(update_query, [job_id])
-                    count += 1
-                    
-                except Exception as e:
-                    logging.error(f"Error running job {job_id}: {e}")
-                    
-                    # Update job status with error
-                    error_query = """
-                    UPDATE ubec_main.sync_jobs 
-                    SET last_run = NOW(), 
-                        next_run = NOW() + schedule_interval,
-                        last_status = 'error',
-                        error_message = %s,
-                        updated_at = NOW()
-                    WHERE id = %s
-                    """
-                    
-                    self.db.execute_query(error_query, [str(e), job_id])
+                    try:
+                        # STEP 1: Create account record FIRST
+                        if not self._ensure_account_exists(account, element, self.ubec_code):
+                            logger.error(f"✗ Failed to create account for {account[:8]}..., skipping")
+                            continue
+                        
+                        # STEP 2: Check balance on blockchain if server available
+                        if self.server:
+                            self._check_rate_limit()
+                            
+                            stellar_account = self.server.accounts().account_id(account).call()
+                            
+                            if hasattr(stellar_account, 'headers'):
+                                self._update_rate_limits(stellar_account.headers)
+                            
+                            # Find and save balance
+                            for balance_data in stellar_account.get('balances', []):
+                                if (balance_data.get('asset_code') == self.ubec_code and
+                                    balance_data.get('asset_issuer') == self.ubec_issuer):
+                                    
+                                    bal_amount = Decimal(balance_data.get('balance', '0'))
+                                    
+                                    if bal_amount > 0:
+                                        # STEP 3: Now safe to save balance
+                                        success = self._save_balance(
+                                            account,
+                                            self.ubec_code,
+                                            element,
+                                            bal_amount
+                                        )
+                                        
+                                        if success:
+                                            count += 1
+                                            logger.debug(f"✓ New holder: {account[:8]}... = {bal_amount}")
+                                        
+                                        time.sleep(0.2)  # Small delay
+                                    
+                                    break
+                        
+                    except Exception as e:
+                        if hasattr(e, 'status_code') and e.status_code == 429:
+                            wait_time = self._handle_rate_limit_error(
+                                e.response if hasattr(e, 'response') else None
+                            )
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            logger.warning(f"Error processing account {account[:8]}...: {e}")
+                
+                # Delay between batches
+                if i + batch_size < len(new_accounts):
+                    logger.info(f"Waiting {batch_delay}s before next batch...")
+                    time.sleep(batch_delay)
             
-            logging.info(f"Ran {count} scheduled jobs")
+            logger.info(f"✓ Discovered {count} new holders")
             return count
+            
         except Exception as e:
-            logging.error(f"Error running scheduled jobs: {e}")
+            logger.error(f"✗ Error discovering new holders: {e}")
             return 0
     
-    def setup_scheduled_jobs(self):
+    def find_all_holders_from_network(self, batch_size: int = 25, max_accounts: int = 200, 
+                                      batch_delay: int = 10) -> int:
         """
-        Set up default scheduled jobs for UBEC data synchronization.
+        Find all token holders directly from Stellar network.
         
-        Returns:
-            bool: Success status
-        """
-        try:
-            # Create discovery job to run daily with rate-limit-aware parameters
-            discover_params = {
-                'days_back': 30,
-                'batch_size': 10,
-                'batch_delay': 5
-            }
-            self.create_scheduled_sync_job('discover', interval_hours=24, parameters=discover_params)
-            
-            # Create holder sync job to run every 12 hours
-            holders_params = {
-                'min_balance': 10,  # Only sync accounts with meaningful balances
-                'days_back': 7,
-                'max_accounts': 50,  # Reduced from 100
-                'batch_size': 5,     # Process in smaller batches
-                'batch_delay': 10    # Longer delay between batches
-            }
-            self.create_scheduled_sync_job('all_holders', interval_hours=12, parameters=holders_params)
-            
-            # Create core accounts sync job to run every 6 hours
-            self.create_scheduled_sync_job('core_accounts', interval_hours=6)
-            
-            # Create a job to ensure all participants have agent records
-            self.create_scheduled_sync_job('ensure_agents', interval_hours=24, 
-                                  parameters={'force': False})
-    
-            logging.info("Set up default scheduled jobs")
-            return True
-        except Exception as e:
-            logging.error(f"Error setting up scheduled jobs: {e}")
-            return False
-    
-    def run_continuous_sync(self, check_interval_seconds=300):
-        """
-        Run as a daemon, continuously checking for and running scheduled jobs.
+        This is the primary method for discovering UBEC holders.
+        It ensures proper ordering: accounts are created before balances.
         
         Args:
-            check_interval_seconds: How often to check for jobs (in seconds)
-        """
-        logging.info(f"Starting continuous sync daemon with check interval {check_interval_seconds} seconds")
-        
-        try:
-            # Make sure core accounts are set up
-            self.setup_core_accounts()
+            batch_size: Accounts per batch
+            max_accounts: Maximum accounts to process
+            batch_delay: Delay between batches (seconds)
             
-            # Set up default scheduled jobs if none exist
-            job_count_query = "SELECT COUNT(*) as count FROM ubec_main.sync_jobs"
-            result = self.db.execute_query(job_count_query, fetch_one=True)
-            job_count = result['count'] if result else 0
-            
-            if job_count == 0:
-                logging.info("No scheduled jobs found, setting up defaults")
-                self.setup_scheduled_jobs()
-            
-            while True:
-                try:
-                    # Run any due jobs
-                    self.run_scheduled_jobs()
-                    
-                    # Sleep until next check
-                    logging.info(f"Next job check in {check_interval_seconds} seconds")
-                    time.sleep(check_interval_seconds)
-                except Exception as e:
-                    logging.error(f"Error in continuous sync: {e}")
-                    # Sleep a bit shorter to recover from errors more quickly
-                    time.sleep(60)
-        except KeyboardInterrupt:
-            logging.info("Continuous sync daemon stopped by user")
-        except Exception as e:
-            logging.error(f"Fatal error in continuous sync daemon: {e}")
-            raise
-
-    def find_all_holders_from_network(self, batch_size=25, max_accounts=1000, batch_delay=10):
-        """
-        Find all UBEC token holders directly from the Stellar network.
-        This is more comprehensive than just looking at recent transactions.
-
-        Args:
-            batch_size: Size of batches to process
-            max_accounts: Maximum accounts to process in one run
-            batch_delay: Delay in seconds between batches
-
         Returns:
-            int: Number of holders found and saved
+            int: Number of holders found and synced
         """
-        logging.info(f"Finding all UBEC holders from Stellar network (max {max_accounts} accounts, batch size {batch_size})")
-
+        logger.info(f"Finding all {self.ubec_code} holders from Stellar network")
+        logger.info(f"  Batch size: {batch_size}, Max accounts: {max_accounts}")
+        
         if not self.server:
-            logging.error("Stellar SDK not available - cannot search network")
+            logger.error("✗ Stellar SDK not available")
             return 0
-
+        
         count = 0
         cursor = None
         batch_count = 0
-
+        element = self.ELEMENT_MAP.get(self.ubec_code, 'air')
+        
         try:
             while count < max_accounts:
                 try:
-                    # Check rate limits before making API call
                     self._check_rate_limit()
                     
-                    # Create endpoint with smaller batch size to avoid rate limits
+                    # Query Stellar for accounts with trustlines to this asset
                     endpoint = self.server.accounts().for_asset(self.ubec_asset).limit(batch_size)
-
+                    
                     if cursor:
                         endpoint = endpoint.cursor(cursor)
-
-                    # Make API call
+                    
                     response = endpoint.call()
                     
-                    # Update rate limit tracking
                     if hasattr(response, 'headers'):
                         self._update_rate_limits(response.headers)
                     
-                    # Process records
                     records = response.get('_embedded', {}).get('records', [])
-
+                    
                     if not records:
-                        logging.info("No more accounts found with UBEC trustlines")
+                        logger.info("No more accounts with trustlines")
                         break
-
+                    
                     batch_count += 1
-                    logging.info(f"Processing batch {batch_count} of {len(records)} accounts with UBEC trustlines")
-
-                    batch_processed = 0
+                    logger.info(f"Processing batch {batch_count} of {len(records)} accounts...")
+                    
+                    # Process each account in the batch
                     for account in records:
                         account_id = account.get('id') or account.get('account_id')
-
-                        if not account_id:
+                        
+                        if not self._validate_account_id(account_id):
+                            logger.warning(f"Invalid account ID: {account_id}")
                             continue
-
+                        
                         # Find UBEC balance
-                        ubec_balance = 0
-                        for balance in account.get('balances', []):
-                            if (balance.get('asset_type') == 'credit_alphanum4' and 
-                                balance.get('asset_code') == self.ubec_code and 
-                                balance.get('asset_issuer') == self.ubec_issuer):
-                                ubec_balance = Decimal(balance.get('balance', '0'))
+                        ubec_balance = Decimal('0')
+                        for balance_data in account.get('balances', []):
+                            if (balance_data.get('asset_code') == self.ubec_code and
+                                balance_data.get('asset_issuer') == self.ubec_issuer):
+                                ubec_balance = Decimal(balance_data.get('balance', '0'))
                                 break
-
+                        
+                        # Only process if they have a non-zero balance
                         if ubec_balance > 0:
                             try:
-                                # Create participant
-                                participant_query = """
-                                INSERT INTO ubec_main.participants (account_id, joined_at, account_type) 
-                                VALUES (%s, NOW(), 'holder') 
-                                ON CONFLICT (account_id) DO NOTHING
-                                """
-                                self.db.execute_query(participant_query, [account_id])
-
-                                # Store asset holder
-                                asset_query = """
-                                INSERT INTO ubec_main.asset_holders (
-                                    account_id, asset_code, asset_issuer, balance, 
-                                    classification, is_active, last_updated_at
-                                ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                                ON CONFLICT (account_id, asset_code, asset_issuer) DO UPDATE SET
-                                    balance = %s,
-                                    classification = %s,
-                                    is_active = TRUE,
-                                    last_updated_at = NOW()
-                                """
-                                classification = 'whale' if ubec_balance > 1000 else 'retail'
-
-                                self.db.execute_query(asset_query, [
-                                    account_id, self.ubec_code, self.ubec_issuer, 
-                                    str(ubec_balance), classification, True,
-                                    str(ubec_balance), classification
-                                ])
-
-                                # Record discovery
-                                discovery_query = """
-                                INSERT INTO ubec_main.holder_discovery_history (
-                                    account_id, discovery_source, initial_balance, is_new, added_to_tracking
-                                ) VALUES (%s, %s, %s, %s, %s)
-                                """
-                                self.db.execute_query(discovery_query, [
-                                    account_id, 'network_search', str(ubec_balance), True, True
-                                ])
-
-                                count += 1
-                                batch_processed += 1
+                                # STEP 1: CRITICAL - Create account record FIRST
+                                account_db_id = self._save_account(account_id, element, self.ubec_code)
                                 
-                                # Add small delay between accounts
-                                if batch_processed % 5 == 0:
-                                    time.sleep(0.1)
+                                if not account_db_id:
+                                    logger.error(f"✗ Failed to create account for {account_id[:8]}..., skipping balance")
+                                    continue
                                 
-                                if count % 50 == 0:
-                                    logging.info(f"Found and saved {count} UBEC holders so far")
+                                # STEP 2: Now safe to save balance (account exists)
+                                success = self._save_balance(
+                                    account_id, 
+                                    self.ubec_code, 
+                                    element, 
+                                    ubec_balance
+                                )
+                                
+                                if success:
+                                    count += 1
                                     
+                                    if count % 10 == 0:
+                                        logger.info(f"  ✓ Synced {count} holders so far...")
+                                else:
+                                    logger.error(f"✗ Failed to save balance for {account_id[:8]}...")
+                                
                             except Exception as e:
-                                logging.error(f"Error saving account {account_id}: {e}")
-
+                                logger.error(f"✗ Error processing account {account_id[:8]}...: {e}")
+                        else:
+                            logger.debug(f"Skipping {account_id[:8]}... (zero balance)")
+                    
                     # Get next page cursor
                     if 'next' not in response.get('_links', {}):
-                        logging.info("No more pages available")
+                        logger.info("No more pages available")
                         break
-
+                    
                     next_link = response['_links']['next'].get('href', '')
                     if 'cursor=' in next_link:
                         cursor = next_link.split('cursor=')[1].split('&')[0]
                     else:
                         break
-
+                    
                     if count >= max_accounts:
-                        logging.info(f"Reached maximum number of accounts to process ({max_accounts})")
+                        logger.info(f"Reached max accounts ({max_accounts})")
                         break
-
-                    # Add delay between batches
-                    logging.info(f"Waiting {batch_delay} seconds before next batch")
+                    
+                    # Delay between batches
+                    logger.info(f"Waiting {batch_delay}s before next batch...")
                     time.sleep(batch_delay)
-
+                    
                 except Exception as e:
-                    # Check if it's a rate limit error
+                    # Handle rate limiting
                     if hasattr(e, 'status_code') and e.status_code == 429:
-                        # Handle rate limit
-                        if hasattr(e, 'response') and e.response:
-                            wait_time = self._handle_rate_limit_error(e.response)
-                        else:
-                            wait_time = 30
-                        
-                        logging.warning(f"Rate limit hit. Waiting {wait_time}s before retrying")
+                        wait_time = self._handle_rate_limit_error(
+                            e.response if hasattr(e, 'response') else None
+                        )
+                        logger.warning(f"⚠ Rate limit hit. Waiting {wait_time}s...")
                         time.sleep(wait_time)
                         continue
                     else:
-                        logging.error(f"Error processing batch: {e}")
-                        time.sleep(10)
-
-        except Exception as e:
-            logging.error(f"Error finding all holders from network: {e}")
-
-        logging.info(f"Found and saved {count} UBEC holders from the Stellar network")
+                        logger.error(f"✗ Error processing batch: {e}")
+                        time.sleep(10)  # Wait before retrying
         
-        # Ensure all new participants have agent records
-        self.ensure_agents_for_all_participants()
-    
+        except Exception as e:
+            logger.error(f"✗ Error finding holders: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+        
+        logger.info(f"✓ Found and synced {count} holders from network")
         return count
-
-
+    
     # ========================================================================
-    # PUBLIC API METHODS - Used by Protocol Sync Operations
+    # PUBLIC API METHODS - Called by Protocol Sync Operations
     # ========================================================================
-    # These methods are called by UBEC/UBECrc/UBECgpi/UBECtt protocols
-    # ========================================================================
-
-    def sync_account_data(self, asset_code='UBEC', issuer=None, limit=200):
+    
+    def sync_account_data(self, asset_code: str = 'UBEC', issuer: Optional[str] = None, 
+                         limit: int = 200) -> Dict[str, Any]:
         """
         Synchronize account data from Stellar network.
         
-        This is the main public API method called by protocol sync operations.
-        It discovers and stores all accounts holding the specified asset.
+        PUBLIC API - Called by protocol sync operations (e.g., UBEC.sync_gateway_data())
+        
+        This is the main entry point for syncing accounts. It:
+        1. Discovers holders from Stellar network
+        2. Finds additional holders from recent transactions
+        3. Ensures proper ordering (accounts before balances)
         
         Args:
-            asset_code: Asset code to filter by (default: 'UBEC')
-            issuer: Issuer address (defaults to UBEC issuer from config)
-            limit: Maximum number of accounts to sync in this run
+            asset_code: Asset to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            issuer: Issuer address (optional, uses default if not provided)
+            limit: Max accounts to sync
             
         Returns:
             dict: Sync results with counts and status
         """
-        logger.info(f"Syncing account data for {asset_code}")
+        logger.info(f"=" * 60)
+        logger.info(f"SYNCING ACCOUNT DATA FOR {asset_code}")
+        logger.info(f"=" * 60)
         
         try:
-            # Set asset code for this sync operation
+            # Save original token code and switch context
             original_code = self.ubec_code
             self.ubec_code = asset_code
             
-            # Use default issuer if not provided
             if issuer is None:
                 issuer = self.ubec_issuer
             
-            # Discover holders from network
-            logger.info(f"Discovering {asset_code} holders from Stellar network...")
+            # Update sync status to 'active'
+            self._update_sync_status(asset_code, 'accounts', 'active', 0)
+            
+            # PHASE 1: Discover holders from network
+            logger.info(f"\nPhase 1: Discovering holders from Stellar network...")
             accounts_found = self.find_all_holders_from_network(
                 batch_size=25,
                 max_accounts=limit,
                 batch_delay=10
             )
             
-            # Also try discovering from recent transactions
-            logger.info(f"Discovering new {asset_code} holders from recent transactions...")
+            # PHASE 2: Check recent transactions for new holders
+            logger.info(f"\nPhase 2: Discovering holders from recent transactions...")
             additional_found = self.discover_new_holders(
                 days_back=30,
                 batch_size=10,
                 batch_delay=3
             )
             
-            total_synced = accounts_found + additional_found
+            total = accounts_found + additional_found
             
-            # Restore original asset code
+            # Update sync status to 'complete'
+            self._update_sync_status(asset_code, 'accounts', 'complete', total)
+            
+            # Restore original token code
             self.ubec_code = original_code
+            
+            logger.info(f"\n✓ SYNC COMPLETE")
+            logger.info(f"  Total synced: {total}")
+            logger.info(f"  From network: {accounts_found}")
+            logger.info(f"  From transactions: {additional_found}")
+            logger.info(f"=" * 60)
             
             return {
                 'success': True,
-                'synced': total_synced,
-                'accounts_synced': total_synced,
+                'synced': total,
+                'accounts_synced': total,
                 'from_network': accounts_found,
                 'from_transactions': additional_found,
                 'asset_code': asset_code
             }
             
         except Exception as e:
-            logger.error(f"Error syncing account data for {asset_code}: {e}")
-            # Restore original asset code on error too
-            self.ubec_code = original_code if 'original_code' in locals() else self.ubec_code
+            logger.error(f"✗ Error syncing accounts for {asset_code}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            # Update sync status to 'error'
+            self._update_sync_status(asset_code, 'accounts', 'error', 0, str(e))
+            
+            # Restore original token code if needed
+            if 'original_code' in locals():
+                self.ubec_code = original_code
             
             return {
                 'success': False,
@@ -1850,172 +1335,227 @@ class UBECDataSynchronizer:
                 'error': str(e)
             }
     
-    def sync_transaction_data(self, asset_code='UBEC', issuer=None, days_back=7):
+    def sync_transaction_data(self, asset_code: str = 'UBEC', issuer: Optional[str] = None, 
+                             days_back: int = 7) -> Dict[str, Any]:
         """
         Synchronize transaction data from Stellar network.
         
-        This is the main public API method called by protocol sync operations.
-        It fetches and stores transaction history for all known holders.
+        PUBLIC API - Called by protocol sync operations.
         
         Args:
-            asset_code: Asset code to filter by (default: 'UBEC')
-            issuer: Issuer address (defaults to UBEC issuer from config)
-            days_back: Number of days of history to fetch (default: 7)
+            asset_code: Asset to sync
+            issuer: Issuer address (optional)
+            days_back: Days of history to fetch
             
         Returns:
-            dict: Sync results with counts and status
+            dict: Sync results
         """
-        logger.info(f"Syncing transaction data for {asset_code} ({days_back} days)")
+        logger.info(f"=" * 60)
+        logger.info(f"SYNCING TRANSACTIONS FOR {asset_code} ({days_back} days)")
+        logger.info(f"=" * 60)
         
         try:
-            # Set asset code for this sync operation
+            # Save and switch context
             original_code = self.ubec_code
             self.ubec_code = asset_code
             
-            # Use default issuer if not provided
             if issuer is None:
                 issuer = self.ubec_issuer
             
-            # Sync transactions for all holders
-            logger.info(f"Syncing transactions for {asset_code} holders...")
-            accounts_synced = self.sync_all_holders(
-                min_balance=1,  # Only accounts with positive balance
-                days_back=days_back,
-                max_accounts=50,  # Limit to avoid rate limits
-                batch_size=5,
-                batch_delay=10
-            )
+            # Update sync status
+            self._update_sync_status(asset_code, 'transactions', 'active', 0)
             
-            # Restore original asset code
-            self.ubec_code = original_code
+            # Get known holders
+            query = """
+            SELECT DISTINCT account_id 
+            FROM ubec_main.ubec_balances 
+            WHERE token_code = %s::token_code
+            LIMIT 50
+            """
             
-            return {
-                'success': True,
-                'synced': accounts_synced,
-                'transactions_synced': accounts_synced,  # Accounts that had new transactions
-                'asset_code': asset_code,
-                'days_back': days_back
-            }
-            
-        except Exception as e:
-            logger.error(f"Error syncing transaction data for {asset_code}: {e}")
-            # Restore original asset code on error
-            self.ubec_code = original_code if 'original_code' in locals() else self.ubec_code
-            
-            return {
-                'success': False,
-                'synced': 0,
-                'error': str(e)
-            }
-    
-    def sync_balance_data(self, asset_code='UBEC', issuer=None):
-        """
-        Synchronize balance data from Stellar network.
-        
-        This is the main public API method called by protocol sync operations.
-        It updates current balances for all known holders by querying the network.
-        
-        Args:
-            asset_code: Asset code to filter by (default: 'UBEC')
-            issuer: Issuer address (defaults to UBEC issuer from config)
-            
-        Returns:
-            dict: Sync results with counts and status
-        """
-        logger.info(f"Syncing balance data for {asset_code}")
-        
-        try:
-            # Set asset code for this sync operation
-            original_code = self.ubec_code
-            self.ubec_code = asset_code
-            
-            # Use default issuer if not provided
-            if issuer is None:
-                issuer = self.ubec_issuer
-            
-            # Get all known holders
-            holders = self.get_all_holders(min_balance=0)
-            logger.info(f"Found {len(holders)} known {asset_code} holders")
+            holders = self.db.execute_query(query, [asset_code])
             
             if not holders:
-                logger.info(f"No holders found for {asset_code}, running account discovery first")
-                # If no holders exist, discover them first
-                discovery_result = self.sync_account_data(asset_code, issuer, limit=100)
-                holders = self.get_all_holders(min_balance=0)
+                logger.warning(f"No holders found for {asset_code}. Run account sync first.")
+                return {
+                    'success': False,
+                    'synced': 0,
+                    'message': 'No holders found. Run account sync first.'
+                }
             
-            balances_updated = 0
+            logger.info(f"Syncing transactions for {len(holders)} holders...")
             
-            # Update balance for each holder
-            for i, holder in enumerate(holders[:50]):  # Limit to first 50 to avoid rate limits
+            accounts_synced = 0
+            total_txs = 0
+            
+            for i, holder in enumerate(holders):
                 account_id = holder.get('account_id')
                 if not account_id:
                     continue
                 
                 try:
-                    # Check rate limits
+                    logger.info(f"  [{i+1}/{len(holders)}] Syncing {account_id[:8]}...")
+                    txs = self.sync_account_transactions(account_id, days_back)
+                    
+                    if txs > 0:
+                        accounts_synced += 1
+                        total_txs += txs
+                        
+                except Exception as e:
+                    logger.error(f"✗ Error syncing txs for {account_id[:8]}...: {e}")
+            
+            # Update sync status
+            self._update_sync_status(asset_code, 'transactions', 'complete', accounts_synced)
+            
+            # Restore context
+            self.ubec_code = original_code
+            
+            logger.info(f"\n✓ SYNC COMPLETE")
+            logger.info(f"  Accounts processed: {accounts_synced}")
+            logger.info(f"  Total transactions: {total_txs}")
+            logger.info(f"=" * 60)
+            
+            return {
+                'success': True,
+                'synced': accounts_synced,
+                'transactions_synced': total_txs,
+                'asset_code': asset_code,
+                'days_back': days_back
+            }
+            
+        except Exception as e:
+            logger.error(f"✗ Error syncing transactions for {asset_code}: {e}")
+            self._update_sync_status(asset_code, 'transactions', 'error', 0, str(e))
+            
+            if 'original_code' in locals():
+                self.ubec_code = original_code
+            
+            return {
+                'success': False,
+                'synced': 0,
+                'error': str(e)
+            }
+    
+    def sync_balance_data(self, asset_code: str = 'UBEC', issuer: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Synchronize balance data from Stellar network.
+        
+        PUBLIC API - Called by protocol sync operations.
+        
+        This refreshes balances for known accounts.
+        
+        Args:
+            asset_code: Asset to sync
+            issuer: Issuer address (optional)
+            
+        Returns:
+            dict: Sync results
+        """
+        logger.info(f"=" * 60)
+        logger.info(f"SYNCING BALANCES FOR {asset_code}")
+        logger.info(f"=" * 60)
+        
+        try:
+            # Save and switch context
+            original_code = self.ubec_code
+            self.ubec_code = asset_code
+            
+            if issuer is None:
+                issuer = self.ubec_issuer
+            
+            # Update sync status
+            self._update_sync_status(asset_code, 'balances', 'active', 0)
+            
+            # Get known accounts
+            query = "SELECT account_id FROM ubec_main.stellar_accounts LIMIT 50"
+            accounts = self.db.execute_query(query)
+            
+            if not accounts:
+                logger.warning(f"No accounts found for {asset_code}. Running discovery first...")
+                discovery = self.sync_account_data(asset_code, issuer, 100)
+                accounts = self.db.execute_query(query)
+            
+            if not accounts:
+                logger.error("Still no accounts found after discovery")
+                return {
+                    'success': False,
+                    'synced': 0,
+                    'message': 'No accounts found'
+                }
+            
+            logger.info(f"Refreshing balances for {len(accounts)} accounts...")
+            
+            balances_updated = 0
+            element = self.ELEMENT_MAP.get(asset_code, 'air')
+            
+            for i, account in enumerate(accounts[:50]):  # Limit to 50 for safety
+                account_id = account.get('account_id')
+                if not self._validate_account_id(account_id):
+                    continue
+                
+                try:
+                    logger.info(f"  [{i+1}/{min(len(accounts), 50)}] Checking {account_id[:8]}...")
+                    
                     self._check_rate_limit()
                     
-                    # Fetch current account state
                     if self.server:
                         stellar_account = self.server.accounts().account_id(account_id).call()
                         
-                        # Update rate limits
                         if hasattr(stellar_account, 'headers'):
                             self._update_rate_limits(stellar_account.headers)
                         
-                        # Find balance for our asset
-                        for balance in stellar_account.get('balances', []):
-                            if (balance.get('asset_type') == 'credit_alphanum4' and
-                                balance.get('asset_code') == asset_code and
-                                balance.get('asset_issuer') == issuer):
+                        # Find balance for this asset
+                        for balance_data in stellar_account.get('balances', []):
+                            if (balance_data.get('asset_code') == asset_code and
+                                balance_data.get('asset_issuer') == issuer):
                                 
-                                # Update balance in database
-                                update_query = """
-                                INSERT INTO ubec_main.asset_holders (
-                                    account_id, asset_code, asset_issuer, balance,
-                                    classification, is_active, last_updated_at
-                                ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                                ON CONFLICT (account_id, asset_code, asset_issuer) DO UPDATE SET
-                                    balance = %s,
-                                    is_active = TRUE,
-                                    last_updated_at = NOW()
-                                """
+                                bal_amount = Decimal(balance_data.get('balance', '0'))
                                 
-                                current_balance = Decimal(balance.get('balance', '0'))
-                                classification = 'whale' if current_balance > 1000 else 'retail'
+                                # Account already exists (we got it from stellar_accounts table)
+                                # So we can safely save the balance
+                                success = self._save_balance(account_id, asset_code, element, bal_amount)
                                 
-                                self.db.execute_query(update_query, [
-                                    account_id, asset_code, issuer,
-                                    str(current_balance), classification, True,
-                                    str(current_balance)
-                                ])
+                                if success:
+                                    balances_updated += 1
+                                    logger.debug(f"✓ Updated: {bal_amount} {asset_code}")
                                 
-                                balances_updated += 1
                                 break
                         
-                        # Small delay between accounts
+                        # Small delay every 5 accounts
                         if (i + 1) % 5 == 0:
                             time.sleep(0.5)
-                            
+                
                 except Exception as e:
-                    logger.warning(f"Error updating balance for {account_id}: {e}")
-                    continue
+                    logger.warning(f"✗ Error updating balance for {account_id[:8]}...: {e}")
             
-            # Restore original asset code
+            # Update sync status
+            self._update_sync_status(asset_code, 'balances', 'complete', balances_updated)
+            
+            # Restore context
             self.ubec_code = original_code
+            
+            logger.info(f"\n✓ SYNC COMPLETE")
+            logger.info(f"  Balances updated: {balances_updated}")
+            logger.info(f"  Total accounts: {len(accounts)}")
+            logger.info(f"=" * 60)
             
             return {
                 'success': True,
                 'synced': balances_updated,
                 'balances_synced': balances_updated,
                 'asset_code': asset_code,
-                'total_holders': len(holders)
+                'total_accounts': len(accounts)
             }
             
         except Exception as e:
-            logger.error(f"Error syncing balance data for {asset_code}: {e}")
-            # Restore original asset code on error
-            self.ubec_code = original_code if 'original_code' in locals() else self.ubec_code
+            logger.error(f"✗ Error syncing balances for {asset_code}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            self._update_sync_status(asset_code, 'balances', 'error', 0, str(e))
+            
+            if 'original_code' in locals():
+                self.ubec_code = original_code
             
             return {
                 'success': False,
@@ -2025,24 +1565,24 @@ class UBECDataSynchronizer:
 
 
 # ============================================================================
-# MAIN - For testing and standalone execution
+# MAIN - For testing
 # ============================================================================
 
 if __name__ == '__main__':
-    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Test the synchronizer
-    print("Testing UBEC Data Synchronizer...")
+    print("\n" + "=" * 70)
+    print("TESTING UBEC DATA SYNCHRONIZER (Enhanced Version)")
+    print("=" * 70)
     
     try:
         sync = UBECDataSynchronizer()
         
         print("\n1. Testing account sync...")
-        result = sync.sync_account_data(asset_code='UBEC')
+        result = sync.sync_account_data(asset_code='UBEC', limit=50)
         print(f"   Result: {result}")
         
         print("\n2. Testing balance sync...")
@@ -2053,9 +1593,11 @@ if __name__ == '__main__':
         result = sync.sync_transaction_data(asset_code='UBEC', days_back=7)
         print(f"   Result: {result}")
         
-        print("\n✓ All tests completed successfully!")
+        print("\n" + "=" * 70)
+        print("✓ ALL TESTS COMPLETED!")
+        print("=" * 70)
         
     except Exception as e:
-        print(f"\n✗ Error during testing: {e}")
+        print(f"\n✗ Error: {e}")
         import traceback
         traceback.print_exc()

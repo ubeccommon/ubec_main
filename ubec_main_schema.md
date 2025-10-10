@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-09T08:20:19.326998  
+**Generated:** 2025-10-10T03:11:10.231022  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -72,7 +72,7 @@ Four UBEC protocol tokens
 
 Stellar transaction operation types
 
-**Values:** `payment`, `create_account`, `change_trust`, `manage_offer`, `path_payment`, `account_merge`, `manage_data`, `bump_sequence`, `clawback`, `other`
+**Values:** `payment`, `create_account`, `change_trust`, `manage_offer`, `path_payment`, `account_merge`, `manage_data`, `bump_sequence`, `clawback`, `other`, `manage_buy_offer`, `manage_sell_offer`, `create_passive_sell_offer`
 
 ### ubuntu_principle
 
@@ -82,14 +82,14 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ## Database Summary
 
-- **Total Tables:** 31
-- **Total Columns:** 373
-- **Total Relationships:** 5
-- **Total Indexes:** 179
-- **Total Views:** 10
-- **Total Functions:** 60
+- **Total Tables:** 32
+- **Total Columns:** 380
+- **Total Relationships:** 6
+- **Total Indexes:** 188
+- **Total Views:** 8
+- **Total Functions:** 64
 - **Total Custom Types:** 6
-- **Database Size:** 11 MB
+- **Database Size:** 12 MB
 
 ### Tables by Element
 
@@ -103,16 +103,16 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 | Table | Rows | Size |
 |-------|------|------|
-| asset_holder_analysis | 33 | 160 kB |
+| stellar_transactions | 408 | 408 kB |
+| stellar_accounts | 218 | 224 kB |
+| ubec_balances | 213 | 280 kB |
+| asset_holder_analysis | 42 | 176 kB |
 | ubec_distributions | 24 | 112 kB |
 | ubec_sync_status | 12 | 128 kB |
+| stellar_operations | 5 | 256 kB |
 | system_configuration | 5 | 96 kB |
 | agent_activity_history | 0 | 56 kB |
 | agent_benefit_history | 0 | 56 kB |
-| agent_contribution_history | 0 | 56 kB |
-| agent_holon_memberships | 0 | 72 kB |
-| agents | 0 | 40 kB |
-| api_rate_limits | 0 | 8192 bytes |
 
 ---
 
@@ -124,12 +124,11 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 40 kB | Total: 48 kB
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 48 kB | Total: 56 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | id | integer | ✗ | nextval('ubec_main.holonic_metrics_id... | - |
-| agent_id | integer | ✗ | - | Foreign key to agents table |
 | evaluation_date | timestamp with time zone | ✗ | now() | Date and time when the evaluation was performed |
 | autonomy_integration_score | numeric(5,4) | ✗ | 0 | Score for balance of autonomy and integration (... |
 | multi_scale_score | numeric(5,4) | ✗ | 0 | Score for multi-scale participation (0-1) |
@@ -141,10 +140,12 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | raw_metrics | jsonb | ✓ | - | JSON object containing detailed metrics for eac... |
 | created_at | timestamp with time zone | ✗ | now() | - |
 | updated_at | timestamp with time zone | ✗ | now() | - |
+| evaluation_date_date | date | ✗ | - | - |
+| account_id | varchar(56) | ✗ | - | - |
 
 **Constraints:**
 
-- `holonic_metrics_agent_id_fkey` (FOREIGN KEY)
+- `holonic_metrics_account_id_fkey` (FOREIGN KEY)
 - `holonic_metrics_pkey` (PRIMARY KEY)
 - `valid_autonomy_score` (CHECK)
 - `valid_composite_score` (CHECK)
@@ -157,7 +158,8 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 **Indexes:**
 
 - `holonic_metrics_pkey` (PRIMARY, UNIQUE)
-- `idx_holonic_metrics_agent_id`
+- `idx_holonic_metrics_account_date_unique` (UNIQUE)
+- `idx_holonic_metrics_account_id`
 - `idx_holonic_metrics_category`
 - `idx_holonic_metrics_composite_score`
 - `idx_holonic_metrics_evaluation_date`
@@ -166,7 +168,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain accounts with element tracking*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 48 kB | Total: 56 kB
+**Statistics:** 218 rows | Table: 80 kB | Indexes: 144 kB | Total: 224 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -246,7 +248,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 80 kB | Total: 88 kB
+**Statistics:** 5 rows | Table: 16 kB | Indexes: 240 kB | Total: 256 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -287,6 +289,11 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 - `idx_stellar_operations_to`
 - `idx_stellar_operations_tx`
 - `idx_stellar_operations_type`
+- `idx_stellar_ops_asset`
+- `idx_stellar_ops_created`
+- `idx_stellar_ops_from`
+- `idx_stellar_ops_source`
+- `idx_stellar_ops_to`
 - `stellar_operations_operation_id_key` (UNIQUE)
 - `stellar_operations_pkey` (PRIMARY, UNIQUE)
 
@@ -294,7 +301,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain transactions with element context*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 72 kB | Total: 80 kB
+**Statistics:** 408 rows | Table: 120 kB | Indexes: 288 kB | Total: 408 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -384,7 +391,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Token balances for all four elements with distribution tracking*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 64 kB | Total: 72 kB
+**Statistics:** 213 rows | Table: 80 kB | Indexes: 200 kB | Total: 280 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -627,6 +634,6 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ## Views
 
-### v_holonic_category_summary
+### stellar_operations_with_destination
 
 ```sql

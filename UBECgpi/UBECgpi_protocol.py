@@ -240,9 +240,9 @@ class UBECgpiProtocol:
             logger.info("  Updating distribution snapshot...")
             snapshot_id = None
             try:
-                snapshot = distribution_mgr.snapshot_distribution(asset_code='UBECgpi')
-                snapshot_id = snapshot.get('snapshot_id')
-                logger.info(f"    ✓ Snapshot created: {snapshot_id}")
+                snapshot_id = distribution_mgr.snapshot_distribution(asset_code='UBECgpi')
+                if snapshot_id:
+                    logger.info(f"    ✓ Snapshot created with ID: {snapshot_id}")
             except Exception as e:
                 error_msg = f"Error creating snapshot: {str(e)}"
                 logger.error(f"    ✗ {error_msg}")
