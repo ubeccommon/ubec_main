@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-10T03:11:10.231022  
+**Generated:** 2025-10-10T05:49:27.159513  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -84,7 +84,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 - **Total Tables:** 32
 - **Total Columns:** 380
-- **Total Relationships:** 6
+- **Total Relationships:** 5
 - **Total Indexes:** 188
 - **Total Views:** 8
 - **Total Functions:** 64
@@ -106,13 +106,13 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | stellar_transactions | 408 | 408 kB |
 | stellar_accounts | 218 | 224 kB |
 | ubec_balances | 213 | 280 kB |
-| asset_holder_analysis | 42 | 176 kB |
+| asset_holder_analysis | 48 | 184 kB |
 | ubec_distributions | 24 | 112 kB |
-| ubec_sync_status | 12 | 128 kB |
+| ubec_sync_status | 12 | 160 kB |
+| holonic_metrics | 5 | 144 kB |
 | stellar_operations | 5 | 256 kB |
 | system_configuration | 5 | 96 kB |
 | agent_activity_history | 0 | 56 kB |
-| agent_benefit_history | 0 | 56 kB |
 
 ---
 
@@ -124,7 +124,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 48 kB | Total: 56 kB
+**Statistics:** 5 rows | Table: 48 kB | Indexes: 96 kB | Total: 144 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -145,7 +145,6 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 **Constraints:**
 
-- `holonic_metrics_account_id_fkey` (FOREIGN KEY)
 - `holonic_metrics_pkey` (PRIMARY KEY)
 - `valid_autonomy_score` (CHECK)
 - `valid_composite_score` (CHECK)
@@ -550,7 +549,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Synchronization status tracking for all elements*
 
-**Statistics:** 12 rows | Table: 16 kB | Indexes: 112 kB | Total: 128 kB
+**Statistics:** 12 rows | Table: 48 kB | Indexes: 112 kB | Total: 160 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
