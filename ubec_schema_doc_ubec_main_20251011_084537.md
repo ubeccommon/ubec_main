@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-11T02:34:31.410506  
+**Generated:** 2025-10-11T08:45:37.677986  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -32,7 +32,7 @@
 
 - **Ubuntu Principle:** Regeneration
 - **Role:** Transformation & Action
-- **Tables:** `transformation_phases`
+- **Tables:** `system_settings`, `transformation_phases`
 
 ### Core Infrastructure Tables
 
@@ -97,37 +97,37 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ## Database Summary
 
-- **Total Tables:** 39
-- **Total Columns:** 461
+- **Total Tables:** 40
+- **Total Columns:** 473
 - **Total Relationships:** 6
-- **Total Indexes:** 245
+- **Total Indexes:** 249
 - **Total Views:** 13
-- **Total Functions:** 68
+- **Total Functions:** 72
 - **Total Custom Types:** 8
-- **Database Size:** 13 MB
+- **Database Size:** 12 MB
 
 ### Tables by Element
 
 - 🜁 **Air:** 6 tables
 - 🜄 **Water:** 1 tables
 - 🜃 **Earth:** 2 tables
-- 🜂 **Fire:** 1 tables
+- 🜂 **Fire:** 2 tables
 - 📊 **Core:** 6 tables
 
 ### Largest Tables
 
 | Table | Rows | Size |
 |-------|------|------|
-| stellar_transactions | 408 | 408 kB |
-| stellar_accounts | 218 | 248 kB |
-| ubec_balances | 213 | 280 kB |
+| ubec_balances | 201 | 280 kB |
+| stellar_accounts | 200 | 192 kB |
 | asset_holder_analysis | 63 | 184 kB |
+| system_settings | 37 | 80 kB |
 | ubec_distributions | 24 | 112 kB |
 | distribution_state | 12 | 104 kB |
-| ubec_sync_status | 12 | 160 kB |
 | holonic_metrics | 5 | 144 kB |
-| stellar_operations | 5 | 304 kB |
 | system_configuration | 5 | 96 kB |
+| account_balances | 0 | 56 kB |
+| agent_activity_history | 0 | 56 kB |
 
 ---
 
@@ -213,7 +213,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain accounts with element tracking*
 
-**Statistics:** 218 rows | Table: 80 kB | Indexes: 168 kB | Total: 248 kB
+**Statistics:** 200 rows | Table: 64 kB | Indexes: 128 kB | Total: 192 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -293,7 +293,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Statistics:** 5 rows | Table: 16 kB | Indexes: 288 kB | Total: 304 kB
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 144 kB | Total: 152 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -349,7 +349,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain transactions with element context*
 
-**Statistics:** 408 rows | Table: 120 kB | Indexes: 288 kB | Total: 408 kB
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 72 kB | Total: 80 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -439,7 +439,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Token balances for all four elements with distribution tracking*
 
-**Statistics:** 213 rows | Table: 80 kB | Indexes: 200 kB | Total: 280 kB
+**Statistics:** 201 rows | Table: 80 kB | Indexes: 200 kB | Total: 280 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -598,7 +598,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Synchronization status tracking for all elements*
 
-**Statistics:** 12 rows | Table: 48 kB | Indexes: 112 kB | Total: 160 kB
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 56 kB | Total: 64 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -676,7 +676,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Historical record of distribution checks and rebalancing actions*
 
-**Statistics:** 0 rows | Table: 48 kB | Indexes: 136 kB | Total: 184 kB
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 72 kB | Total: 80 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -749,6 +749,40 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 ---
 
 ### 🜂 Fire Element (UBECtt)
+
+#### system_settings
+
+*System configuration settings - single source of truth for all system parameters*
+
+**Statistics:** 37 rows | Table: 16 kB | Indexes: 64 kB | Total: 80 kB
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| setting_id | integer | ✗ | nextval('ubec_main.system_settings_se... | - |
+| setting_key | varchar(100) | ✗ | - | Unique setting identifier |
+| setting_value | text | ✗ | - | Setting value (stored as text, converted based ... |
+| setting_type | varchar(20) | ✓ | 'string'::character varying | Data type of the setting (string, integer, floa... |
+| description | text | ✓ | - | - |
+| category | varchar(50) | ✓ | 'general'::character varying | Setting category for organization |
+| is_active | boolean | ✓ | true | Whether the setting is active |
+| is_encrypted | boolean | ✓ | false | Whether the setting value is encrypted |
+| created_at | timestamp without time zone | ✓ | now() | - |
+| updated_at | timestamp without time zone | ✓ | now() | - |
+| created_by | varchar(100) | ✓ | - | - |
+| updated_by | varchar(100) | ✓ | - | - |
+
+**Constraints:**
+
+- `system_settings_pkey` (PRIMARY KEY)
+- `system_settings_setting_key_key` (UNIQUE)
+- `system_settings_setting_type_check` (CHECK)
+
+**Indexes:**
+
+- `idx_system_settings_category`
+- `idx_system_settings_key`
+- `system_settings_pkey` (PRIMARY, UNIQUE)
+- `system_settings_setting_key_key` (UNIQUE)
 
 #### transformation_phases
 
