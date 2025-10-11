@@ -45,6 +45,10 @@ from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 from decimal import Decimal
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Async HTTP client for Stellar
 try:
     from stellar_sdk import ServerAsync, AiohttpClient
@@ -200,12 +204,19 @@ class ServiceRegistry:
         """Initialize database manager service"""
         try:
             # Import async database manager
-            from db.async_connection import AsyncDatabaseManager
+            from core.db.database_manager import AsyncDatabaseManager
             
             db_manager = AsyncDatabaseManager(
+                host=config.db_host,
+                port=config.db_port,
+                database=config.db_name,
                 schema=config.db_schema,
-                user_type='app'
+                user=config.db_user,
+                password=config.db_password
             )
+            
+            # Initialize connection pool
+            await db_manager.initialize()
             
             # Test connection
             await db_manager.execute_query("SELECT 1", fetch_one=True)
@@ -213,11 +224,13 @@ class ServiceRegistry:
             self._services['database'] = db_manager
             logger.info("  ✓ Database service initialized")
             
-        except ImportError:
-            logger.warning("  ⚠ Async database manager not available - using mock")
+        except ImportError as e:
+            logger.warning(f"  ⚠ Async database manager not available: {e}")
+            logger.warning("  ⚠ Using mock database - sync operations will report errors")
             self._services['database'] = None
         except Exception as e:
             logger.error(f"  ✗ Database initialization failed: {e}")
+            logger.warning("  ⚠ Using mock database - sync operations will report errors")
             self._services['database'] = None
     
     async def _init_stellar_client(self, config: SystemConfig):
@@ -354,7 +367,7 @@ class ServiceRegistry:
         # Close database connections
         if self._services.get('database'):
             try:
-                # Database manager should have its own cleanup
+                await self._services['database'].close()
                 logger.info("  ✓ Database connections closed")
             except Exception as e:
                 logger.error(f"  ✗ Error closing database: {e}")

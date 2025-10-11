@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-10T14:30:11.223683  
+**Generated:** 2025-10-11T02:34:31.410506  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -20,12 +20,13 @@
 
 - **Ubuntu Principle:** Reciprocity
 - **Role:** Flow & Exchange
+- **Tables:** `flow_transactions`
 
 ### 🜃 Earth - UBECgpi
 
 - **Ubuntu Principle:** Mutualism
 - **Role:** Stability & Value
-- **Tables:** `distribution_history`
+- **Tables:** `distribution_history`, `distribution_state`
 
 ### 🜂 Fire - UBECtt
 
@@ -37,6 +38,7 @@
 
 Shared tables used across all elements:
 
+- `account_balances`
 - `holonic_metrics`
 - `stellar_accounts`
 - `stellar_effects`
@@ -95,10 +97,10 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ## Database Summary
 
-- **Total Tables:** 34
-- **Total Columns:** 421
+- **Total Tables:** 39
+- **Total Columns:** 461
 - **Total Relationships:** 6
-- **Total Indexes:** 214
+- **Total Indexes:** 245
 - **Total Views:** 13
 - **Total Functions:** 68
 - **Total Custom Types:** 8
@@ -107,10 +109,10 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 ### Tables by Element
 
 - 🜁 **Air:** 6 tables
-- 🜄 **Water:** 0 tables
-- 🜃 **Earth:** 1 tables
+- 🜄 **Water:** 1 tables
+- 🜃 **Earth:** 2 tables
 - 🜂 **Fire:** 1 tables
-- 📊 **Core:** 5 tables
+- 📊 **Core:** 6 tables
 
 ### Largest Tables
 
@@ -121,17 +123,48 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | ubec_balances | 213 | 280 kB |
 | asset_holder_analysis | 63 | 184 kB |
 | ubec_distributions | 24 | 112 kB |
+| distribution_state | 12 | 104 kB |
 | ubec_sync_status | 12 | 160 kB |
 | holonic_metrics | 5 | 144 kB |
 | stellar_operations | 5 | 304 kB |
 | system_configuration | 5 | 96 kB |
-| agent_activity_history | 0 | 56 kB |
 
 ---
 
 ## Detailed Table Documentation
 
 ### Core Infrastructure Tables
+
+#### account_balances
+
+*Tracks token balances for all accounts across all UBEC tokens. Used for stability analysis in Earth element (UBECgpi).*
+
+**Statistics:** 0 rows | Table: 0 bytes | Indexes: 56 kB | Total: 56 kB
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('ubec_main.account_balances_i... | - |
+| account_id | varchar(56) | ✗ | - | Stellar public key (G... format) |
+| asset_code | varchar(12) | ✗ | - | Token code: UBEC, UBECrc, UBECgpi, or UBECtt |
+| balance | numeric(20,7) | ✓ | 0.0 | Current token balance for this account |
+| last_updated | timestamp with time zone | ✓ | now() | Timestamp of last balance update |
+| created_at | timestamp with time zone | ✓ | now() | - |
+
+**Constraints:**
+
+- `account_balances_balance_check` (CHECK)
+- `account_balances_pkey` (PRIMARY KEY)
+- `account_balances_unique_account_asset` (UNIQUE)
+
+**Indexes:**
+
+- `account_balances_pkey` (PRIMARY, UNIQUE)
+- `account_balances_unique_account_asset` (UNIQUE)
+- `idx_account_balances_account_id`
+- `idx_account_balances_asset_balance`
+- `idx_account_balances_asset_code`
+- `idx_account_balances_balance`
+- `idx_account_balances_last_updated`
 
 #### holonic_metrics
 
@@ -603,6 +636,40 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 ---
 
+### 🜄 Water Element (UBECrc)
+
+#### flow_transactions
+
+*Flow transactions tracking for Water element (UBECrc). Records all token flows.*
+
+**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 48 kB | Total: 56 kB
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| transaction_id | varchar(64) | ✗ | - | Stellar transaction hash |
+| asset_code | varchar(12) | ✗ | - | Token code involved in the transaction |
+| from_account | varchar(56) | ✗ | - | Sending Stellar account |
+| to_account | varchar(56) | ✗ | - | Receiving Stellar account |
+| amount | numeric(20,7) | ✗ | - | Amount transferred |
+| created_at | timestamp with time zone | ✓ | now() | - |
+| memo | text | ✓ | - | - |
+
+**Constraints:**
+
+- `flow_transactions_amount_check` (CHECK)
+- `flow_transactions_pkey` (PRIMARY KEY)
+
+**Indexes:**
+
+- `flow_transactions_pkey` (PRIMARY, UNIQUE)
+- `idx_flow_transactions_asset_code`
+- `idx_flow_transactions_asset_time`
+- `idx_flow_transactions_created_at`
+- `idx_flow_transactions_from_account`
+- `idx_flow_transactions_to_account`
+
+---
+
 ### 🜃 Earth Element (UBECgpi)
 
 #### distribution_history
@@ -644,6 +711,40 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 - `idx_distribution_history_asset`
 - `idx_distribution_history_date`
 - `idx_distribution_history_rebalance`
+
+#### distribution_state
+
+*Distribution state tracking for Earth element (UBECgpi). Monitors tokenomics compliance (75/20/5).*
+
+**Statistics:** 12 rows | Table: 8192 bytes | Indexes: 96 kB | Total: 104 kB
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('ubec_main.distribution_state... | - |
+| asset_code | varchar(12) | ✗ | - | Token code being tracked |
+| category | varchar(50) | ✗ | - | Distribution category: general_circulation, ste... |
+| current_amount | numeric(20,7) | ✓ | 0.0 | - |
+| target_amount | numeric(20,7) | ✓ | 0.0 | - |
+| target_percentage | numeric(5,2) | ✗ | - | Target percentage for this category (75%, 20%, ... |
+| actual_percentage | numeric(5,2) | ✓ | 0.0 | Current actual percentage |
+| is_compliant | boolean | ✓ | true | Whether current distribution is within complian... |
+| last_updated | timestamp with time zone | ✓ | now() | - |
+
+**Constraints:**
+
+- `distribution_state_amounts_check` (CHECK)
+- `distribution_state_percentages_check` (CHECK)
+- `distribution_state_pkey` (PRIMARY KEY)
+- `distribution_state_unique_asset_category` (UNIQUE)
+
+**Indexes:**
+
+- `distribution_state_pkey` (PRIMARY, UNIQUE)
+- `distribution_state_unique_asset_category` (UNIQUE)
+- `idx_distribution_state_asset_code`
+- `idx_distribution_state_category`
+- `idx_distribution_state_compliance`
+- `idx_distribution_state_last_updated`
 
 ---
 
