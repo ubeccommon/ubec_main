@@ -41,7 +41,7 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.1 (Fixed Balance Storage Logic)
+Version: 4.0 (Database-First Async Refactor)
 Date: October 11, 2025
 """
 
@@ -84,16 +84,13 @@ class UBECDataSynchronizer:
     Settings are loaded from database (single source of truth principle).
     """
     
-    # Element mapping - ONLY for UBEC family tokens
+    # Element mapping
     ELEMENT_MAP = {
         'UBEC': 'air',
         'UBECrc': 'water',
         'UBECgpi': 'earth',
         'UBECtt': 'fire'
     }
-    
-    # Valid UBEC token codes (what we store in database)
-    VALID_UBEC_TOKENS = {'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'}
     
     # Operation type mapping for Stellar
     OPERATION_TYPE_MAP = {
@@ -379,7 +376,7 @@ class UBECDataSynchronizer:
             # Store account in database
             await self._store_account(account)
             
-            # Store balances (only UBEC family tokens)
+            # Store balances
             await self._store_balances(account_id, account.get('balances', []))
             
             logger.info(f"✓ Account synced successfully: {account_id}")
@@ -404,7 +401,7 @@ class UBECDataSynchronizer:
                     account_id, sequence, subentry_count, home_domain,
                     last_modified_at, sync_status
                 )
-                VALUES ($1, $2, $3, $4, NOW(), 'synced')
+                VALUES (%s, %s, %s, %s, NOW(), 'synced')
                 ON CONFLICT (account_id) DO UPDATE SET
                     sequence = EXCLUDED.sequence,
                     subentry_count = EXCLUDED.subentry_count,
@@ -429,94 +426,68 @@ class UBECDataSynchronizer:
     
     async def _store_balances(self, account_id: str, balances: List[Dict]):
         """
-        Store account balances in database - ONLY UBEC family tokens.
-        
-        This method filters for UBEC, UBECrc, UBECgpi, and UBECtt tokens only.
-        XLM and other assets are explicitly excluded to match database constraints.
+        Store account balances in database.
         
         Args:
             account_id: Stellar account ID
             balances: List of balance records from Stellar API
         """
         try:
-            stored_count = 0
-            skipped_count = 0
-            
             for balance in balances:
-                # Determine token info
+                # Determine asset info
                 if balance['asset_type'] == 'native':
-                    token_code = 'XLM'
+                    asset_code = 'XLM'
+                    asset_issuer = None
                 else:
-                    token_code = balance.get('asset_code', 'UNKNOWN')
+                    asset_code = balance.get('asset_code', 'UNKNOWN')
+                    asset_issuer = balance.get('asset_issuer')
                 
-                # CRITICAL FIX: Only store UBEC family tokens
-                # Skip XLM and any other assets
-                if token_code not in self.VALID_UBEC_TOKENS:
-                    skipped_count += 1
-                    logger.debug(f"Skipping non-UBEC token: {token_code} for account {account_id}")
-                    continue
-                
-                # Get element for this UBEC token
-                element = self.ELEMENT_MAP.get(token_code, 'air')  # Default to air if not found
+                # Determine element based on asset code
+                element = self.ELEMENT_MAP.get(asset_code, 'unknown')
                 
                 # Calculate numeric balance
                 balance_amount = Decimal(balance.get('balance', '0'))
                 
-                # Get authorization flags
-                is_authorized = balance.get('is_authorized', False)
-                is_auth_maintain = balance.get('is_authorized_to_maintain_liabilities', False)
-                is_clawback = balance.get('is_clawback_enabled', False)
-                
                 query = """
                     INSERT INTO ubec_balances (
-                        account_id, token_code, element,
-                        balance, limit_amount, 
-                        buying_liabilities, selling_liabilities,
-                        is_authorized, is_authorized_to_maintain_liabilities, 
-                        is_clawback_enabled
+                        account_id, asset_code, asset_issuer, element,
+                        balance, limit_amount, buying_liabilities, selling_liabilities,
+                        is_authorized, last_sync_time
                     )
-                    VALUES (
-                        $1, $2::ubec_main.token_code, $3::ubec_main.element_type,
-                        $4, $5,
-                        $6, $7,
-                        $8, $9, $10
-                    )
-                    ON CONFLICT (account_id, token_code) DO UPDATE SET
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (account_id, asset_code, COALESCE(asset_issuer, '')) DO UPDATE SET
                         balance = EXCLUDED.balance,
                         limit_amount = EXCLUDED.limit_amount,
                         buying_liabilities = EXCLUDED.buying_liabilities,
                         selling_liabilities = EXCLUDED.selling_liabilities,
                         is_authorized = EXCLUDED.is_authorized,
-                        is_authorized_to_maintain_liabilities = EXCLUDED.is_authorized_to_maintain_liabilities,
-                        is_clawback_enabled = EXCLUDED.is_clawback_enabled,
-                        last_modified_at = CURRENT_TIMESTAMP
+                        last_sync_time = NOW()
                 """
                 
                 params = (
                     account_id,
-                    token_code,
+                    asset_code,
+                    asset_issuer,
                     element,
                     balance_amount,
                     Decimal(balance.get('limit', '0')) if 'limit' in balance else None,
                     Decimal(balance.get('buying_liabilities', '0')),
                     Decimal(balance.get('selling_liabilities', '0')),
-                    is_authorized,
-                    is_auth_maintain,
-                    is_clawback
+                    balance.get('is_authorized', True)
                 )
                 
                 await self.db.execute(query, params)
-                stored_count += 1
             
-            logger.debug(
-                f"Balance storage for {account_id}: "
-                f"{stored_count} UBEC tokens stored, {skipped_count} non-UBEC assets skipped"
-            )
+            logger.debug(f"Stored {len(balances)} balances for account {account_id}")
             
         except Exception as e:
             logger.error(f"Error storing balances for {account_id}: {e}")
             raise
-
+    
+    # ========================================================================
+    # TRANSACTION SYNCHRONIZATION
+    # ========================================================================
+    
     async def sync_transactions(
         self,
         account_id: str,
@@ -584,7 +555,7 @@ class UBECDataSynchronizer:
                     fee_charged, operation_count, memo_type, memo,
                     successful, result_code
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (transaction_hash) DO UPDATE SET
                     successful = EXCLUDED.successful,
                     result_code = EXCLUDED.result_code
@@ -685,7 +656,7 @@ class UBECDataSynchronizer:
                         # Store account
                         await self._store_account(account_data)
                         
-                        # Store balances (only UBEC tokens will be stored)
+                        # Store balances
                         balances = account_data.get('balances', [])
                         await self._store_balances(account_data['id'], balances)
                         

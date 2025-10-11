@@ -10,11 +10,12 @@ This module evaluates UBEC token holders based on holonic principles, measuring:
 4. Network Contribution
 5. Alignment with Ubuntu Philosophy
 
-UPDATED: October 10, 2025
-- Fixed transaction query to use transaction_operations view (backward compatibility)
+UPDATED: October 11, 2025
+- Updated to use NEW config standard (GlobalConfig first, settings fallback)
+- Uses stellar_operations table directly (NEW standard, no compatibility layers)
 - Enhanced error handling for database queries
 - Improved logging for debugging
-- Added validation for database schema
+- Simplified schema validation (NEW standard only)
 
 This project uses the services of Claude and Anthropic PBC to inform our decisions 
 and recommendations. This project was made possible with the assistance of Claude 
@@ -34,7 +35,12 @@ from psycopg2.extras import DictCursor
 
 # Import from other modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db.connection import DatabaseManager, get_connection
+
+# Try to import from core.db first (new structure), then fallback to db (legacy)
+try:
+    from core.db.connection import DatabaseManager, get_connection
+except ImportError:
+    from db.connection import DatabaseManager, get_connection
 
 # Configure precision for decimal calculations
 getcontext().prec = 10
@@ -89,22 +95,29 @@ class UBECHolonicEvaluator:
         self.holders_data = None
         self.transaction_network = None
 
-        # Try to import settings to get accounts
+        # Load accounts from NEW config standard
         try:
-            from config import settings
-            self.accounts = settings.ACCOUNTS
-            logging.info("Successfully loaded accounts from settings")
+            from config.config import GlobalConfig
+            global_config = GlobalConfig()
+            self.accounts = global_config.ACCOUNTS
+            logging.info("✓ Loaded accounts from NEW config standard (GlobalConfig)")
         except (ImportError, AttributeError) as e:
-            logging.warning(f"Could not load accounts from settings: {e}")
-            self.accounts = {
-                'general': "GDC2ECKYO4WJMD35M4E2JIABPTA4VLHC6L6MU4TIRCLSOPOOIYOYTM74",
-                'administration': "GDEQ4KXOL6NV5RGETFTJLMULACO5M5GTYBKOEGTCN2MSSJCOAID5UBEC",
-                'stewardship': [
-                    "GA3I6MN4NSUKZ2NQZBWLUP6MNMPLZFD3ABOA3CMBV23NBDBFRWRUUBEC",  # Management Account
-                    "GCBT4HZHOXJCCVDQDJHA7KR6IN3RANWBPK3DKCSUPN2R4BMCGBZYUBEC",  # Infrastructure Account
-                    "GCFJCAHHHDI5XNK3CABHPN565DIPAXP2MPQXCQVYV7IDYQLA6G4JUBEC"   # Liquidity Pool
-                ]
-            }
+            logging.debug(f"GlobalConfig not available, trying settings: {e}")
+            try:
+                from config import settings
+                self.accounts = settings.ACCOUNTS
+                logging.info("✓ Loaded accounts from settings (fallback)")
+            except (ImportError, AttributeError) as e2:
+                logging.info(f"Using default accounts: {e2}")
+                self.accounts = {
+                    'general': "GDC2ECKYO4WJMD35M4E2JIABPTA4VLHC6L6MU4TIRCLSOPOOIYOYTM74",
+                    'administration': "GDEQ4KXOL6NV5RGETFTJLMULACO5M5GTYBKOEGTCN2MSSJCOAID5UBEC",
+                    'stewardship': [
+                        "GA3I6MN4NSUKZ2NQZBWLUP6MNMPLZFD3ABOA3CMBV23NBDBFRWRUUBEC",  # Management Account
+                        "GCBT4HZHOXJCCVDQDJHA7KR6IN3RANWBPK3DKCSUPN2R4BMCGBZYUBEC",  # Infrastructure Account
+                        "GCFJCAHHHDI5XNK3CABHPN565DIPAXP2MPQXCQVYV7IDYQLA6G4JUBEC"   # Liquidity Pool
+                    ]
+                }
 
         self.thresholds = {
             'autonomy_integration': {
@@ -174,31 +187,12 @@ class UBECHolonicEvaluator:
 
     def _validate_database_schema(self):
         """
-        Validate that the database schema has the required views and tables.
+        Validate that the database schema has the required tables.
         
-        NEW: Added to verify that the transaction_operations view exists
-        after applying the schema fix.
+        NEW STANDARD: Only checks for stellar_operations table.
+        No backward compatibility checks.
         """
         try:
-            # Check for transaction_operations view (created by fix_database_schema.sql)
-            check_view = f"""
-            SELECT EXISTS (
-                SELECT FROM information_schema.views 
-                WHERE table_schema = '{self.config['db_schema']}'
-                AND table_name = 'transaction_operations'
-            );
-            """
-            result = self.db.execute_query(check_view, fetch_one=True)
-            
-            if result and result.get('exists', False):
-                logging.info("✅ transaction_operations view exists (backward compatibility enabled)")
-            else:
-                logging.warning(
-                    "⚠️  transaction_operations view not found. "
-                    "Transaction queries may fail. "
-                    "Please run: psql -d ubec -f fix_database_schema.sql"
-                )
-            
             # Check for stellar_operations table (the actual data source)
             check_table = f"""
             SELECT EXISTS (
@@ -227,7 +221,7 @@ class UBECHolonicEvaluator:
 
     def load_config(self):
         """
-        Load configuration from file or use defaults.
+        Load configuration from NEW config standard or use defaults.
         """
         self.config = {
             "db_schema": "ubec_main",
@@ -240,27 +234,45 @@ class UBECHolonicEvaluator:
             "ubec_issuer": "GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN"
         }
 
+        # Try NEW config standard first (GlobalConfig)
+        try:
+            from config.config import GlobalConfig
+            global_config = GlobalConfig()
+            
+            # Load config values from GlobalConfig if they exist
+            if hasattr(global_config, 'UBEC_CODE'):
+                self.config['ubec_code'] = global_config.UBEC_CODE
+            if hasattr(global_config, 'UBEC_ISSUER'):
+                self.config['ubec_issuer'] = global_config.UBEC_ISSUER
+            
+            logging.info("✓ Loaded config from NEW config standard (GlobalConfig)")
+            return
+            
+        except (ImportError, AttributeError) as e:
+            logging.debug(f"GlobalConfig not available: {e}")
+
+        # Fallback: Try to load from settings file
         if self.config_path:
             try:
                 config_dir = os.path.dirname(os.path.abspath(self.config_path))
                 sys.path.append(config_dir)
 
-                logging.info(f"Looking for config in: {config_dir}")
+                logging.debug(f"Looking for config in: {config_dir}")
 
                 try:
                     from config import settings
                     config_module = settings
-                    logging.info("Successfully imported settings from config package")
+                    logging.info("✓ Loaded config from settings module")
                 except ImportError:
-                    logging.info(f"Direct import failed, trying to load from {self.config_path}")
+                    logging.debug(f"Direct import failed, trying to load from {self.config_path}")
 
                     if not os.path.exists(self.config_path):
                         parent_config_path = os.path.join(os.path.dirname(os.getcwd()), "config/settings.py")
                         if os.path.exists(parent_config_path):
                             self.config_path = parent_config_path
-                            logging.info(f"Found settings file at: {self.config_path}")
+                            logging.debug(f"Found settings file at: {self.config_path}")
                         else:
-                            logging.warning(f"Could not find settings file at {self.config_path} or {parent_config_path}")
+                            logging.debug(f"Could not find settings file at {self.config_path} or {parent_config_path}")
                             logging.info("Using default configuration")
                             return
 
@@ -268,16 +280,17 @@ class UBECHolonicEvaluator:
                     spec = importlib.util.spec_from_file_location("settings", self.config_path)
                     config_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(config_module)
-                    logging.info(f"Successfully loaded settings from {self.config_path}")
+                    logging.info(f"✓ Loaded config from {self.config_path}")
 
+                # Update config with values from settings
                 for key in dir(config_module):
                     if key.isupper() and key in [k.upper() for k in self.config.keys()]:
                         self.config[key.lower()] = getattr(config_module, key)
 
-                logging.info(f"Loaded configuration from {self.config_path}")
+                logging.info(f"✓ Configuration loaded successfully")
 
             except Exception as e:
-                logging.warning(f"Could not load config from {self.config_path}: {e}")
+                logging.debug(f"Could not load config from {self.config_path}: {e}")
                 logging.info("Using default configuration")
     
     def get_accounts_for_evaluation(self):
@@ -600,11 +613,9 @@ class UBECHolonicEvaluator:
         """
         Retrieve transaction data for a specific agent from the database.
         
-        UPDATED: October 10, 2025
-        - Now uses transaction_operations view (created by fix_database_schema.sql)
-        - The view provides backward compatibility by mapping:
-          * stellar_operations.to_account → transaction_operations.destination_account
-          * stellar_operations.from_account → transaction_operations.source_account
+        UPDATED: October 11, 2025
+        - Uses stellar_operations table directly (NEW standard)
+        - No backward compatibility layers
         - Enhanced error handling and logging
         
         Args:
@@ -618,21 +629,19 @@ class UBECHolonicEvaluator:
             logging.warning(f"No public_key provided for agent {agent_id}, cannot fetch transactions")
             return []
         
-        # Use transaction_operations VIEW (not table)
-        # This view was created by fix_database_schema.sql for backward compatibility
-        # It maps the stellar_operations table columns to the expected names
+        # Use stellar_operations table directly (NEW standard)
         query = f"""
         SELECT 
             transaction_id as id,
             operation_type as transaction_type,
             amount,
             created_at as timestamp,
-            source_account,
-            destination_account as destination,
+            from_account as source_account,
+            to_account as destination,
             asset_code,
             asset_issuer
-        FROM {self.config['db_schema']}.transaction_operations
-        WHERE (source_account = %s OR destination_account = %s)
+        FROM {self.config['db_schema']}.stellar_operations
+        WHERE (from_account = %s OR to_account = %s)
           AND asset_code = %s
           AND asset_issuer = %s
         ORDER BY created_at DESC
@@ -649,7 +658,7 @@ class UBECHolonicEvaluator:
             )
             
             if not transactions or len(transactions) == 0:
-                logging.debug(f"No transactions found for {public_key} in transaction_operations view")
+                logging.debug(f"No transactions found for {public_key}")
                 return []
             
             # Format transactions
@@ -666,7 +675,7 @@ class UBECHolonicEvaluator:
                     'id': tx.get('id', ''),
                     'transaction_type': 'CREDIT' if tx.get('destination') == public_key else 'DEBIT',
                     'amount': float(tx.get('amount', 0)),
-                    'balance_after': 0,  # Not available in transaction_operations
+                    'balance_after': 0,  # Calculated separately if needed
                     'timestamp': timestamp,
                     'source_account': tx.get('source_account'),
                     'destination': tx.get('destination'),
@@ -684,26 +693,6 @@ class UBECHolonicEvaluator:
         except Exception as e:
             logging.error(f"❌ Error fetching transactions for agent {agent_id} ({public_key[:10]}...): {e}")
             logging.debug(f"Query that failed: {query[:200]}...")
-            
-            # Check if the view exists
-            try:
-                check_view = f"""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.views 
-                    WHERE table_schema = '{self.config['db_schema']}'
-                    AND table_name = 'transaction_operations'
-                );
-                """
-                result = self.db.execute_query(check_view, fetch_one=True)
-                
-                if not result or not result.get('exists', False):
-                    logging.error(
-                        "⚠️  transaction_operations view does not exist. "
-                        "Please run: psql -d ubec -f fix_database_schema.sql"
-                    )
-            except:
-                pass
-            
             return []
     
     def get_agent_activities(self, agent_id):
