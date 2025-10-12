@@ -59,7 +59,7 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 3.0 (Distribution Manager Integration)
+Version: 4.0 (Database-Backed Configuration)
 Date: October 12, 2025
 """
 
@@ -82,8 +82,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core imports
-from core.service_registry import registry, ServiceInitializationError
-from config.settings import SystemConfig
+from core.db.database_manager import AsyncDatabaseManager
+from config.settings import get_system_config, SystemConfig
 
 # Configure logging
 log_dir = Path('logs')
@@ -103,19 +103,51 @@ logger = logging.getLogger(__name__)
 
 # ==================== SERVICE INITIALIZATION ====================
 
-async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
+async def initialize_database() -> AsyncDatabaseManager:
+    """
+    Initialize database manager first (required for config loading).
+    
+    Returns:
+        AsyncDatabaseManager instance
+        
+    Raises:
+        RuntimeError: If database initialization fails
+    """
+    logger.info("Initializing database connection...")
+    
+    try:
+        db_manager = AsyncDatabaseManager(
+            host=os.getenv('DB_HOST', 'localhost'),
+            port=int(os.getenv('DB_PORT', '5432')),
+            database=os.getenv('DB_NAME', 'ubec'),
+            schema=os.getenv('DB_SCHEMA', 'ubec_main'),
+            user=os.getenv('DB_USER', 'ubec_app'),
+            password=os.getenv('DB_PASSWORD', '')
+        )
+        
+        await db_manager.initialize()
+        logger.info("✓ Database connection initialized")
+        return db_manager
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise RuntimeError(f"Database initialization failed: {e}")
+
+
+async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseManager) -> Dict[str, Any]:
     """
     Initialize all system services via the service registry.
     
     Args:
-        config: System configuration
+        config: System configuration (loaded from database)
+        db_manager: Database manager instance
         
     Returns:
         dict: Dictionary of initialized services
     
     Design Note:
         This function initializes services in dependency order:
-        1. Database Manager (foundation)
+        1. Database Manager (already initialized)
         2. Stellar Client (blockchain access)
         3. Data Synchronizer (depends on database)
         4. Element Protocols (depend on database + stellar)
@@ -126,46 +158,152 @@ async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
     logger.info("Initializing UBEC Protocol Services")
     logger.info("="*70)
     
-    services = {}
+    services = {
+        'database': db_manager,
+        'config': config
+    }
     
     try:
-        # Initialize via service registry context manager
-        await registry.initialize_all()
+        # Initialize Stellar client
+        try:
+            from stellar_sdk import Server
+            stellar_client = Server(horizon_url=config.HORIZON_URL)
+            services['stellar_client'] = stellar_client
+            logger.info("✓ Stellar client initialized")
+        except Exception as e:
+            logger.warning(f"Stellar client initialization failed: {e}")
+            services['stellar_client'] = None
         
-        # Get references to initialized services
-        services['database'] = registry.get_sync('database_manager')
-        services['synchronizer'] = registry.get_sync('synchronizer')
+        # Initialize Data Synchronizer
+        try:
+            from core.db.ubec_data_synchronizer import UBECDataSynchronizer
+            synchronizer = UBECDataSynchronizer(db_manager)
+            services['synchronizer'] = synchronizer
+            logger.info("✓ Data synchronizer initialized")
+        except Exception as e:
+            logger.warning(f"Data synchronizer initialization failed: {e}")
+            services['synchronizer'] = None
         
-        # Check for protocol services
-        for protocol_name in ['air', 'water', 'earth', 'fire']:
+        # Initialize Element Protocols
+        protocol_configs = {
+            'air': {
+                'asset_code': config.UBEC_CODE,
+                'issuer': config.UBEC_ISSUER,
+                'element': 'air',
+                'principle': 'diversity'
+            },
+            'water': {
+                'asset_code': config.get('ubecrc_code', 'UBECrc'),
+                'issuer': config.get('ubecrc_issuer', ''),
+                'element': 'water',
+                'principle': 'reciprocity'
+            },
+            'earth': {
+                'asset_code': config.get('ubecgpi_code', 'UBECgpi'),
+                'issuer': config.get('ubecgpi_issuer', ''),
+                'element': 'earth',
+                'principle': 'mutualism'
+            },
+            'fire': {
+                'asset_code': config.get('ubectt_code', 'UBECtt'),
+                'issuer': config.get('ubectt_issuer', ''),
+                'element': 'fire',
+                'principle': 'regeneration'
+            }
+        }
+        
+        for protocol_name, protocol_config in protocol_configs.items():
             try:
-                services[protocol_name] = registry.get_sync(protocol_name)
+                # Try to import protocol factory function
+                if protocol_name == 'air':
+                    from core.protocols.UBEC_protocol import create_ubec_service
+                    protocol = create_ubec_service(
+                        db_manager=db_manager,
+                        config=protocol_config,
+                        stellar_client=services.get('stellar_client')
+                    )
+                elif protocol_name == 'water':
+                    from core.protocols.UBECrc_protocol import create_ubecrc_service
+                    protocol = create_ubecrc_service(
+                        db_manager=db_manager,
+                        config=protocol_config,
+                        stellar_client=services.get('stellar_client')
+                    )
+                elif protocol_name == 'earth':
+                    from core.protocols.UBECgpi_protocol import create_ubecgpi_service
+                    protocol = create_ubecgpi_service(
+                        db_manager=db_manager,
+                        config=protocol_config,
+                        stellar_client=services.get('stellar_client')
+                    )
+                elif protocol_name == 'fire':
+                    from core.protocols.UBECtt_protocol import create_ubectt_service
+                    protocol = create_ubectt_service(
+                        db_manager=db_manager,
+                        config=protocol_config,
+                        stellar_client=services.get('stellar_client')
+                    )
+                
+                services[protocol_name] = protocol
+                logger.info(f"✓ {protocol_name.title()} Protocol initialized")
+                
+            except ImportError as e:
+                logger.warning(f"{protocol_name.title()} Protocol module not found: {e}")
+                services[protocol_name] = None
             except Exception as e:
-                logger.warning(f"Protocol '{protocol_name}' not available: {e}")
+                logger.warning(f"{protocol_name.title()} Protocol initialization failed: {e}")
                 services[protocol_name] = None
         
-        # Check for distribution services
+        # Initialize Distribution Services
         try:
-            services['distribution'] = registry.get_sync('distribution')
-            services['distribution_evaluator'] = registry.get_sync('distribution_evaluator')
-        except Exception as e:
-            logger.warning(f"Distribution services not available: {e}")
+            from services.distribution.distribution_service import DistributionService
+            dist_service = DistributionService(
+                db_manager=db_manager,
+                stellar_client=services.get('stellar_client'),
+                config=config
+            )
+            services['distribution'] = dist_service
+            logger.info("✓ Distribution service initialized")
+        except ImportError:
+            logger.warning("Distribution service module not found")
             services['distribution'] = None
+        except Exception as e:
+            logger.warning(f"Distribution service initialization failed: {e}")
+            services['distribution'] = None
+        
+        try:
+            from core.distribution.distribution_evaluator import DistributionEvaluator
+            evaluator = DistributionEvaluator(db_manager=db_manager)
+            services['distribution_evaluator'] = evaluator
+            logger.info("✓ Distribution evaluator initialized")
+        except ImportError:
+            logger.warning("Distribution evaluator module not found")
+            services['distribution_evaluator'] = None
+        except Exception as e:
+            logger.warning(f"Distribution evaluator initialization failed: {e}")
             services['distribution_evaluator'] = None
         
-        # Check for holonic evaluator
+        # Initialize Holonic Evaluator
         try:
-            services['holonic_evaluator'] = registry.get_sync('holonic_evaluator')
+            from core.holonic.ubec_holonic_evaluator import UBECHolonicEvaluator
+            holonic_eval = UBECHolonicEvaluator(db_conn=db_manager)
+            services['holonic_evaluator'] = holonic_eval
+            logger.info("✓ Holonic evaluator initialized")
+        except ImportError:
+            logger.warning("Holonic evaluator module not found")
+            services['holonic_evaluator'] = None
         except Exception as e:
-            logger.warning(f"Holonic evaluator not available: {e}")
+            logger.warning(f"Holonic evaluator initialization failed: {e}")
             services['holonic_evaluator'] = None
         
         logger.info("✓ All available services initialized")
+        logger.info("="*70)
+        
         return services
         
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
-        raise ServiceInitializationError(f"Service initialization failed: {e}")
+        raise RuntimeError(f"Service initialization failed: {e}")
 
 
 async def shutdown_services(services: Dict[str, Any]):
@@ -174,12 +312,50 @@ async def shutdown_services(services: Dict[str, Any]):
     
     Args:
         services: Dictionary of service instances
+        
+    Design Note:
+        Handles both sync and async close methods properly.
+        Stellar SDK's close() is synchronous, while custom services are async.
     """
     logger.info("Shutting down services...")
     
     try:
-        await registry.shutdown()
+        # Close database connection (async)
+        db_manager = services.get('database')
+        if db_manager:
+            await db_manager.close()
+            logger.info("✓ Database connection closed")
+        
+        # Close Stellar client (SYNCHRONOUS close method)
+        stellar_client = services.get('stellar_client')
+        if stellar_client and hasattr(stellar_client, 'close'):
+            # Stellar SDK's close() is NOT async - call it directly
+            stellar_client.close()
+            logger.info("✓ Stellar client closed")
+        
+        # Close synchronizer (check if async or sync)
+        synchronizer = services.get('synchronizer')
+        if synchronizer and hasattr(synchronizer, 'close'):
+            close_method = getattr(synchronizer, 'close')
+            if asyncio.iscoroutinefunction(close_method):
+                await synchronizer.close()
+            else:
+                synchronizer.close()
+            logger.info("✓ Synchronizer closed")
+        
+        # Close protocol services (check if async or sync)
+        for protocol_name in ['air', 'water', 'earth', 'fire']:
+            protocol = services.get(protocol_name)
+            if protocol and hasattr(protocol, 'close'):
+                close_method = getattr(protocol, 'close')
+                if asyncio.iscoroutinefunction(close_method):
+                    await protocol.close()
+                else:
+                    protocol.close()
+                logger.info(f"✓ {protocol_name.title()} Protocol closed")
+        
         logger.info("✓ All services shut down gracefully")
+        
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
 
@@ -206,7 +382,7 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
     healthy_count = 0
     total_count = 0
     
-    for service_name in ['database', 'synchronizer']:
+    for service_name in ['database', 'stellar_client', 'synchronizer']:
         total_count += 1
         service = services.get(service_name)
         
@@ -238,7 +414,7 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
             }
     
     # Check distribution services
-    for service_name in ['distribution', 'distribution_evaluator']:
+    for service_name in ['distribution', 'distribution_evaluator', 'holonic_evaluator']:
         total_count += 1
         service = services.get(service_name)
         
@@ -883,15 +1059,27 @@ async def main_async(args: argparse.Namespace) -> int:
     
     Returns:
         Exit code
+        
+    Design Note:
+        This follows the correct initialization order:
+        1. Initialize database manager
+        2. Load configuration from database (Single Source of Truth)
+        3. Initialize all other services with database-backed config
     """
-    # Load configuration
-    config = SystemConfig()
-    
-    # Initialize services
-    logger.info("Initializing services...")
-    services = await initialize_services(config)
+    services = None
     
     try:
+        # Step 1: Initialize database manager FIRST
+        db_manager = await initialize_database()
+        
+        # Step 2: Load configuration from database (Principle #4: Single Source of Truth)
+        logger.info("Loading configuration from database...")
+        config = await get_system_config(db_manager)
+        logger.info(f"✓ Configuration loaded from database: {len(config._settings)} settings")
+        
+        # Step 3: Initialize all services with database-backed config
+        services = await initialize_services(config, db_manager)
+        
         # Execute requested operation
         result = None
         
@@ -968,7 +1156,8 @@ async def main_async(args: argparse.Namespace) -> int:
     
     finally:
         # Always cleanup
-        await shutdown_services(services)
+        if services:
+            await shutdown_services(services)
 
 
 # ==================== MAIN ENTRY POINT ====================
@@ -989,6 +1178,15 @@ def main() -> int:
     # Set log level
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     
+    # Log startup
+    logger.info("=" * 70)
+    logger.info("UBEC Protocol - Unified Main Orchestrator")
+    logger.info(f"Mode: {args.mode}")
+    logger.info(f"Version: 4.0 (Database-Backed Configuration)")
+    logger.info(f"Python: {sys.version.split()[0]}")
+    logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("=" * 70)
+    
     # Run async main
     try:
         return asyncio.run(main_async(args))
@@ -1007,7 +1205,7 @@ if __name__ == "__main__":
     
     Following Principle #2: Service Pattern with Centralized Execution
     - ALL other modules are services
-    - ALL services accessed via service registry
+    - ALL services accessed via proper initialization
     - NO other files have if __name__ == "__main__"
     
     This is a critical design principle that:
