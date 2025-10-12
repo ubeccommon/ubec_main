@@ -379,42 +379,12 @@ async def shutdown_services(services: Dict[str, Any]):
     """
     Gracefully shutdown all services.
     
-    Fixed to properly close synchronizer's server AND session.
+    Args:
+        services: Service registry dictionary
     """
     logger.info("Shutting down services...")
     
-    # Close protocol services first (they may depend on stellar/database)
-    protocol_services = ['air', 'water', 'earth', 'fire']
-    for protocol_name in protocol_services:
-        if services.get(protocol_name):
-            try:
-                protocol = services[protocol_name]
-                if hasattr(protocol, 'close'):
-                    await protocol.close()
-                    logger.info(f"✓ {protocol_name.capitalize()} protocol closed")
-            except Exception as e:
-                logger.error(f"Error closing {protocol_name} protocol: {e}")
-    
-    # Close synchronizer COMPLETELY (not just session!)
-    # The synchronizer has BOTH:
-    #   - self.session (aiohttp.ClientSession)
-    #   - self.server (ServerAsync with its own aiohttp client)
-    # We MUST call close() to close both
-    if services.get('synchronizer'):
-        try:
-            sync = services['synchronizer']
-            if hasattr(sync, 'close'):
-                # This closes BOTH session and server
-                await sync.close()
-                logger.info("✓ Synchronizer closed (server + session)")
-            elif hasattr(sync, 'session') and sync.session and not sync.session.closed:
-                # Fallback if close() method doesn't exist (shouldn't happen)
-                await sync.session.close()
-                logger.warning("⚠️ Synchronizer session closed (server may still be open!)")
-        except Exception as e:
-            logger.error(f"Error closing synchronizer: {e}")
-    
-    # Close shared Stellar client (used by protocols)
+    # Close Stellar client (which includes aiohttp session)
     if services.get('stellar'):
         try:
             await services['stellar'].close()
@@ -422,7 +392,17 @@ async def shutdown_services(services: Dict[str, Any]):
         except Exception as e:
             logger.error(f"Error closing Stellar client: {e}")
     
-    # Close database connection last (other services may need it)
+    # Close synchronizer's session if it has one
+    if services.get('synchronizer'):
+        try:
+            sync = services['synchronizer']
+            if hasattr(sync, 'session') and sync.session and not sync.session.closed:
+                await sync.session.close()
+                logger.info("✓ Synchronizer session closed")
+        except Exception as e:
+            logger.error(f"Error closing synchronizer session: {e}")
+    
+    # Close database connection
     if services.get('database'):
         try:
             await services['database'].close()
@@ -431,6 +411,7 @@ async def shutdown_services(services: Dict[str, Any]):
             logger.error(f"Error closing database: {e}")
     
     logger.info("✓ All services shut down")
+
 
 # ==================== OPERATION MODES ====================
 
