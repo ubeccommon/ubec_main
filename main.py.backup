@@ -11,7 +11,7 @@ Integrated Services:
     - Earth Protocol (Ground / Stability - UBECgpi)
     - Fire Protocol (Transformation - UBECtt)
     - Distribution Manager (Token Balance Management)
-    - Data Synchronizer (Blockchain Sync + Liquidity Pools)
+    - Data Synchronizer (Blockchain Sync)
     - Holonic Evaluator (Ubuntu Principles)
 
 Design Compliance:
@@ -32,17 +32,10 @@ CLI Usage:
     # System Operations
     python main.py --mode health                    # Full system health
     python main.py --mode status                    # System status
+    python main.py --mode sync                      # Sync all data
     
-    # Data Layer Operations - ENHANCED WITH GRANULAR SYNC
-    python main.py --mode sync                      # Sync all data (default)
-    python main.py --mode sync --sync-type accounts # Sync accounts only
-    python main.py --mode sync --sync-type transactions  # Sync transactions only
-    python main.py --mode sync --sync-type operations    # Sync operations only
-    python main.py --mode sync --sync-type effects       # Sync effects only
-    python main.py --mode sync --sync-type balances      # Sync balances only
-    python main.py --mode sync --sync-type lp_only       # Sync liquidity pools only (NEW)
-    python main.py --mode sync --sync-type lp_only --asset-code UBEC  # Sync UBEC LPs
-    python main.py --mode discover --max-accounts 100    # Discover accounts
+    # Data Layer Operations
+    python main.py --mode discover --max-accounts 100  # Discover accounts
     python main.py --mode analytics --analysis-type summary  # Analytics
     
     # Protocol Operations
@@ -67,18 +60,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.3 (Added Liquidity Pool Sync + Granular Data Sync Control)
+Version: 4.2 (Added Dry-Run + Confirmation Workflow for Safety)
 Date: October 12, 2025
 
-Changes in v4.3:
-    - NEW: Added --sync-type parameter for granular sync control
-    - NEW: Added 'lp_only' sync type for liquidity pool data synchronization
-    - NEW: Enhanced run_sync() to support selective data types
-    - NEW: Implemented run_sync_liquidity_pools() for LP data
-    - IMPROVED: Better separation of sync operations per Principle #10
-    - IMPROVED: Enhanced documentation for all sync operations
-    - MAINTAINED: All safety features from v4.2 (dry-run, confirmation)
-    - MAINTAINED: All 12 design principles strictly enforced
+Changes in v4.2:
+    - CRITICAL: Added --dry-run flag for distribution rebalance preview
+    - CRITICAL: Added confirmation workflow before executing transactions
+    - Added preview display showing proposed operations
+    - Added validation checks before destructive operations
+    - Improved error handling and user feedback
+    - Added operation safety checks per financial software best practices
 """
 
 import os
@@ -594,49 +585,16 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
     return health_report
 
 
-async def run_sync(
-    services: Dict[str, Any],
-    sync_type: str = 'all',
-    asset_code: Optional[str] = None
-) -> Dict[str, Any]:
+async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -> Dict[str, Any]:
     """
-    Synchronize blockchain data to database with granular control.
+    Synchronize blockchain data to database.
     
     Args:
         services: Service instances
-        sync_type: Type of sync operation:
-            - 'all': Sync all data types (default)
-            - 'accounts': Sync account data only
-            - 'transactions': Sync transactions only
-            - 'operations': Sync operations only
-            - 'effects': Sync effects only
-            - 'balances': Sync balances only
-            - 'lp_only': Sync liquidity pool data only (NEW in v4.3)
-        asset_code: Optional specific asset to sync (e.g., 'UBEC', 'UBECrc')
+        asset_code: Optional specific asset to sync
         
     Returns:
-        dict: Sync results containing:
-            - timestamp: When sync was performed
-            - sync_type: Type of sync executed
-            - asset_code: Asset(s) synced
-            - result: Detailed sync results
-            - success: Boolean indicating overall success
-            
-    Design Notes:
-        - Implements Principle #10: Clear Separation of Concerns
-        - Each sync type has its own execution path
-        - Implements Principle #12: Method Singularity (no duplicate code)
-        - Implements Principle #5: Strict Async (all operations async)
-        
-    Examples:
-        >>> # Sync all data for all assets
-        >>> await run_sync(services, sync_type='all')
-        
-        >>> # Sync only liquidity pools for UBEC
-        >>> await run_sync(services, sync_type='lp_only', asset_code='UBEC')
-        
-        >>> # Sync only transactions for UBECrc
-        >>> await run_sync(services, sync_type='transactions', asset_code='UBECrc')
+        dict: Sync results
     """
     synchronizer = services.get('synchronizer')
     
@@ -646,86 +604,20 @@ async def run_sync(
             'timestamp': datetime.now().isoformat()
         }
     
-    logger.info(f"Starting sync operation (type={sync_type}, asset={asset_code or 'all'})...")
+    logger.info(f"Starting sync operation (asset_code={asset_code or 'all'})...")
     
     try:
-        result = {}
-        
-        # NEW in v4.3: Liquidity pool sync
-        if sync_type == 'lp_only':
-            result = await run_sync_liquidity_pools(services, asset_code)
-            
-        elif sync_type == 'accounts':
-            # Sync account data only
-            if asset_code:
-                result = await synchronizer.sync_account_data(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_account_data(code)
-                result = results
-                
-        elif sync_type == 'transactions':
-            # Sync transactions only
-            if asset_code:
-                result = await synchronizer.sync_transactions(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_transactions(code)
-                result = results
-                
-        elif sync_type == 'operations':
-            # Sync operations only
-            if asset_code:
-                result = await synchronizer.sync_operations(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_operations(code)
-                result = results
-                
-        elif sync_type == 'effects':
-            # Sync effects only
-            if asset_code:
-                result = await synchronizer.sync_effects(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_effects(code)
-                result = results
-                
-        elif sync_type == 'balances':
-            # Sync balances only
-            if asset_code:
-                result = await synchronizer.sync_balances(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_balances(code)
-                result = results
-                
-        elif sync_type == 'all':
-            # Sync everything (original behavior)
-            if asset_code:
-                result = await synchronizer.sync_account_data(asset_code)
-            else:
-                results = {}
-                for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    results[code] = await synchronizer.sync_account_data(code)
-                result = results
-        
+        if asset_code:
+            result = await synchronizer.sync_account_data(asset_code)
         else:
-            return {
-                'error': f'Unknown sync type: {sync_type}',
-                'available_types': ['all', 'accounts', 'transactions', 'operations', 
-                                   'effects', 'balances', 'lp_only'],
-                'timestamp': datetime.now().isoformat()
-            }
+            # Sync all UBEC family assets
+            results = {}
+            for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
+                results[code] = await synchronizer.sync_account_data(code)
+            result = results
         
         return {
             'timestamp': datetime.now().isoformat(),
-            'sync_type': sync_type,
             'asset_code': asset_code or 'all',
             'result': result,
             'success': True
@@ -733,181 +625,6 @@ async def run_sync(
         
     except Exception as e:
         logger.error(f"Sync error: {e}")
-        logger.exception("Full traceback:")
-        return {
-            'timestamp': datetime.now().isoformat(),
-            'sync_type': sync_type,
-            'error': str(e),
-            'success': False
-        }
-
-
-async def run_sync_liquidity_pools(
-    services: Dict[str, Any],
-    asset_code: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Synchronize liquidity pool data from Stellar network.
-    
-    NEW in v4.3: This function enables tracking of liquidity pool data,
-    which is essential for the Water Element (UBECrc) protocol's flow
-    and reciprocity metrics.
-    
-    Args:
-        services: Service instances
-        asset_code: Optional specific asset code (e.g., 'UBEC', 'UBECrc')
-        
-    Returns:
-        dict: Liquidity pool sync results containing:
-            - timestamp: When sync was performed
-            - sync_type: Always 'liquidity_pools'
-            - assets_synced: Number of assets processed
-            - total_pools: Total LP pools synced
-            - total_participants: Total LP token holders synced
-            - total_tvl: Total Value Locked across all pools
-            - results: Detailed results per asset
-            - success: Boolean indicating overall success
-            
-    Design Notes:
-        - Implements Principle #12: Method Singularity
-          This is the ONLY method for LP sync in the entire system
-        - Implements Principle #5: Strict Async
-          All operations use async/await patterns
-        - Implements Principle #9: Integrated Rate Limiting
-          Built-in rate limiting for API calls
-        - Implements Principle #4: Single Source of Truth
-          Database stores all LP data
-          
-    Functionality:
-        1. Discovers all liquidity pools involving UBEC tokens
-        2. Syncs pool composition (asset pairs, reserves)
-        3. Syncs pool participant positions (LP token holders)
-        4. Syncs pool operations (deposits, withdrawals)
-        5. Calculates aggregate metrics (TVL, participation)
-        
-    Water Element Connection:
-        LP data is critical for Water Element (UBECrc) metrics:
-        - Flow velocity: How quickly tokens move through pools
-        - Reciprocity: LP participation patterns
-        - Liquidity health: Pool balance and efficiency
-        
-    Examples:
-        >>> # Sync all LP data
-        >>> await run_sync_liquidity_pools(services)
-        
-        >>> # Sync only UBEC liquidity pools
-        >>> await run_sync_liquidity_pools(services, asset_code='UBEC')
-    """
-    synchronizer = services.get('synchronizer')
-    stellar_client = services.get('stellar_client')
-    config = services.get('config')
-    
-    if not synchronizer:
-        return {
-            'error': 'Synchronizer service not available',
-            'hint': 'Check that UBECDataSynchronizer initialized properly',
-            'timestamp': datetime.now().isoformat()
-        }
-    
-    if not stellar_client:
-        return {
-            'error': 'Stellar client not available - required for LP sync',
-            'hint': 'Check that ServerAsync initialized properly in initialize_services()',
-            'timestamp': datetime.now().isoformat()
-        }
-    
-    logger.info("="*70)
-    logger.info("LIQUIDITY POOL SYNCHRONIZATION")
-    logger.info("="*70)
-    
-    try:
-        # Check if synchronizer has LP sync method
-        if not hasattr(synchronizer, 'sync_liquidity_pools'):
-            return {
-                'error': 'Liquidity pool sync not implemented in synchronizer',
-                'message': 'Please add sync_liquidity_pools() method to UBECDataSynchronizer',
-                'recommendation': 'See LP_SYNC_IMPLEMENTATION_GUIDE.md for complete implementation',
-                'hint': 'The method should accept asset_code and asset_issuer parameters',
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        # Determine which assets to sync
-        assets_to_sync = []
-        if asset_code:
-            assets_to_sync = [asset_code]
-        else:
-            # Sync all UBEC family tokens
-            assets_to_sync = ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']
-        
-        # Initialize aggregate metrics
-        results = {}
-        total_pools = 0
-        total_participants = 0
-        total_tvl = 0.0
-        
-        # Sync each asset's liquidity pools
-        for code in assets_to_sync:
-            logger.info(f"Syncing liquidity pools for {code}...")
-            
-            try:
-                # Get issuer from config
-                if code == 'UBEC':
-                    issuer = config.UBEC_ISSUER
-                else:
-                    issuer = config.get(f'{code.lower()}_issuer', config.UBEC_ISSUER)
-                
-                # Call synchronizer's LP sync method
-                lp_result = await synchronizer.sync_liquidity_pools(
-                    asset_code=code,
-                    asset_issuer=issuer
-                )
-                
-                results[code] = lp_result
-                
-                # Aggregate metrics
-                if isinstance(lp_result, dict) and lp_result.get('success'):
-                    total_pools += lp_result.get('pools_synced', 0)
-                    total_participants += lp_result.get('participants_synced', 0)
-                    total_tvl += float(lp_result.get('total_tvl', 0))
-                    
-                    logger.info(f"✓ {code} LP sync complete: "
-                              f"{lp_result.get('pools_synced', 0)} pools, "
-                              f"{lp_result.get('participants_synced', 0)} participants")
-                else:
-                    logger.warning(f"LP sync for {code} returned unexpected result")
-                
-            except Exception as e:
-                logger.error(f"Failed to sync {code} liquidity pools: {e}")
-                results[code] = {
-                    'error': str(e),
-                    'success': False
-                }
-        
-        # Build summary
-        summary = {
-            'timestamp': datetime.now().isoformat(),
-            'sync_type': 'liquidity_pools',
-            'assets_synced': len([r for r in results.values() if isinstance(r, dict) and r.get('success')]),
-            'total_pools': total_pools,
-            'total_participants': total_participants,
-            'total_tvl': total_tvl,
-            'results': results,
-            'success': True
-        }
-        
-        logger.info("="*70)
-        logger.info(f"✓ LP SYNC COMPLETE")
-        logger.info(f"  Assets: {summary['assets_synced']}/{len(assets_to_sync)}")
-        logger.info(f"  Pools: {total_pools}")
-        logger.info(f"  Participants: {total_participants}")
-        logger.info(f"  Total Value Locked: {total_tvl:,.2f}")
-        logger.info("="*70)
-        
-        return summary
-        
-    except Exception as e:
-        logger.error(f"Liquidity pool sync error: {e}")
-        logger.exception("Full traceback:")
         return {
             'timestamp': datetime.now().isoformat(),
             'error': str(e),
@@ -1256,7 +973,7 @@ async def run_distribution_operation(
         services: Service instances
         action: Distribution action to perform
         dry_run: If True, preview operations without executing
-        **kwargs: Additional arguments (days, interval, etc.)
+        **kwargs: Additional arguments
         
     Returns:
         dict: Operation results
@@ -1595,24 +1312,15 @@ def parse_arguments() -> argparse.Namespace:
         Parsed arguments
     """
     parser = argparse.ArgumentParser(
-        description='UBEC Protocol Suite - Unified Management System (v4.3)',
+        description='UBEC Protocol Suite - Unified Management System',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # System Operations
   %(prog)s --mode health                          # System health
   %(prog)s --mode status                          # System status
-  
-  # Data Sync Operations - ENHANCED WITH GRANULAR CONTROL
-  %(prog)s --mode sync                            # Sync all data (default)
-  %(prog)s --mode sync --sync-type accounts       # Sync accounts only
-  %(prog)s --mode sync --sync-type transactions   # Sync transactions only
-  %(prog)s --mode sync --sync-type operations     # Sync operations only
-  %(prog)s --mode sync --sync-type effects        # Sync effects only
-  %(prog)s --mode sync --sync-type balances       # Sync balances only
-  %(prog)s --mode sync --sync-type lp_only        # Sync liquidity pools only (NEW)
-  %(prog)s --mode sync --sync-type lp_only --asset-code UBEC  # Sync UBEC LPs
-  %(prog)s --mode sync --asset-code UBECrc        # Sync specific asset (all data)
+  %(prog)s --mode sync                            # Sync all data
+  %(prog)s --mode sync --asset-code UBEC          # Sync specific asset
   
   # Data Operations
   %(prog)s --mode discover --max-accounts 100     # Discover accounts
@@ -1627,7 +1335,7 @@ Examples:
   
   # Distribution Management (with dry-run support)
   %(prog)s --mode distribution --action check-compliance
-  %(prog)s --mode distribution --action rebalance --dry-run    # PREVIEW
+  %(prog)s --mode distribution --action rebalance --dry-run    # PREVIEW ONLY
   %(prog)s --mode distribution --action rebalance              # EXECUTE
   %(prog)s --mode distribution --action status
   %(prog)s --mode distribution --action evaluate
@@ -1649,15 +1357,7 @@ Examples:
         help='Operation mode'
     )
     
-    # Sync options - ENHANCED in v4.3
-    parser.add_argument(
-        '--sync-type',
-        type=str,
-        choices=['all', 'accounts', 'transactions', 'operations', 'effects', 'balances', 'lp_only'],
-        default='all',
-        help='Type of data to sync (default: all). NEW in v4.3: lp_only for liquidity pools'
-    )
-    
+    # Sync options
     parser.add_argument(
         '--asset-code',
         type=str,
@@ -1798,12 +1498,7 @@ async def main_async(args: argparse.Namespace) -> int:
             result = await run_health_check(services)
         
         elif args.mode == 'sync':
-            # ENHANCED in v4.3: Use new sync function with sync_type parameter
-            result = await run_sync(
-                services,
-                sync_type=args.sync_type,
-                asset_code=args.asset_code
-            )
+            result = await run_sync(services, args.asset_code)
         
         elif args.mode == 'analytics':
             result = await run_analytics(services, args.analysis_type)
@@ -1851,8 +1546,6 @@ async def main_async(args: argparse.Namespace) -> int:
                 output = format_output(result, args.output)
                 print("\n" + "=" * 70)
                 print(f"UBEC Protocol - {args.mode.upper()} Result")
-                if args.mode == 'sync':
-                    print(f"Sync Type: {args.sync_type}")
                 print("=" * 70)
                 print(output)
                 print("=" * 70 + "\n")
@@ -1906,11 +1599,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    if args.mode == 'sync':
-        logger.info(f"Sync Type: {args.sync_type}")
-        if args.asset_code:
-            logger.info(f"Asset Code: {args.asset_code}")
-    logger.info(f"Version: 4.3 (Added LP Sync + Granular Data Sync Control)")
+    logger.info(f"Version: 4.2 (Added Dry-Run + Confirmation Workflow for Safety)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)

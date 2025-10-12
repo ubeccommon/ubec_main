@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """
-UBEC Protocol Suite - Database Schema Documentation Generator
+UBEC Protocol Suite - Comprehensive Multi-Schema Database Documentation Generator
 
 This project uses the services of Claude and Anthropic PBC to inform our 
 decisions and recommendations. This project was made possible with the 
 assistance of Claude and Anthropic PBC.
 
-Generates comprehensive documentation of the UBEC four-element protocol database:
-- Complete table structures with all columns
-- Element-specific tables (Air, Water, Earth, Fire)
-- Relationships between tables (foreign keys)
-- Indexes for performance optimization
-- Constraints ensuring data integrity
-- Triggers and their purposes
-- Functions and procedures
-- Ubuntu principle mappings
-- Statistical insights
+Generates comprehensive documentation across ALL schemas in the UBEC database:
+- Auto-discovers all available schemas
+- Documents ubec_main (Four-Element Protocol)
+- Documents phenomenal (Quantum Gravity Analysis)
+- Documents ubec_recipro (Legacy Reciprocity)
+- Documents any custom schemas
+- Cross-schema relationship tracking
+- Complete database overview
 
-Version: 3.0 - UBEC Four-Element Protocol Edition
-Date: October 9, 2025
+Version: 4.0 - Multi-Schema Comprehensive Edition
+Date: October 12, 2025
 """
 
 import psycopg2
@@ -27,7 +25,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 import logging
 import argparse
 from pathlib import Path
@@ -53,6 +51,14 @@ ELEMENTS = {
     'fire': {'symbol': '🜂', 'token': 'UBECtt', 'principle': 'Regeneration', 'role': 'Transformation & Action'}
 }
 
+# Known schema descriptions
+SCHEMA_DESCRIPTIONS = {
+    'ubec_main': 'Four-Element Protocol - Primary operational schema for UBEC token management',
+    'phenomenal': 'Phenomenological Quantum Gravity Schema - Advanced analytics and network topology',
+    'topology': 'PostGIS Topology Schema - Spatial network topology and geometric relationships',
+    'public': 'PostgreSQL default schema - PostGIS extensions and shared utilities'
+}
+
 
 def find_and_load_env_file():
     """Search for and load .env file from common locations."""
@@ -65,7 +71,7 @@ def find_and_load_env_file():
         current_path / '.env',
         current_path.parent / '.env',
         current_path.parent.parent / '.env',
-        Path('/home/triag/UBEC/projects/UBEC') / '.env',  # UBEC project path
+        Path('/home/triag/UBEC/projects/UBEC') / '.env',
     ]
     
     for env_path in paths_to_check:
@@ -82,7 +88,6 @@ def get_database_config():
     """Get database configuration from environment with UBEC-specific fallbacks."""
     find_and_load_env_file()
     
-    # First check for DATABASE_URL
     database_url = os.environ.get('DATABASE_URL')
     
     if database_url:
@@ -91,7 +96,6 @@ def get_database_config():
         logger.info(f"Parsed config: {config['user']}@{config['host']}:{config['port']}/{config['database']}")
         return config
     
-    # UBEC-specific environment variables with fallbacks
     config = {
         'host': os.environ.get('UBEC_DB_HOST') or os.environ.get('DB_HOST') or 'localhost',
         'port': int(os.environ.get('UBEC_DB_PORT') or os.environ.get('DB_PORT') or 5432),
@@ -100,7 +104,6 @@ def get_database_config():
         'password': os.environ.get('UBEC_DB_PASSWORD') or os.environ.get('DB_PASSWORD')
     }
     
-    # Password is optional for peer authentication
     if not config['password']:
         logger.warning("No password found - attempting peer authentication")
     
@@ -110,11 +113,7 @@ def get_database_config():
 
 
 def parse_database_url(url: str) -> Dict[str, Any]:
-    """
-    Parse DATABASE_URL connection string.
-    
-    Format: postgresql://user:password@host:port/database
-    """
+    """Parse DATABASE_URL connection string."""
     from urllib.parse import urlparse, unquote
     
     parsed = urlparse(url)
@@ -132,35 +131,34 @@ def parse_database_url(url: str) -> Dict[str, Any]:
     return config
 
 
-class UBECSchemaDocumenter:
-    """UBEC Protocol Suite database schema documentation generator."""
+class UBECComprehensiveDocumenter:
+    """Comprehensive multi-schema database documentation generator."""
     
-    def __init__(self, connection_params: Dict[str, Any], schema_name: str = 'ubec_main'):
+    def __init__(self, connection_params: Dict[str, Any], 
+                 schemas: Optional[List[str]] = None,
+                 exclude_system_schemas: bool = True):
         """
-        Initialize UBEC schema documenter.
+        Initialize comprehensive documenter.
         
         Args:
             connection_params: Database connection parameters
-            schema_name: PostgreSQL schema to document (default: 'ubec_main')
+            schemas: Specific schemas to document (None = auto-discover all)
+            exclude_system_schemas: Exclude pg_* and information_schema
         """
         self.connection_params = connection_params
-        self.schema_name = schema_name
+        self.requested_schemas = schemas
+        self.exclude_system_schemas = exclude_system_schemas
         self.conn = None
+        self.discovered_schemas = []
         self.documentation = {
             'metadata': {},
-            'ubec_protocol': {
-                'elements': ELEMENTS,
-                'element_tables': {},
-                'custom_types': {},
-                'ubuntu_principles': {}
-            },
-            'tables': {},
-            'relationships': [],
-            'indexes': {},
-            'triggers': {},
-            'functions': {},
-            'views': {},
-            'summary': {}
+            'database_overview': {},
+            'schemas': {},
+            'cross_schema_analysis': {
+                'total_tables': 0,
+                'total_relationships': 0,
+                'schema_dependencies': []
+            }
         }
         
     def connect(self):
@@ -175,7 +173,7 @@ class UBECSchemaDocumenter:
             elif "Connection refused" in str(e):
                 logger.error("Connection refused. Is PostgreSQL running?")
             elif "does not exist" in str(e):
-                logger.error(f"Database '{self.connection_params['database']}' does not exist. Run ubec_database_setup.sql first.")
+                logger.error(f"Database '{self.connection_params['database']}' does not exist.")
             else:
                 logger.error(f"Connection error: {e}")
             raise
@@ -185,33 +183,89 @@ class UBECSchemaDocumenter:
         if self.conn:
             self.conn.close()
             logger.info("Database connection closed")
-            
-    def generate_documentation(self) -> Dict[str, Any]:
-        """Generate complete UBEC schema documentation."""
-        logger.info(f"Documenting UBEC schema: '{self.schema_name}'")
+    
+    def discover_schemas(self) -> List[str]:
+        """Discover all available schemas in the database."""
+        cursor = self.conn.cursor()
         
         try:
-            self._document_metadata()
-            self._document_custom_types()
-            self._document_tables()
-            self._document_element_tables()
-            self._document_views()
-            self._document_relationships()
-            self._document_indexes()
-            self._document_triggers()
-            self._document_functions()
-            self._generate_summary()
+            query = """
+                SELECT schema_name, 
+                       COUNT(table_name) as table_count
+                FROM information_schema.schemata s
+                LEFT JOIN information_schema.tables t 
+                    ON s.schema_name = t.table_schema 
+                    AND t.table_type = 'BASE TABLE'
+                WHERE 1=1
+            """
             
-            logger.info("UBEC documentation generated successfully")
+            if self.exclude_system_schemas:
+                query += """
+                    AND schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+                    AND schema_name NOT LIKE 'pg_%'
+                """
+            
+            query += """
+                GROUP BY schema_name
+                ORDER BY table_count DESC, schema_name
+            """
+            
+            cursor.execute(query)
+            schemas_info = cursor.fetchall()
+            
+            schemas = []
+            logger.info("Discovered schemas:")
+            for schema_name, table_count in schemas_info:
+                schemas.append(schema_name)
+                table_desc = f"{table_count} tables" if table_count > 0 else "empty"
+                logger.info(f"  - {schema_name}: {table_desc}")
+            
+            return schemas
+            
+        finally:
+            cursor.close()
+    
+    def generate_documentation(self) -> Dict[str, Any]:
+        """Generate comprehensive multi-schema documentation."""
+        logger.info("Starting comprehensive database documentation...")
+        
+        try:
+            # Document database metadata
+            self._document_database_metadata()
+            
+            # Discover schemas
+            if self.requested_schemas:
+                self.discovered_schemas = self.requested_schemas
+                logger.info(f"Using requested schemas: {self.requested_schemas}")
+            else:
+                self.discovered_schemas = self.discover_schemas()
+                logger.info(f"Auto-discovered {len(self.discovered_schemas)} schemas")
+            
+            # Document each schema
+            for schema_name in self.discovered_schemas:
+                logger.info(f"\n{'='*70}")
+                logger.info(f"Documenting schema: {schema_name}")
+                logger.info(f"{'='*70}")
+                
+                schema_doc = self._document_schema(schema_name)
+                self.documentation['schemas'][schema_name] = schema_doc
+            
+            # Cross-schema analysis
+            self._analyze_cross_schema_relationships()
+            
+            # Generate overview
+            self._generate_database_overview()
+            
+            logger.info("\n✅ Comprehensive documentation generated successfully")
             
         except Exception as e:
             logger.error(f"Error during documentation: {e}")
             raise
             
         return self.documentation
-        
-    def _document_metadata(self):
-        """Document database metadata with UBEC protocol info."""
+    
+    def _document_database_metadata(self):
+        """Document database-level metadata."""
         cursor = self.conn.cursor()
         
         try:
@@ -227,90 +281,107 @@ class UBECSchemaDocumenter:
             """)
             db_size = cursor.fetchone()
             
-            # Check if schema exists
+            # Total schemas
             cursor.execute("""
-                SELECT EXISTS(
-                    SELECT 1 FROM information_schema.schemata 
-                    WHERE schema_name = %s
-                )
-            """, (self.schema_name,))
-            schema_exists = cursor.fetchone()[0]
+                SELECT COUNT(DISTINCT schema_name)
+                FROM information_schema.schemata
+                WHERE schema_name NOT LIKE 'pg_%'
+                AND schema_name != 'information_schema'
+            """)
+            total_schemas = cursor.fetchone()[0]
             
-            if not schema_exists:
-                logger.warning(f"Schema '{self.schema_name}' does not exist!")
-                
+            # Total tables
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema NOT LIKE 'pg_%'
+                AND table_schema != 'information_schema'
+                AND table_type = 'BASE TABLE'
+            """)
+            total_tables = cursor.fetchone()[0]
+            
             self.documentation['metadata'] = {
                 'generated_at': datetime.now().isoformat(),
-                'schema_name': self.schema_name,
-                'schema_exists': schema_exists,
                 'database_name': self.connection_params['database'],
+                'database_host': self.connection_params['host'],
                 'database_version': pg_version.split(',')[0] if pg_version else 'Unknown',
                 'database_size': {
                     'bytes': db_size[0] if db_size else 0,
                     'human_readable': db_size[1] if db_size else 'Unknown'
                 },
-                'protocol_version': 'Four-Element Protocol v1.0',
-                'documentation_version': '3.0',
-                'generator': 'UBEC Protocol Schema Documenter'
+                'total_schemas': total_schemas,
+                'total_tables': total_tables,
+                'documentation_version': '4.0 - Multi-Schema',
+                'generator': 'UBEC Comprehensive Schema Documenter'
             }
             
         finally:
             cursor.close()
             
-        logger.info("Metadata documented")
+        logger.info("Database metadata documented")
     
-    def _document_custom_types(self):
-        """Document UBEC-specific custom types."""
+    def _document_schema(self, schema_name: str) -> Dict[str, Any]:
+        """Document a single schema comprehensively."""
+        schema_doc = {
+            'schema_name': schema_name,
+            'description': SCHEMA_DESCRIPTIONS.get(schema_name, 'Custom schema'),
+            'tables': {},
+            'views': {},
+            'functions': {},
+            'triggers': {},
+            'indexes': {},
+            'relationships': [],
+            'custom_types': {},
+            'statistics': {}
+        }
+        
+        # Get schema-specific info
         cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
         try:
-            # Get custom enum types
+            # Schema comment
             cursor.execute("""
-                SELECT 
-                    t.typname as type_name,
-                    array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
-                FROM pg_type t
-                JOIN pg_enum e ON t.oid = e.enumtypid
-                JOIN pg_namespace n ON n.oid = t.typnamespace
-                WHERE n.nspname = %s
-                GROUP BY t.typname
-                ORDER BY t.typname
-            """, (self.schema_name,))
+                SELECT obj_description(oid, 'pg_namespace') as description
+                FROM pg_namespace
+                WHERE nspname = %s
+            """, (schema_name,))
+            result = cursor.fetchone()
+            if result and result['description']:
+                schema_doc['description'] = result['description']
             
-            custom_types = {}
-            for row in cursor.fetchall():
-                type_name = row['type_name']
-                enum_values = row['enum_values']
-                
-                # Add descriptions for UBEC types
-                description = self._get_type_description(type_name)
-                
-                custom_types[type_name] = {
-                    'values': enum_values,
-                    'description': description
-                }
+            # Tables
+            schema_doc['tables'] = self._document_tables(schema_name)
             
-            self.documentation['ubec_protocol']['custom_types'] = custom_types
-            logger.info(f"Documented {len(custom_types)} custom types")
+            # Views
+            schema_doc['views'] = self._document_views(schema_name)
+            
+            # Custom types
+            schema_doc['custom_types'] = self._document_custom_types(schema_name)
+            
+            # Relationships
+            schema_doc['relationships'] = self._document_relationships(schema_name)
+            
+            # Indexes
+            schema_doc['indexes'] = self._document_indexes(schema_name)
+            
+            # Triggers
+            schema_doc['triggers'] = self._document_triggers(schema_name)
+            
+            # Functions
+            schema_doc['functions'] = self._document_functions(schema_name)
+            
+            # Statistics
+            schema_doc['statistics'] = self._generate_schema_statistics(schema_doc)
             
         finally:
             cursor.close()
-    
-    def _get_type_description(self, type_name: str) -> str:
-        """Get description for UBEC custom types."""
-        descriptions = {
-            'element_type': 'Four elements: air=UBEC (Gateway), water=UBECrc (Flow), earth=UBECgpi (Stability), fire=UBECtt (Transformation)',
-            'token_code': 'Four UBEC protocol tokens',
-            'ubuntu_principle': 'Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism',
-            'distribution_category': 'Token distribution categories: 75% general, 20% stewardship, 5% administration',
-            'health_status': 'System health indicators',
-            'transaction_type': 'Stellar transaction operation types'
-        }
-        return descriptions.get(type_name, 'Custom type')
         
-    def _document_tables(self):
-        """Document all tables in the UBEC schema."""
+        return schema_doc
+    
+    def _document_tables(self, schema_name: str) -> Dict[str, Any]:
+        """Document all tables in a schema."""
         cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        tables = {}
         
         try:
             # Get all tables
@@ -322,21 +393,15 @@ class UBECSchemaDocumenter:
                 WHERE t.table_schema = %s 
                 AND t.table_type = 'BASE TABLE'
                 ORDER BY t.table_name
-            """, (self.schema_name,))
+            """, (schema_name,))
             
-            tables = cursor.fetchall()
-            logger.info(f"Found {len(tables)} tables in schema '{self.schema_name}'")
+            table_list = cursor.fetchall()
             
-            if len(tables) == 0:
-                logger.warning(f"No tables found in schema '{self.schema_name}'")
-                return
-            
-            for row in tables:
+            for row in table_list:
                 table_name = row['table_name']
                 table_comment = row['table_comment']
-                logger.info(f"Documenting table: {table_name}")
                 
-                # Get columns with descriptions
+                # Get columns
                 cursor.execute("""
                     SELECT 
                         c.column_name,
@@ -353,7 +418,7 @@ class UBECSchemaDocumenter:
                     WHERE c.table_schema = %s 
                     AND c.table_name = %s
                     ORDER BY c.ordinal_position
-                """, (self.schema_name, table_name, self.schema_name, table_name))
+                """, (schema_name, table_name, schema_name, table_name))
                 
                 columns = []
                 for col in cursor.fetchall():
@@ -385,7 +450,7 @@ class UBECSchemaDocumenter:
                     WHERE nsp.nspname = %s
                     AND cls.relname = %s
                     ORDER BY con.conname
-                """, (self.schema_name, table_name))
+                """, (schema_name, table_name))
                 
                 constraint_type_map = {
                     'p': 'PRIMARY KEY',
@@ -405,7 +470,7 @@ class UBECSchemaDocumenter:
                 
                 # Get table statistics
                 try:
-                    qualified_table = f'"{self.schema_name}"."{table_name}"'
+                    qualified_table = f'"{schema_name}"."{table_name}"'
                     cursor.execute(f"""
                         SELECT 
                             COUNT(*) as row_count,
@@ -425,55 +490,25 @@ class UBECSchemaDocumenter:
                     else:
                         stats = {'row_count': 0, 'total_size': 'Unknown', 'table_size': 'Unknown', 'index_size': 'Unknown'}
                 except Exception as e:
-                    logger.warning(f"Could not get stats for {table_name}: {e}")
+                    logger.debug(f"Could not get stats for {schema_name}.{table_name}: {e}")
                     stats = {'row_count': 0, 'total_size': 'Unknown', 'table_size': 'Unknown', 'index_size': 'Unknown'}
                 
-                self.documentation['tables'][table_name] = {
+                tables[table_name] = {
                     'comment': table_comment,
                     'columns': columns,
                     'constraints': constraints,
-                    'statistics': {
-                        'row_count': stats['row_count'],
-                        'total_size': stats['total_size'],
-                        'table_size': stats['table_size'],
-                        'index_size': stats['index_size']
-                    }
+                    'statistics': stats
                 }
                 
         finally:
             cursor.close()
-            
-        logger.info(f"Documented {len(self.documentation['tables'])} tables")
-    
-    def _document_element_tables(self):
-        """Document element-specific tables and their relationships."""
-        element_tables = {
-            'air': [],
-            'water': [],
-            'earth': [],
-            'fire': [],
-            'core': []
-        }
         
-        # Classify tables by element
-        for table_name in self.documentation['tables'].keys():
-            if 'air' in table_name.lower() or table_name.lower().startswith('ubec_') and 'rc' not in table_name.lower():
-                element_tables['air'].append(table_name)
-            elif 'water' in table_name.lower() or 'rc' in table_name.lower() or 'flow' in table_name.lower():
-                element_tables['water'].append(table_name)
-            elif 'earth' in table_name.lower() or 'gpi' in table_name.lower() or 'stability' in table_name.lower() or 'distribution' in table_name.lower():
-                element_tables['earth'].append(table_name)
-            elif 'fire' in table_name.lower() or 'tt' in table_name.lower() or 'transformation' in table_name.lower() or 'audit' in table_name.lower():
-                element_tables['fire'].append(table_name)
-            elif 'stellar' in table_name.lower() or 'holonic' in table_name.lower() or 'balance' in table_name.lower():
-                element_tables['core'].append(table_name)
-        
-        self.documentation['ubec_protocol']['element_tables'] = element_tables
-        logger.info("Documented element-specific tables")
+        return tables
     
-    def _document_views(self):
-        """Document database views."""
+    def _document_views(self, schema_name: str) -> Dict[str, Any]:
+        """Document views in a schema."""
         cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        views = {}
         
         try:
             cursor.execute("""
@@ -483,44 +518,63 @@ class UBECSchemaDocumenter:
                 FROM information_schema.views
                 WHERE table_schema = %s
                 ORDER BY table_name
-            """, (self.schema_name,))
+            """, (schema_name,))
             
-            views = {}
             for row in cursor.fetchall():
                 views[row['table_name']] = {
                     'definition': row['view_definition']
                 }
-            
-            self.documentation['views'] = views
-            logger.info(f"Documented {len(views)} views")
-            
+                
         finally:
             cursor.close()
         
-    def _format_data_type(self, data_type: str, char_length: Optional[int],
-                         numeric_precision: Optional[int], numeric_scale: Optional[int]) -> str:
-        """Format data type with parameters."""
-        if data_type == 'character varying' and char_length:
-            return f"varchar({char_length})"
-        elif data_type == 'character' and char_length:
-            return f"char({char_length})"
-        elif data_type == 'numeric' and numeric_precision:
-            if numeric_scale and numeric_scale > 0:
-                return f"numeric({numeric_precision},{numeric_scale})"
-            return f"numeric({numeric_precision})"
-        elif data_type == 'USER-DEFINED':
-            return 'enum'
-        return data_type
+        return views
+    
+    def _document_custom_types(self, schema_name: str) -> Dict[str, Any]:
+        """Document custom types in a schema."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        custom_types = {}
+        
+        try:
+            # Get custom enum types
+            cursor.execute("""
+                SELECT 
+                    t.typname as type_name,
+                    array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
+                FROM pg_type t
+                JOIN pg_enum e ON t.oid = e.enumtypid
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+                WHERE n.nspname = %s
+                GROUP BY t.typname
+                ORDER BY t.typname
+            """, (schema_name,))
             
-    def _document_relationships(self):
-        """Document foreign key relationships."""
+            for row in cursor.fetchall():
+                type_name = row['type_name']
+                enum_values = row['enum_values']
+                
+                custom_types[type_name] = {
+                    'type': 'enum',
+                    'values': enum_values
+                }
+                
+        finally:
+            cursor.close()
+        
+        return custom_types
+    
+    def _document_relationships(self, schema_name: str) -> List[Dict[str, Any]]:
+        """Document foreign key relationships in a schema."""
         cursor = self.conn.cursor()
+        relationships = []
         
         try:
             cursor.execute("""
                 SELECT 
+                    tc.table_schema as from_schema,
                     tc.table_name as from_table,
                     kcu.column_name as from_column,
+                    ccu.table_schema as to_schema,
                     ccu.table_name as to_table,
                     ccu.column_name as to_column,
                     tc.constraint_name,
@@ -537,30 +591,31 @@ class UBECSchemaDocumenter:
                 WHERE tc.table_schema = %s
                 AND tc.constraint_type = 'FOREIGN KEY'
                 ORDER BY tc.table_name, tc.constraint_name
-            """, (self.schema_name,))
+            """, (schema_name,))
             
-            relationships = []
             for row in cursor.fetchall():
                 relationships.append({
-                    'from_table': row[0],
-                    'from_column': row[1],
-                    'to_table': row[2],
-                    'to_column': row[3],
-                    'constraint_name': row[4],
-                    'update_rule': row[5],
-                    'delete_rule': row[6],
-                    'relationship_type': 'many-to-one'
+                    'from_schema': row[0],
+                    'from_table': row[1],
+                    'from_column': row[2],
+                    'to_schema': row[3],
+                    'to_table': row[4],
+                    'to_column': row[5],
+                    'constraint_name': row[6],
+                    'update_rule': row[7],
+                    'delete_rule': row[8],
+                    'is_cross_schema': row[0] != row[3]
                 })
                 
-            self.documentation['relationships'] = relationships
-            logger.info(f"Documented {len(relationships)} relationships")
-            
         finally:
             cursor.close()
-            
-    def _document_indexes(self):
-        """Document indexes."""
+        
+        return relationships
+    
+    def _document_indexes(self, schema_name: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Document indexes in a schema."""
         cursor = self.conn.cursor()
+        indexes_by_table = {}
         
         try:
             cursor.execute("""
@@ -571,9 +626,8 @@ class UBECSchemaDocumenter:
                 FROM pg_indexes
                 WHERE schemaname = %s
                 ORDER BY tablename, indexname
-            """, (self.schema_name,))
+            """, (schema_name,))
             
-            indexes_by_table = {}
             for row in cursor.fetchall():
                 index_name, table_name, index_def = row
                 
@@ -589,17 +643,16 @@ class UBECSchemaDocumenter:
                     'is_unique': is_unique,
                     'is_primary': is_primary
                 })
-            
-            self.documentation['indexes'] = indexes_by_table
-            total = sum(len(idxs) for idxs in indexes_by_table.values())
-            logger.info(f"Documented {total} indexes")
-            
+                
         finally:
             cursor.close()
-            
-    def _document_triggers(self):
-        """Document triggers."""
+        
+        return indexes_by_table
+    
+    def _document_triggers(self, schema_name: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Document triggers in a schema."""
         cursor = self.conn.cursor()
+        triggers_by_table = {}
         
         try:
             cursor.execute("""
@@ -613,9 +666,8 @@ class UBECSchemaDocumenter:
                 FROM information_schema.triggers
                 WHERE trigger_schema = %s
                 ORDER BY event_object_table, trigger_name
-            """, (self.schema_name,))
+            """, (schema_name,))
             
-            triggers_by_table = {}
             for row in cursor.fetchall():
                 trigger_name, table_name, event, timing, orientation, action = row
                 
@@ -630,20 +682,18 @@ class UBECSchemaDocumenter:
                     'action': action
                 })
                 
-            self.documentation['triggers'] = triggers_by_table
-            total = sum(len(trgs) for trgs in triggers_by_table.values())
-            logger.info(f"Documented {total} triggers")
-            
         except Exception as e:
-            logger.warning(f"Could not document triggers: {e}")
-            self.documentation['triggers'] = {}
+            logger.debug(f"Could not document triggers for {schema_name}: {e}")
             
         finally:
             cursor.close()
-            
-    def _document_functions(self):
-        """Document functions and procedures."""
+        
+        return triggers_by_table
+    
+    def _document_functions(self, schema_name: str) -> List[Dict[str, Any]]:
+        """Document functions in a schema."""
         cursor = self.conn.cursor()
+        functions = []
         
         try:
             try:
@@ -660,7 +710,7 @@ class UBECSchemaDocumenter:
                     WHERE n.nspname = %s
                     AND p.prokind IN ('f', 'p')
                     ORDER BY p.proname
-                """, (self.schema_name,))
+                """, (schema_name,))
             except psycopg2.ProgrammingError:
                 self.conn.rollback()
                 cursor = self.conn.cursor()
@@ -677,9 +727,8 @@ class UBECSchemaDocumenter:
                     WHERE n.nspname = %s
                     AND NOT p.proisagg
                     ORDER BY p.proname
-                """, (self.schema_name,))
+                """, (schema_name,))
             
-            functions = []
             for row in cursor.fetchall():
                 functions.append({
                     'name': row[0],
@@ -689,60 +738,139 @@ class UBECSchemaDocumenter:
                     'description': row[4]
                 })
                 
-            self.documentation['functions'] = functions
-            logger.info(f"Documented {len(functions)} functions")
-            
         except Exception as e:
-            logger.warning(f"Could not document functions: {e}")
-            self.documentation['functions'] = []
+            logger.debug(f"Could not document functions for {schema_name}: {e}")
             if self.conn:
                 self.conn.rollback()
             
         finally:
             cursor.close()
-            
-    def _generate_summary(self):
-        """Generate summary statistics."""
-        summary = {
-            'total_tables': len(self.documentation['tables']),
-            'total_columns': sum(len(t['columns']) for t in self.documentation['tables'].values()),
-            'total_relationships': len(self.documentation['relationships']),
-            'total_indexes': sum(len(idxs) for idxs in self.documentation['indexes'].values()),
-            'total_triggers': sum(len(trgs) for trgs in self.documentation['triggers'].values()),
-            'total_functions': len(self.documentation['functions']),
-            'total_views': len(self.documentation['views']),
-            'total_custom_types': len(self.documentation['ubec_protocol']['custom_types']),
-            'tables_by_size': [],
-            'tables_by_element': {}
+        
+        return functions
+    
+    def _generate_schema_statistics(self, schema_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate statistics for a schema."""
+        stats = {
+            'total_tables': len(schema_doc['tables']),
+            'total_columns': sum(len(t['columns']) for t in schema_doc['tables'].values()),
+            'total_views': len(schema_doc['views']),
+            'total_relationships': len(schema_doc['relationships']),
+            'total_indexes': sum(len(idxs) for idxs in schema_doc['indexes'].values()),
+            'total_triggers': sum(len(trgs) for trgs in schema_doc['triggers'].values()),
+            'total_functions': len(schema_doc['functions']),
+            'total_custom_types': len(schema_doc['custom_types']),
+            'total_rows': 0,
+            'tables_by_size': []
         }
         
-        # Sort tables by row count
-        for table_name, table_info in self.documentation['tables'].items():
-            stats = table_info.get('statistics', {})
-            row_count = stats.get('row_count', 0)
-            total_size = stats.get('total_size', 'Unknown')
+        # Calculate total rows and sort tables by size
+        for table_name, table_info in schema_doc['tables'].items():
+            row_count = table_info.get('statistics', {}).get('row_count', 0)
+            stats['total_rows'] += row_count
             
-            summary['tables_by_size'].append({
+            stats['tables_by_size'].append({
                 'table': table_name,
-                'rows': row_count if row_count is not None else 0,
-                'size': total_size if total_size is not None else 'Unknown'
+                'rows': row_count,
+                'size': table_info.get('statistics', {}).get('total_size', 'Unknown')
             })
         
-        summary['tables_by_size'].sort(key=lambda x: x['rows'], reverse=True)
+        stats['tables_by_size'].sort(key=lambda x: x['rows'], reverse=True)
         
-        # Count tables by element
-        element_tables = self.documentation['ubec_protocol']['element_tables']
-        for element, tables in element_tables.items():
-            summary['tables_by_element'][element] = len(tables)
+        return stats
+    
+    def _analyze_cross_schema_relationships(self):
+        """Analyze relationships that cross schema boundaries."""
+        cross_schema_rels = []
         
-        self.documentation['summary'] = summary
-        logger.info("Summary generated")
+        for schema_name, schema_doc in self.documentation['schemas'].items():
+            for rel in schema_doc['relationships']:
+                if rel.get('is_cross_schema'):
+                    cross_schema_rels.append({
+                        'from': f"{rel['from_schema']}.{rel['from_table']}.{rel['from_column']}",
+                        'to': f"{rel['to_schema']}.{rel['to_table']}.{rel['to_column']}",
+                        'constraint': rel['constraint_name']
+                    })
         
+        self.documentation['cross_schema_analysis']['cross_schema_relationships'] = cross_schema_rels
+        self.documentation['cross_schema_analysis']['total_cross_schema_relationships'] = len(cross_schema_rels)
+        
+        # Calculate dependencies between schemas
+        schema_deps = {}
+        for rel in cross_schema_rels:
+            from_schema = rel['from'].split('.')[0]
+            to_schema = rel['to'].split('.')[0]
+            
+            if from_schema not in schema_deps:
+                schema_deps[from_schema] = set()
+            schema_deps[from_schema].add(to_schema)
+        
+        # Convert sets to lists for JSON serialization
+        self.documentation['cross_schema_analysis']['schema_dependencies'] = {
+            k: list(v) for k, v in schema_deps.items()
+        }
+    
+    def _generate_database_overview(self):
+        """Generate overall database overview."""
+        overview = {
+            'schemas': {},
+            'totals': {
+                'tables': 0,
+                'columns': 0,
+                'views': 0,
+                'relationships': 0,
+                'indexes': 0,
+                'triggers': 0,
+                'functions': 0,
+                'custom_types': 0,
+                'rows': 0
+            }
+        }
+        
+        for schema_name, schema_doc in self.documentation['schemas'].items():
+            stats = schema_doc['statistics']
+            
+            overview['schemas'][schema_name] = {
+                'description': schema_doc['description'],
+                'tables': stats['total_tables'],
+                'rows': stats['total_rows'],
+                'views': stats['total_views'],
+                'functions': stats['total_functions']
+            }
+            
+            # Add to totals
+            overview['totals']['tables'] += stats['total_tables']
+            overview['totals']['columns'] += stats['total_columns']
+            overview['totals']['views'] += stats['total_views']
+            overview['totals']['relationships'] += stats['total_relationships']
+            overview['totals']['indexes'] += stats['total_indexes']
+            overview['totals']['triggers'] += stats['total_triggers']
+            overview['totals']['functions'] += stats['total_functions']
+            overview['totals']['custom_types'] += stats['total_custom_types']
+            overview['totals']['rows'] += stats['total_rows']
+        
+        self.documentation['database_overview'] = overview
+    
+    def _format_data_type(self, data_type: str, char_length: Optional[int],
+                         numeric_precision: Optional[int], numeric_scale: Optional[int]) -> str:
+        """Format data type with parameters."""
+        if data_type == 'character varying' and char_length:
+            return f"varchar({char_length})"
+        elif data_type == 'character' and char_length:
+            return f"char({char_length})"
+        elif data_type == 'numeric' and numeric_precision:
+            if numeric_scale and numeric_scale > 0:
+                return f"numeric({numeric_precision},{numeric_scale})"
+            return f"numeric({numeric_precision})"
+        elif data_type == 'USER-DEFINED':
+            return 'enum'
+        return data_type
+    
     def save_documentation(self, output_format: str = 'markdown', output_file: str = None):
-        """Save documentation to file."""
+        """Save comprehensive documentation to file."""
         if not output_file:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_file = f"ubec_schema_doc_{self.schema_name}_{timestamp}"
+            db_name = self.connection_params['database']
+            output_file = f"ubec_comprehensive_doc_{db_name}_{timestamp}"
             
         if output_format == 'markdown':
             self._save_as_markdown(f"{output_file}.md")
@@ -750,235 +878,259 @@ class UBECSchemaDocumenter:
             self._save_as_json(f"{output_file}.json")
         else:
             raise ValueError(f"Unsupported format: {output_format}")
-            
+    
     def _save_as_markdown(self, filename: str):
-        """Save as Markdown file with UBEC protocol formatting."""
-        with open(filename, 'w', encoding='utf-8') as f:
-            meta = self.documentation['metadata']
-            summary = self.documentation['summary']
-            protocol = self.documentation['ubec_protocol']
-            
-            # Header with UBEC branding
-            f.write(f"# UBEC Protocol Suite - Database Schema Documentation\n\n")
-            f.write(f"## 🜁 🜄 🜃 🜂 Four-Element Protocol\n\n")
-            f.write(f"**Schema:** `{meta['schema_name']}`  \n")
-            f.write(f"**Database:** `{meta['database_name']}`  \n")
-            f.write(f"**Generated:** {meta['generated_at']}  \n")
-            f.write(f"**PostgreSQL Version:** {meta['database_version']}  \n")
-            f.write(f"**Protocol Version:** {meta['protocol_version']}  \n\n")
-            
-            if not meta['schema_exists']:
-                f.write("⚠️ **WARNING: Schema does not exist!**\n\n")
-                f.write("Please run `ubec_database_setup.sql` to create the schema.\n\n")
-                return
-            
-            # Four Elements Overview
-            f.write("## The Four Elements\n\n")
-            for element, info in ELEMENTS.items():
-                f.write(f"### {info['symbol']} {element.title()} - {info['token']}\n\n")
-                f.write(f"- **Ubuntu Principle:** {info['principle']}\n")
-                f.write(f"- **Role:** {info['role']}\n")
-                tables = protocol['element_tables'].get(element, [])
-                if tables:
-                    f.write(f"- **Tables:** {', '.join(f'`{t}`' for t in tables)}\n")
-                f.write("\n")
-            
-            # Core Infrastructure
-            core_tables = protocol['element_tables'].get('core', [])
-            if core_tables:
-                f.write(f"### Core Infrastructure Tables\n\n")
-                f.write(f"Shared tables used across all elements:\n\n")
-                for table in core_tables:
-                    f.write(f"- `{table}`\n")
-                f.write("\n")
-            
-            # Custom Types
-            if protocol['custom_types']:
-                f.write("## Custom Types\n\n")
-                for type_name, type_info in protocol['custom_types'].items():
-                    f.write(f"### {type_name}\n\n")
-                    f.write(f"{type_info['description']}\n\n")
-                    f.write(f"**Values:** {', '.join(f'`{v}`' for v in type_info['values'])}\n\n")
-            
-            # Summary
-            f.write("## Database Summary\n\n")
-            f.write(f"- **Total Tables:** {summary['total_tables']}\n")
-            f.write(f"- **Total Columns:** {summary['total_columns']}\n")
-            f.write(f"- **Total Relationships:** {summary['total_relationships']}\n")
-            f.write(f"- **Total Indexes:** {summary['total_indexes']}\n")
-            f.write(f"- **Total Views:** {summary['total_views']}\n")
-            f.write(f"- **Total Functions:** {summary['total_functions']}\n")
-            f.write(f"- **Total Custom Types:** {summary['total_custom_types']}\n")
-            f.write(f"- **Database Size:** {meta['database_size']['human_readable']}\n\n")
-            
-            # Tables by Element
-            f.write("### Tables by Element\n\n")
-            for element, count in summary['tables_by_element'].items():
-                symbol = ELEMENTS.get(element, {}).get('symbol', '📊')
-                f.write(f"- {symbol} **{element.title()}:** {count} tables\n")
-            f.write("\n")
-            
-            if summary['total_tables'] == 0:
-                f.write("**No tables found in this schema.**\n\n")
-                return
-            
-            # Tables by Size
-            f.write("### Largest Tables\n\n")
-            f.write("| Table | Rows | Size |\n")
-            f.write("|-------|------|------|\n")
-            for table_info in summary['tables_by_size'][:10]:
-                rows = table_info.get('rows', 0)
-                size = table_info.get('size', 'Unknown')
-                f.write(f"| {table_info['table']} | {rows:,} | {size} |\n")
-            f.write("\n---\n\n")
-            
-            # Detailed Tables
-            f.write("## Detailed Table Documentation\n\n")
-            
-            # Group tables by element
-            for element in ['core', 'air', 'water', 'earth', 'fire']:
-                tables = protocol['element_tables'].get(element, [])
-                if not tables:
-                    continue
+        """Save as comprehensive Markdown file with robust error handling."""
+        logger.info(f"Starting markdown generation: {filename}")
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                meta = self.documentation.get('metadata', {})
+                overview = self.documentation.get('database_overview', {})
                 
-                if element == 'core':
-                    f.write(f"### Core Infrastructure Tables\n\n")
-                else:
-                    info = ELEMENTS[element]
-                    f.write(f"### {info['symbol']} {element.title()} Element ({info['token']})\n\n")
+                # Header
+                f.write(f"# UBEC Protocol Suite - Comprehensive Database Documentation\n\n")
+                f.write(f"## 🜁 🜄 🜃 🜂 Complete Multi-Schema Analysis\n\n")
+                f.write(f"**Database:** `{meta['database_name']}`  \n")
+                f.write(f"**Host:** `{meta['database_host']}`  \n")
+                f.write(f"**Generated:** {meta['generated_at']}  \n")
+                f.write(f"**PostgreSQL Version:** {meta['database_version']}  \n")
+                f.write(f"**Documentation Version:** {meta['documentation_version']}  \n")
+                f.write(f"**Database Size:** {meta['database_size']['human_readable']}  \n\n")
                 
-                for table_name in sorted(tables):
-                    if table_name not in self.documentation['tables']:
-                        continue
+                # Database Overview
+                f.write("## 📊 Database Overview\n\n")
+                f.write(f"**Total Schemas:** {meta.get('total_schemas', 0)}  \n")
+                
+                totals = overview.get('totals', {})
+                f.write(f"**Total Tables:** {totals.get('tables', 0)}  \n")
+                f.write(f"**Total Rows:** {totals.get('rows', 0):,}  \n")
+                f.write(f"**Total Columns:** {totals.get('columns', 0):,}  \n")
+                f.write(f"**Total Views:** {totals.get('views', 0)}  \n")
+                f.write(f"**Total Functions:** {totals.get('functions', 0)}  \n")
+                f.write(f"**Total Relationships:** {totals.get('relationships', 0)}  \n")
+                f.write(f"**Total Indexes:** {totals.get('indexes', 0)}  \n\n")
+                
+                # Schema Summary
+                schemas_info = overview.get('schemas', {})
+                if schemas_info:
+                    f.write("### Schemas in Database\n\n")
+                    f.write("| Schema | Description | Tables | Rows | Views | Functions |\n")
+                    f.write("|--------|-------------|--------|------|-------|------------|\n")
                     
-                    table = self.documentation['tables'][table_name]
-                    f.write(f"#### {table_name}\n\n")
-                    
-                    if table.get('comment'):
-                        f.write(f"*{table['comment']}*\n\n")
-                    
-                    stats = table.get('statistics', {})
-                    row_count = stats.get('row_count', 0)
-                    table_size = stats.get('table_size', 'Unknown')
-                    index_size = stats.get('index_size', 'Unknown')
-                    total_size = stats.get('total_size', 'Unknown')
-                    
-                    f.write(f"**Statistics:** {row_count:,} rows | ")
-                    f.write(f"Table: {table_size} | ")
-                    f.write(f"Indexes: {index_size} | ")
-                    f.write(f"Total: {total_size}\n\n")
-                    
-                    # Columns
-                    f.write("| Column | Type | Nullable | Default | Description |\n")
-                    f.write("|--------|------|----------|---------|-------------|\n")
-                    
-                    for col in table['columns']:
-                        nullable = "✓" if col['nullable'] else "✗"
-                        default = col['default'] or "-"
-                        if len(str(default)) > 40:
-                            default = str(default)[:37] + "..."
-                        comment = col['comment'] or "-"
-                        if len(str(comment)) > 50:
-                            comment = str(comment)[:47] + "..."
-                        
-                        col_type = col['data_type']
-                        if col['is_generated']:
-                            col_type += " (generated)"
-                        if col['is_identity']:
-                            col_type += " (identity)"
-                            
-                        f.write(f"| {col['name']} | {col_type} | {nullable} | {default} | {comment} |\n")
-                    
-                    # Constraints
-                    if table['constraints']:
-                        f.write("\n**Constraints:**\n\n")
-                        for con in table['constraints']:
-                            f.write(f"- `{con['name']}` ({con['type']})\n")
-                    
-                    # Indexes
-                    if table_name in self.documentation['indexes']:
-                        f.write("\n**Indexes:**\n\n")
-                        for idx in self.documentation['indexes'][table_name]:
-                            flags = []
-                            if idx['is_primary']:
-                                flags.append("PRIMARY")
-                            if idx['is_unique']:
-                                flags.append("UNIQUE")
-                            flag_str = f" ({', '.join(flags)})" if flags else ""
-                            f.write(f"- `{idx['name']}`{flag_str}\n")
-                    
+                    for schema_name, schema_info in schemas_info.items():
+                        desc = schema_info.get('description', 'No description')[:40]
+                        f.write(f"| {schema_name} | {desc}... | ")
+                        f.write(f"{schema_info.get('tables', 0)} | {schema_info.get('rows', 0):,} | ")
+                        f.write(f"{schema_info.get('views', 0)} | {schema_info.get('functions', 0)} |\n")
                     f.write("\n")
+                
+                # Cross-Schema Analysis
+                cross = self.documentation.get('cross_schema_analysis', {})
+                cross_rels = cross.get('cross_schema_relationships', [])
+                if cross_rels:
+                    f.write("### Cross-Schema Relationships\n\n")
+                    f.write(f"**Total Cross-Schema Foreign Keys:** {cross.get('total_cross_schema_relationships', 0)}\n\n")
+                    
+                    schema_deps = cross.get('schema_dependencies', {})
+                    if schema_deps:
+                        f.write("**Schema Dependencies:**\n\n")
+                        for from_schema, to_schemas in schema_deps.items():
+                            f.write(f"- `{from_schema}` → {', '.join(f'`{s}`' for s in to_schemas)}\n")
+                        f.write("\n")
                 
                 f.write("---\n\n")
-            
-            # Views
-            if self.documentation['views']:
-                f.write("## Views\n\n")
-                for view_name in sorted(self.documentation['views'].keys()):
-                    f.write(f"### {view_name}\n\n")
-                    f.write("```sql\n")
-                    f.write(self.documentation['views'][view_name]['definition'][:500])
-                    if len(self.documentation['views'][view_name]['definition']) > 500:
-                        f.write("...\n")
-                    f.write("\n```\n\n")
-            
-            # Relationships
-            if self.documentation['relationships']:
-                f.write("## Relationships\n\n")
-                f.write("| From Table | Column | To Table | Column | On Delete |\n")
-                f.write("|------------|--------|----------|--------|------------|\n")
                 
-                for rel in self.documentation['relationships']:
-                    f.write(f"| {rel['from_table']} | {rel['from_column']} | ")
-                    f.write(f"{rel['to_table']} | {rel['to_column']} | ")
-                    f.write(f"{rel['delete_rule']} |\n")
-                
-                f.write("\n")
+                # Detailed Schema Documentation
+                for schema_name in sorted(self.documentation['schemas'].keys()):
+                    try:
+                        logger.info(f"Writing documentation for schema: {schema_name}")
+                        schema_doc = self.documentation['schemas'][schema_name]
+                        stats = schema_doc['statistics']
+                        
+                        f.write(f"## Schema: `{schema_name}`\n\n")
+                        f.write(f"**Description:** {schema_doc['description']}\n\n")
+                        
+                        # Schema Statistics
+                        f.write("### Schema Statistics\n\n")
+                        f.write(f"- **Tables:** {stats['total_tables']}\n")
+                        f.write(f"- **Total Rows:** {stats['total_rows']:,}\n")
+                        f.write(f"- **Columns:** {stats['total_columns']}\n")
+                        f.write(f"- **Views:** {stats['total_views']}\n")
+                        f.write(f"- **Relationships:** {stats['total_relationships']}\n")
+                        f.write(f"- **Indexes:** {stats['total_indexes']}\n")
+                        f.write(f"- **Triggers:** {stats['total_triggers']}\n")
+                        f.write(f"- **Functions:** {stats['total_functions']}\n")
+                        f.write(f"- **Custom Types:** {stats['total_custom_types']}\n\n")
+                        
+                        # Custom Types
+                        if schema_doc['custom_types']:
+                            try:
+                                logger.info(f"  Writing custom types for {schema_name}")
+                                f.write("### Custom Types\n\n")
+                                for type_name, type_info in schema_doc['custom_types'].items():
+                                    f.write(f"#### {type_name}\n\n")
+                                    f.write(f"**Values:** {', '.join(f'`{v}`' for v in type_info['values'])}\n\n")
+                            except Exception as e:
+                                logger.error(f"Error writing custom types for {schema_name}: {e}")
+                                f.write(f"\n*Error documenting custom types: {e}*\n\n")
+                        
+                        # Tables
+                        if schema_doc['tables']:
+                            try:
+                                logger.info(f"  Writing {len(schema_doc['tables'])} tables for {schema_name}")
+                                f.write("### Tables\n\n")
+                                
+                                # Table summary
+                                f.write("| Table | Rows | Columns | Size |\n")
+                                f.write("|-------|------|---------|------|\n")
+                                for table_info in stats['tables_by_size'][:20]:  # Top 20
+                                    table_name = table_info['table']
+                                    if table_name in schema_doc['tables']:
+                                        table = schema_doc['tables'][table_name]
+                                        f.write(f"| {table_name} | {table_info['rows']:,} | ")
+                                        f.write(f"{len(table['columns'])} | {table_info['size']} |\n")
+                                f.write("\n")
+                                
+                                # Detailed table documentation
+                                for table_name in sorted(schema_doc['tables'].keys()):
+                                    try:
+                                        table = schema_doc['tables'][table_name]
+                                        
+                                        f.write(f"#### {schema_name}.{table_name}\n\n")
+                                        
+                                        if table.get('comment'):
+                                            f.write(f"*{table['comment']}*\n\n")
+                                        
+                                        # Columns
+                                        f.write("| Column | Type | Nullable | Default | Description |\n")
+                                        f.write("|--------|------|----------|---------|-------------|\n")
+                                        
+                                        for col in table['columns']:
+                                            nullable = "✓" if col['nullable'] else "✗"
+                                            default = col['default'] or "-"
+                                            if len(str(default)) > 30:
+                                                default = str(default)[:27] + "..."
+                                            comment = col['comment'] or "-"
+                                            if len(str(comment)) > 40:
+                                                comment = str(comment)[:37] + "..."
+                                            
+                                            col_type = col['data_type']
+                                            if col['is_generated']:
+                                                col_type += " (gen)"
+                                            if col['is_identity']:
+                                                col_type += " (id)"
+                                                
+                                            f.write(f"| {col['name']} | {col_type} | {nullable} | {default} | {comment} |\n")
+                                        
+                                        f.write("\n")
+                                        
+                                        # Constraints
+                                        if table['constraints']:
+                                            f.write("**Constraints:**\n")
+                                            for con in table['constraints']:
+                                                f.write(f"- `{con['name']}` ({con['type']})\n")
+                                            f.write("\n")
+                                            
+                                    except Exception as e:
+                                        logger.error(f"Error writing table {schema_name}.{table_name}: {e}")
+                                        f.write(f"\n*Error documenting table {table_name}: {e}*\n\n")
+                                        
+                            except Exception as e:
+                                logger.error(f"Error writing tables section for {schema_name}: {e}")
+                                f.write(f"\n*Error documenting tables: {e}*\n\n")
+                        
+                        # Views
+                        if schema_doc['views']:
+                            try:
+                                logger.info(f"  Writing {len(schema_doc['views'])} views for {schema_name}")
+                                f.write("### Views\n\n")
+                                for view_name in sorted(schema_doc['views'].keys()):
+                                    try:
+                                        f.write(f"#### {view_name}\n\n")
+                                        f.write("```sql\n")
+                                        view_def = schema_doc['views'][view_name]['definition']
+                                        # Sanitize view definition to avoid encoding issues
+                                        if view_def:
+                                            safe_def = view_def.encode('utf-8', errors='replace').decode('utf-8')
+                                            f.write(safe_def[:500])
+                                            if len(safe_def) > 500:
+                                                f.write("\n...\n")
+                                        f.write("\n```\n\n")
+                                    except Exception as e:
+                                        logger.error(f"Error writing view {view_name}: {e}")
+                                        f.write(f"\n*Error documenting view {view_name}: {e}*\n\n")
+                            except Exception as e:
+                                logger.error(f"Error writing views section for {schema_name}: {e}")
+                                f.write(f"\n*Error documenting views: {e}*\n\n")
+                        
+                        # Functions
+                        if schema_doc['functions']:
+                            try:
+                                logger.info(f"  Writing {len(schema_doc['functions'])} functions for {schema_name}")
+                                f.write("### Functions\n\n")
+                                for func in schema_doc['functions']:
+                                    try:
+                                        f.write(f"#### {func['name']}({func['arguments']})\n\n")
+                                        f.write(f"- **Returns:** {func['return_type']}\n")
+                                        f.write(f"- **Language:** {func['language']}\n")
+                                        if func.get('description'):
+                                            f.write(f"- **Description:** {func['description']}\n")
+                                        f.write("\n")
+                                    except Exception as e:
+                                        logger.error(f"Error writing function {func.get('name', 'unknown')}: {e}")
+                                        f.write(f"\n*Error documenting function: {e}*\n\n")
+                            except Exception as e:
+                                logger.error(f"Error writing functions section for {schema_name}: {e}")
+                                f.write(f"\n*Error documenting functions: {e}*\n\n")
+                        
+                        f.write("---\n\n")
+                        logger.info(f"Completed documentation for schema: {schema_name}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error documenting schema {schema_name}: {e}")
+                        f.write(f"\n## ERROR: Could not complete documentation for schema `{schema_name}`\n\n")
+                        f.write(f"Error: {e}\n\n")
+                        f.write("---\n\n")
             
-            # Functions
-            if self.documentation['functions']:
-                f.write("## Functions\n\n")
-                for func in self.documentation['functions']:
-                    f.write(f"### {func['name']}({func['arguments']})\n\n")
-                    f.write(f"- **Returns:** {func['return_type']}\n")
-                    f.write(f"- **Language:** {func['language']}\n")
-                    if func.get('description'):
-                        f.write(f"- **Description:** {func['description']}\n")
-                    f.write("\n")
-        
-        print(f"\n✅ UBEC Protocol documentation saved to: {filename}\n")
-        logger.info(f"Saved to {filename}")
-        
+            print(f"\n✅ Comprehensive documentation saved to: {filename}\n")
+            logger.info(f"Successfully saved to {filename}")
+            
+        except Exception as e:
+            logger.error(f"Fatal error saving markdown: {e}")
+            print(f"\n❌ Error saving documentation: {e}\n")
+            raise
+
     def _save_as_json(self, filename: str):
         """Save as JSON file."""
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(self.documentation, f, indent=2, default=str)
         
-        print(f"\n✅ UBEC Protocol documentation saved to: {filename}\n")
+        print(f"\n✅ Comprehensive documentation saved to: {filename}\n")
         logger.info(f"Saved to {filename}")
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Generate UBEC Protocol Suite database schema documentation',
+        description='Generate comprehensive multi-schema UBEC database documentation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Document default UBEC schema
-  python ubec_schema_documenter.py
+  # Document ALL schemas (auto-discover)
+  python ubec_comprehensive_schema_documenter.py
   
-  # Document with custom output
-  python ubec_schema_documenter.py --output ubec_docs
+  # Document specific schemas
+  python ubec_comprehensive_schema_documenter.py --schemas ubec_main phenomenal
+  
+  # Include system schemas
+  python ubec_comprehensive_schema_documenter.py --include-system
   
   # Generate JSON format
-  python ubec_schema_documenter.py --format json
+  python ubec_comprehensive_schema_documenter.py --format json
   
-  # Document different schema
-  python ubec_schema_documenter.py --schema public
-  
-  # Use custom database
-  python ubec_schema_documenter.py --database ubec_test --user postgres
+  # Custom output file
+  python ubec_comprehensive_schema_documenter.py --output complete_ubec_docs
         """
     )
     
@@ -991,19 +1143,21 @@ Examples:
     
     # Arguments
     parser.add_argument('--host', default=env_config['host'],
-                       help='Database host (default: from .env or localhost)')
+                       help='Database host')
     parser.add_argument('--port', type=int, default=env_config['port'],
-                       help='Database port (default: from .env or 5432)')
+                       help='Database port')
     parser.add_argument('--database', default=env_config['database'],
-                       help='Database name (default: from .env or ubec)')
+                       help='Database name')
     parser.add_argument('--user', default=env_config['user'],
-                       help='Database user (default: from .env or ubec_app)')
+                       help='Database user')
     parser.add_argument('--password', default=env_config.get('password'),
-                       help='Database password (default: from .env)')
-    parser.add_argument('--schema', default='ubec_main',
-                       help='Schema name to document (default: ubec_main)')
+                       help='Database password')
+    parser.add_argument('--schemas', nargs='+',
+                       help='Specific schemas to document (default: auto-discover all)')
+    parser.add_argument('--include-system', action='store_true',
+                       help='Include system schemas (pg_*, information_schema)')
     parser.add_argument('--format', choices=['markdown', 'json'], default='markdown',
-                       help='Output format (default: markdown)')
+                       help='Output format')
     parser.add_argument('--output', help='Output filename (without extension)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
@@ -1023,14 +1177,21 @@ Examples:
     if args.password:
         conn_params['password'] = args.password
     
-    print(f"\n🜁 🜄 🜃 🜂 UBEC Protocol Schema Documentation Generator")
+    print(f"\n🜁 🜄 🜃 🜂 UBEC Comprehensive Multi-Schema Documentation Generator")
     print(f"=" * 70)
     print(f"Database: {conn_params['database']}@{conn_params['host']}:{conn_params['port']}")
-    print(f"Schema: {args.schema}")
     print(f"User: {conn_params['user']}")
+    if args.schemas:
+        print(f"Schemas: {', '.join(args.schemas)}")
+    else:
+        print(f"Schemas: Auto-discover all")
     print(f"=" * 70 + "\n")
     
-    documenter = UBECSchemaDocumenter(conn_params, args.schema)
+    documenter = UBECComprehensiveDocumenter(
+        conn_params, 
+        schemas=args.schemas,
+        exclude_system_schemas=not args.include_system
+    )
     
     try:
         documenter.connect()
@@ -1038,23 +1199,22 @@ Examples:
         documenter.save_documentation(args.format, args.output)
         
         # Print summary
-        summary = documenter.documentation['summary']
-        print(f"📊 Documentation Summary:")
-        print(f"   Tables: {summary['total_tables']}")
-        print(f"   Columns: {summary['total_columns']}")
-        print(f"   Relationships: {summary['total_relationships']}")
-        print(f"   Indexes: {summary['total_indexes']}")
-        print(f"   Views: {summary['total_views']}")
-        print(f"   Functions: {summary['total_functions']}")
-        print(f"   Custom Types: {summary['total_custom_types']}\n")
+        overview = documenter.documentation['database_overview']
+        print(f"\n📊 Documentation Summary:")
+        print(f"   Schemas: {len(overview['schemas'])}")
+        print(f"   Tables: {overview['totals']['tables']}")
+        print(f"   Rows: {overview['totals']['rows']:,}")
+        print(f"   Columns: {overview['totals']['columns']:,}")
+        print(f"   Views: {overview['totals']['views']}")
+        print(f"   Functions: {overview['totals']['functions']}")
+        print(f"   Relationships: {overview['totals']['relationships']}\n")
         
-        # Element breakdown
-        print(f"📋 Tables by Element:")
-        for element, count in summary['tables_by_element'].items():
-            symbol = ELEMENTS.get(element, {}).get('symbol', '📊')
-            print(f"   {symbol} {element.title()}: {count}")
+        # Schema breakdown
+        print(f"📋 Schemas Documented:")
+        for schema_name, schema_info in overview['schemas'].items():
+            print(f"   • {schema_name}: {schema_info['tables']} tables, {schema_info['rows']:,} rows")
         
-        print(f"\n✅ Documentation complete!\n")
+        print(f"\n✅ Comprehensive documentation complete!\n")
         return 0
         
     except Exception as e:

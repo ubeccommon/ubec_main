@@ -1,46 +1,40 @@
 #!/usr/bin/env python3
 """
-UBEC Data Synchronizer - Production Async Service
+UBEC Data Synchronizer - Async Production Version
 
 Synchronizes data between Stellar blockchain and the ubec_main database schema.
-Fully compliant with UBEC Protocol design principles and four-element architecture.
+Compatible with the four-element protocol architecture.
 
 Design Principles Compliance:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 1.  Modular Design: Self-contained service with clear boundaries
-✅ 2.  Service Pattern: No standalone execution - only imported as service
-✅ 3.  Service Registry: Registered through main.py orchestrator
-✅ 4.  Single Source of Truth: All settings loaded from database
-✅ 5.  Strict Async: All I/O operations use async/await
-✅ 6.  No Sync Fallbacks: Pure async implementation only
-✅ 7.  Per-Asset Monitoring: Individual tracking for each token
-✅ 8.  No Duplicate Configuration: Settings defined once in database
-✅ 9.  Integrated Rate Limiting: Built-in async rate limit management
-✅ 10. Separation of Concerns: Data sync separate from processing
-✅ 11. Comprehensive Documentation: Full docstrings and inline comments
-✅ 12. Method Singularity: Each method implemented once, no redundancy
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- ✅ Modular Design: Self-contained service with defined boundaries
+- ✅ Service Pattern: No standalone execution
+- ✅ Database as Single Source of Truth: Settings loaded from database
+- ✅ Strict Async: All I/O operations use async/await
+- ✅ No Sync Fallbacks: Pure async implementation
+- ✅ No Duplicate Configuration: Settings stored once in database
 
 Key Features:
-- FULLY ASYNC: All operations use async/await pattern
-- IDEMPOTENT: Safe to retry any operation
-- RATE LIMITED: Automatic rate limit detection and async waiting
-- ORDERED OPERATIONS: Accounts before balances, proper foreign key handling
-- TRANSACTION-SAFE: Uses async context managers for resource management
-- COMPREHENSIVE ERROR HANDLING: Detailed logging and error recovery
+- FULLY ASYNC operations (async/await pattern throughout)
+- Proper operation ordering (accounts before balances)
+- Transaction-safe operations with async context managers
+- Comprehensive error handling
+- Integrated rate limit management with async waiting
+- Progress tracking
+- Idempotent operations
+- Compatible with asyncpg datetime conversion (handled in database_manager)
 
 Schema Mapping:
-- stellar_accounts: Core account data (primary records)
-- ubec_balances: Token holdings (foreign key to stellar_accounts)
+- stellar_accounts: Core account data
+- ubec_balances: Token holdings with foreign key to stellar_accounts
 - stellar_transactions: Transaction records
 - stellar_operations: Operation details
 - ubec_sync_status: Synchronization tracking
 
 Four-Element Architecture:
-🜁 Air (UBEC)    - Gateway & Universal Access
-🜄 Water (UBECrc)  - Flow & Exchange  
-🜃 Earth (UBECgpi) - Stability & Value
-🜂 Fire (UBECtt)   - Transformation & Action
+- 🜁 Air (UBEC) - Gateway & Universal Access
+- 🜄 Water (UBECrc) - Flow & Exchange  
+- 🜃 Earth (UBECgpi) - Stability & Value
+- 🜂 Fire (UBECtt) - Transformation & Action
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
@@ -48,9 +42,8 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.7 (Fixed imports, enhanced error handling, full design compliance)
-Date: October 12, 2025
-Python: 3.11+
+Version: 4.6 (Increased default account sync limit from 200 to 5000, added unlimited option)
+Date: October 11, 2025
 """
 
 import os
@@ -64,16 +57,11 @@ import aiohttp
 # Configure precision for decimal calculations
 getcontext().prec = 10
 
-# Initialize logger
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# CUSTOM EXCEPTIONS
-# ============================================================================
-
 class SyncException(Exception):
-    """Custom exception for synchronization-related errors."""
+    """Custom exception for sync-related errors."""
     pass
 
 
@@ -82,50 +70,38 @@ class RateLimitException(Exception):
     pass
 
 
-# ============================================================================
-# MAIN SYNCHRONIZER CLASS
-# ============================================================================
-
 class UBECDataSynchronizer:
     """
-    Asynchronous data synchronizer for UBEC Protocol.
+    Asynchronous data synchronizer between Stellar blockchain and ubec_main database.
     
-    Synchronizes data between Stellar blockchain and ubec_main database schema.
-    Implements proper operation ordering to respect foreign key constraints:
+    This class ensures proper operation ordering:
+    1. Create account records in stellar_accounts
+    2. Create balance records in ubec_balances (requires account to exist)
+    3. Store transaction/operation data
     
-    Operation Order:
-        1. Create account records in stellar_accounts
-        2. Create balance records in ubec_balances (requires account to exist)
-        3. Store transaction/operation data
+    All operations are designed to be idempotent and can be safely retried.
+    All I/O operations use async/await patterns for maximum efficiency.
     
-    All operations are:
-        - Fully asynchronous (async/await)
-        - Idempotent (safe to retry)
-        - Rate-limited (automatic backoff)
-        - Transaction-safe (proper resource management)
+    Settings are loaded from database (single source of truth principle).
     
-    Settings Management:
-        All configuration loaded from database (single source of truth).
-        Environment variables used only as emergency fallback.
-    
-    Datetime Handling:
-        Passes ISO 8601 strings to database layer.
-        Conversion to datetime handled by database_manager.py for asyncpg.
+    Note: Datetime conversion is handled automatically by database_manager.py
+    This module passes ISO 8601 strings directly - they are converted at the
+    database boundary layer for proper asyncpg compatibility.
     """
     
-    # Element mapping for UBEC family tokens
-    ELEMENT_MAP: Dict[str, str] = {
+    # Element mapping - ONLY for UBEC family tokens
+    ELEMENT_MAP = {
         'UBEC': 'air',
         'UBECrc': 'water',
         'UBECgpi': 'earth',
         'UBECtt': 'fire'
     }
     
-    # Valid UBEC token codes (enforced by database schema)
-    VALID_UBEC_TOKENS: set = {'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'}
+    # Valid UBEC token codes (what we store in database)
+    VALID_UBEC_TOKENS = {'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'}
     
     # Operation type mapping for Stellar
-    OPERATION_TYPE_MAP: Dict[str, str] = {
+    OPERATION_TYPE_MAP = {
         'payment': 'payment',
         'exchange_in': 'path_payment_strict_receive',
         'exchange_out': 'path_payment_strict_send',
@@ -135,66 +111,49 @@ class UBECDataSynchronizer:
         'change_trust': 'change_trust'
     }
     
-    def __init__(self, db_manager) -> None:
+    def __init__(self, db_manager):
         """
-        Initialize the async data synchronizer service.
+        Initialize the async data synchronizer.
         
         Args:
-            db_manager: AsyncDatabaseManager instance (from service registry)
-        
-        Note:
-            Settings loaded on first use, not at initialization.
-            Call initialize() or use as async context manager before use.
+            db_manager: AsyncDatabaseManager instance
         """
-        logger.info("Initializing UBEC Data Synchronizer (Async Service)")
+        logger.info(f"Initializing UBEC Data Synchronizer (Async) with database manager")
         
-        # Store database manager reference
+        # Store database manager
         self.db = db_manager
         
-        # Settings storage (loaded from database)
-        self.settings: Dict[str, Any] = {}
-        self.accounts: Dict[str, Dict[str, Any]] = {}
+        # Settings will be loaded from database
+        self.settings = {}
+        self.accounts = {}
         
-        # Network configuration (loaded from database)
-        self.network: Optional[str] = None
-        self.horizon_url: Optional[str] = None
-        self.ubec_code: str = "UBEC"
-        self.ubec_issuer: Optional[str] = None
-        self.ubec_asset: Optional[Any] = None
+        # Network configuration defaults (will be overridden by database settings)
+        self.network = None
+        self.horizon_url = None
+        self.ubec_code = "UBEC"
+        self.ubec_issuer = None
+        self.ubec_asset = None
         
-        # Token issuer addresses (loaded from database)
-        self.ubecrc_issuer: Optional[str] = None
-        self.ubecgpi_issuer: Optional[str] = None
-        self.ubectt_issuer: Optional[str] = None
+        # Stellar server (initialized in async context)
+        self.server = None
         
-        # Stellar server instance (initialized in async context)
-        self.server: Optional[Any] = None
+        # Initialize rate limit tracking
+        self.rate_limit_remaining = 3000
+        self.rate_limit_limit = 3000
+        self.rate_limit_reset = 0
         
-        # Rate limit tracking
-        self.rate_limit_remaining: int = 3000
-        self.rate_limit_limit: int = 3000
-        self.rate_limit_reset: int = 0
-        
-        # HTTP session for async requests
+        # Session for async HTTP requests
         self.session: Optional[aiohttp.ClientSession] = None
         
-        logger.info("✓ UBEC Data Synchronizer initialized - awaiting settings load")
+        logger.info("✓ UBEC Data Synchronizer (Async) initialized - settings will load on first use")
     
-    # ========================================================================
-    # INITIALIZATION AND SETUP
-    # ========================================================================
-    
-    async def _load_settings_from_database(self) -> None:
+    async def _load_settings_from_database(self):
         """
-        Load settings from database (single source of truth principle).
-        
-        Fetches all active settings from system_settings table and converts
-        them to appropriate types. Environment variables used only as fallback.
-        
-        Raises:
-            SyncException: If settings cannot be loaded
+        Load settings from database (single source of truth).
+        Settings are stored in a configuration table.
         """
         try:
+            # Load system settings from database
             query = """
                 SELECT setting_key, setting_value, setting_type
                 FROM system_settings
@@ -205,127 +164,89 @@ class UBECDataSynchronizer:
             rows = await self.db.fetch_all(query)
             
             if not rows:
-                logger.warning("No settings in database - using environment fallback")
-                self._load_fallback_settings()
-                return
-            
-            # Convert database rows to settings dictionary
-            self.settings = {}
-            for row in rows:
-                key = row['setting_key']
-                value = row['setting_value']
-                setting_type = row.get('setting_type', 'string')
+                # Use environment variables as fallback
+                logger.warning("No settings found in database, using environment variables")
+                self.settings = {
+                    'horizon_url': os.getenv('HORIZON_URL', 'https://horizon.stellar.org'),
+                    'network_passphrase': os.getenv('NETWORK_PASSPHRASE', 'Public Global Stellar Network ; September 2015'),
+                    'ubec_code': os.getenv('UBEC_CODE', 'UBEC'),
+                    'ubec_issuer': os.getenv('UBEC_ISSUER', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
+                }
+            else:
+                # Convert database rows to settings dict
+                self.settings = {}
+                for row in rows:
+                    key = row['setting_key']
+                    value = row['setting_value']
+                    setting_type = row.get('setting_type', 'string')
+                    
+                    # Convert types
+                    if setting_type == 'integer':
+                        value = int(value)
+                    elif setting_type == 'float':
+                        value = float(value)
+                    elif setting_type == 'boolean':
+                        value = value.lower() in ('true', '1', 'yes')
+                    
+                    self.settings[key] = value
                 
-                # Type conversion
-                if setting_type == 'integer':
-                    value = int(value)
-                elif setting_type == 'float':
-                    value = float(value)
-                elif setting_type == 'boolean':
-                    value = value.lower() in ('true', '1', 'yes')
-                
-                self.settings[key] = value
-            
-            logger.info(f"✓ Loaded {len(self.settings)} settings from database")
+                logger.info(f"✓ Loaded {len(self.settings)} settings from database")
             
             # Extract commonly used settings
-            self.horizon_url = self.settings.get(
-                'horizon_url', 
-                'https://horizon.stellar.org'
-            )
-            self.network = self.settings.get(
-                'network_passphrase',
-                'Public Global Stellar Network ; September 2015'
-            )
+            self.horizon_url = self.settings.get('horizon_url', 'https://horizon.stellar.org')
+            self.network = self.settings.get('network_passphrase', 'Public Global Stellar Network ; September 2015')
             self.ubec_code = self.settings.get('ubec_code', 'UBEC')
-            self.ubec_issuer = self.settings.get(
-                'ubec_issuer',
-                'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN'
-            )
+            self.ubec_issuer = self.settings.get('ubec_issuer', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
             
             # Load issuers for all 4 UBEC tokens
-            # Priority: Database → Environment → Main issuer (fallback)
-            self.ubecrc_issuer = (
-                self.settings.get('ubecrc_issuer') or 
-                os.getenv('UBECRC_ISSUER') or 
-                self.ubec_issuer
-            )
-            self.ubecgpi_issuer = (
-                self.settings.get('ubecgpi_issuer') or 
-                os.getenv('UBECGPI_ISSUER') or 
-                self.ubec_issuer
-            )
-            self.ubectt_issuer = (
-                self.settings.get('ubectt_issuer') or 
-                os.getenv('UBECTT_ISSUER') or 
-                self.ubec_issuer
-            )
+            # Priority: 1) Database settings, 2) Environment variables, 3) Default to main issuer
+            self.ubecrc_issuer = self.settings.get('ubecrc_issuer') or os.getenv('UBECRC_ISSUER') or self.ubec_issuer
+            self.ubecgpi_issuer = self.settings.get('ubecgpi_issuer') or os.getenv('UBECGPI_ISSUER') or self.ubec_issuer
+            self.ubectt_issuer = self.settings.get('ubectt_issuer') or os.getenv('UBECTT_ISSUER') or self.ubec_issuer
             
             # Log issuer configuration
-            self._log_issuer_configuration()
+            logger.info(f"Token issuer configuration:")
+            logger.info(f"  UBEC:    {self.ubec_issuer}")
+            logger.info(f"  UBECrc:  {self.ubecrc_issuer}")
+            logger.info(f"  UBECgpi: {self.ubecgpi_issuer}")
+            logger.info(f"  UBECtt:  {self.ubectt_issuer}")
+            
+            # Check if all tokens use the same issuer
+            unique_issuers = len(set([
+                self.ubec_issuer, 
+                self.ubecrc_issuer, 
+                self.ubecgpi_issuer, 
+                self.ubectt_issuer
+            ]))
+            if unique_issuers == 1:
+                logger.info("  All 4 tokens use the SAME issuer")
+            else:
+                logger.info(f"  Tokens use {unique_issuers} different issuers")
             
         except Exception as e:
             logger.error(f"Error loading settings from database: {e}")
-            logger.warning("Falling back to environment variables")
-            self._load_fallback_settings()
+            # Use environment variables as fallback
+            self.settings = {
+                'horizon_url': os.getenv('HORIZON_URL', 'https://horizon.stellar.org'),
+                'network_passphrase': os.getenv('NETWORK_PASSPHRASE', 'Public Global Stellar Network ; September 2015'),
+                'ubec_code': os.getenv('UBEC_CODE', 'UBEC'),
+                'ubec_issuer': os.getenv('UBEC_ISSUER', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
+            }
+            
+            self.horizon_url = self.settings['horizon_url']
+            self.network = self.settings['network_passphrase']
+            self.ubec_code = self.settings['ubec_code']
+            self.ubec_issuer = self.settings['ubec_issuer']
+            
+            # Load issuers for other tokens from environment (fallback to main issuer)
+            self.ubecrc_issuer = os.getenv('UBECRC_ISSUER', self.ubec_issuer)
+            self.ubecgpi_issuer = os.getenv('UBECGPI_ISSUER', self.ubec_issuer)
+            self.ubectt_issuer = os.getenv('UBECTT_ISSUER', self.ubec_issuer)
+            
+            logger.warning("Using environment variables as fallback for settings")
     
-    def _load_fallback_settings(self) -> None:
-        """Load settings from environment variables (fallback only)."""
-        self.settings = {
-            'horizon_url': os.getenv(
-                'HORIZON_URL', 
-                'https://horizon.stellar.org'
-            ),
-            'network_passphrase': os.getenv(
-                'NETWORK_PASSPHRASE',
-                'Public Global Stellar Network ; September 2015'
-            ),
-            'ubec_code': os.getenv('UBEC_CODE', 'UBEC'),
-            'ubec_issuer': os.getenv(
-                'UBEC_ISSUER',
-                'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN'
-            )
-        }
-        
-        self.horizon_url = self.settings['horizon_url']
-        self.network = self.settings['network_passphrase']
-        self.ubec_code = self.settings['ubec_code']
-        self.ubec_issuer = self.settings['ubec_issuer']
-        
-        # Load other token issuers from environment
-        self.ubecrc_issuer = os.getenv('UBECRC_ISSUER', self.ubec_issuer)
-        self.ubecgpi_issuer = os.getenv('UBECGPI_ISSUER', self.ubec_issuer)
-        self.ubectt_issuer = os.getenv('UBECTT_ISSUER', self.ubec_issuer)
-        
-        logger.warning("Using environment variables for settings")
-    
-    def _log_issuer_configuration(self) -> None:
-        """Log the current issuer configuration for all tokens."""
-        logger.info("Token issuer configuration:")
-        logger.info(f"  UBEC:    {self.ubec_issuer}")
-        logger.info(f"  UBECrc:  {self.ubecrc_issuer}")
-        logger.info(f"  UBECgpi: {self.ubecgpi_issuer}")
-        logger.info(f"  UBECtt:  {self.ubectt_issuer}")
-        
-        # Check if all tokens use the same issuer
-        unique_issuers = len({
-            self.ubec_issuer,
-            self.ubecrc_issuer,
-            self.ubecgpi_issuer,
-            self.ubectt_issuer
-        })
-        
-        if unique_issuers == 1:
-            logger.info("  All 4 tokens use the SAME issuer")
-        else:
-            logger.info(f"  Tokens use {unique_issuers} different issuers")
-    
-    async def _load_accounts_from_database(self) -> None:
-        """
-        Load tracked accounts from database.
-        
-        Loads account data into memory for quick lookup and element mapping.
-        """
+    async def _load_accounts_from_database(self):
+        """Load tracked accounts from database."""
         try:
             query = """
                 SELECT account_id, primary_element, metadata
@@ -350,16 +271,8 @@ class UBECDataSynchronizer:
             logger.error(f"Error loading accounts from database: {e}")
             self.accounts = {}
     
-    async def _initialize_stellar_connection(self) -> None:
-        """
-        Initialize async connection to Stellar network.
-        
-        Creates ServerAsync instance for interacting with Horizon API.
-        Uses settings loaded from database.
-        
-        Raises:
-            ImportError: If stellar_sdk is not available
-        """
+    async def _initialize_stellar_connection(self):
+        """Initialize connection to Stellar network."""
         try:
             from stellar_sdk import ServerAsync, Asset
             
@@ -373,66 +286,47 @@ class UBECDataSynchronizer:
             
             logger.info(f"✓ Connected to Stellar: {self.horizon_url}")
             logger.info(f"  Token: {self.ubec_code}")
-            logger.info(f"  Issuer: {self.ubec_issuer[:8]}...{self.ubec_issuer[-8:]}")
+            logger.info(f"  Issuer: {self.ubec_issuer}")
             
         except ImportError:
             logger.warning("⚠ Stellar SDK not available - blockchain queries disabled")
             self.server = None
     
-    async def initialize(self) -> None:
+    async def initialize(self):
         """
-        Initialize synchronizer service.
-        
-        Must be called before using the synchronizer. Performs:
-        1. Loads settings from database
-        2. Loads accounts from database  
-        3. Initializes Stellar connection
-        4. Creates HTTP session
-        
-        Raises:
-            SyncException: If initialization fails
+        Initialize synchronizer - load settings and connect to Stellar.
+        Must be called before using the synchronizer.
         """
         logger.info("Initializing UBEC Data Synchronizer...")
         
-        try:
-            # Load settings from database (single source of truth)
-            await self._load_settings_from_database()
-            
-            # Load accounts from database
-            await self._load_accounts_from_database()
-            
-            # Initialize Stellar connection
-            await self._initialize_stellar_connection()
-            
-            # Create HTTP session for async requests
-            self.session = aiohttp.ClientSession()
-            
-            logger.info("✓ UBEC Data Synchronizer fully initialized")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize synchronizer: {e}")
-            raise SyncException(f"Initialization failed: {e}") from e
-    
-    # ========================================================================
-    # ASYNC CONTEXT MANAGER
-    # ========================================================================
+        # Load settings from database
+        await self._load_settings_from_database()
+        
+        # Load accounts from database
+        await self._load_accounts_from_database()
+        
+        # Initialize Stellar connection
+        await self._initialize_stellar_connection()
+        
+        # Create HTTP session
+        self.session = aiohttp.ClientSession()
+        
+        logger.info("✓ UBEC Data Synchronizer fully initialized")
     
     async def __aenter__(self):
-        """Async context manager entry - auto-initialize."""
+        """Async context manager entry."""
         await self.initialize()
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Async context manager exit - auto-cleanup."""
-        await self.close()
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        if self.session:
+            await self.session.close()
+        if self.server:
+            await self.server.close()
     
-    async def close(self) -> None:
-        """
-        Close connections and clean up resources.
-        
-        Safely closes HTTP session and Stellar connection.
-        Safe to call multiple times (idempotent).
-        """
+    async def close(self):
+        """Close connections and clean up resources."""
         if self.session and not self.session.closed:
             await self.session.close()
             logger.info("HTTP session closed")
@@ -440,10 +334,6 @@ class UBECDataSynchronizer:
         if self.server:
             await self.server.close()
             logger.info("Stellar connection closed")
-    
-    # ========================================================================
-    # UTILITY METHODS
-    # ========================================================================
     
     def _get_issuer_for_token(self, asset_code: str) -> str:
         """
@@ -454,11 +344,8 @@ class UBECDataSynchronizer:
         
         Returns:
             Issuer account ID for the token
-        
-        Note:
-            Falls back to main UBEC issuer if token not found.
         """
-        issuer_map: Dict[str, Optional[str]] = {
+        issuer_map = {
             'UBEC': self.ubec_issuer,
             'UBECrc': self.ubecrc_issuer,
             'UBECgpi': self.ubecgpi_issuer,
@@ -466,53 +353,36 @@ class UBECDataSynchronizer:
         }
         
         issuer = issuer_map.get(asset_code, self.ubec_issuer)
-        logger.debug(f"Token {asset_code} → Issuer {issuer}")
+        logger.debug(f"Token {asset_code} -> Issuer {issuer}")
         return issuer
     
     # ========================================================================
-    # RATE LIMITING
+    # RATE LIMITING - ASYNC VERSION
     # ========================================================================
     
-    def _update_rate_limits(self, response_headers: Dict[str, str]) -> None:
+    def _update_rate_limits(self, response_headers: Dict[str, str]):
         """
         Update rate limit information from API response headers.
         
         Args:
             response_headers: HTTP response headers from Stellar API
-        
-        Note:
-            Extracts X-Ratelimit-* headers and updates internal tracking.
         """
         try:
-            self.rate_limit_remaining = int(
-                response_headers.get('X-Ratelimit-Remaining', 3000)
-            )
-            self.rate_limit_limit = int(
-                response_headers.get('X-Ratelimit-Limit', 3000)
-            )
-            self.rate_limit_reset = int(
-                response_headers.get('X-Ratelimit-Reset', 0)
-            )
+            self.rate_limit_remaining = int(response_headers.get('X-Ratelimit-Remaining', 3000))
+            self.rate_limit_limit = int(response_headers.get('X-Ratelimit-Limit', 3000))
+            self.rate_limit_reset = int(response_headers.get('X-Ratelimit-Reset', 0))
             
             logger.debug(
-                f"Rate limits: {self.rate_limit_remaining}/{self.rate_limit_limit} "
+                f"Rate limits updated: {self.rate_limit_remaining}/{self.rate_limit_limit} "
                 f"(resets at {self.rate_limit_reset})"
             )
-            
         except (ValueError, TypeError) as e:
             logger.warning(f"Could not parse rate limit headers: {e}")
     
-    async def _check_rate_limit(self) -> None:
+    async def _check_rate_limit(self):
         """
-        Check rate limits and wait if necessary (async).
-        
-        Implements intelligent backoff when approaching rate limits.
-        Uses async sleep to avoid blocking other operations.
-        
-        Behavior:
-            - If < 100 requests remaining: Wait for rate limit reset
-            - If reset time passed: Wait 5 seconds for refresh
-            - Otherwise: Continue without delay
+        Check if we're approaching rate limits and wait if necessary.
+        Implements async waiting when rate limit is low.
         """
         if self.rate_limit_remaining < 100:
             current_time = int(datetime.now().timestamp())
@@ -525,10 +395,9 @@ class UBECDataSynchronizer:
                 )
                 await asyncio.sleep(wait_time)
             else:
-                # Reset has passed, wait briefly for limits to refresh
+                # Reset has passed, wait a short time for limits to refresh
                 logger.warning(
-                    f"Rate limit low ({self.rate_limit_remaining}), "
-                    "waiting 5 seconds for refresh..."
+                    f"Rate limit low ({self.rate_limit_remaining}), waiting 5 seconds for refresh..."
                 )
                 await asyncio.sleep(5)
     
@@ -540,22 +409,16 @@ class UBECDataSynchronizer:
         """
         Synchronize a single account's data from Stellar to database.
         
-        Fetches account data from Stellar Horizon API and stores in database.
-        Follows proper operation ordering: account record before balances.
-        
         Args:
             account_id: Stellar account ID to synchronize
-        
+            
         Returns:
             bool: True if sync successful, False otherwise
-        
-        Raises:
-            No exceptions raised - errors logged and returned as False
         """
         try:
             logger.info(f"Syncing account: {account_id}")
             
-            # Check rate limits before API call
+            # Check rate limits
             await self._check_rate_limit()
             
             # Fetch account data from Stellar
@@ -569,10 +432,10 @@ class UBECDataSynchronizer:
             if hasattr(account, 'headers'):
                 self._update_rate_limits(account.headers)
             
-            # Store account in database (FIRST - required for foreign keys)
+            # Store account in database
             await self._store_account(account)
             
-            # Store balances (SECOND - depends on account existing)
+            # Store balances (only UBEC family tokens)
             await self._store_balances(account_id, account.get('balances', []))
             
             logger.info(f"✓ Account synced successfully: {account_id}")
@@ -582,18 +445,12 @@ class UBECDataSynchronizer:
             logger.error(f"Error syncing account {account_id}: {e}")
             return False
     
-    async def _store_account(self, account_data: Dict[str, Any]) -> None:
+    async def _store_account(self, account_data: Dict):
         """
         Store or update account in database.
         
-        Uses UPSERT pattern (INSERT ... ON CONFLICT ... DO UPDATE) for idempotency.
-        Safe to call multiple times with same data.
-        
         Args:
             account_data: Account data from Stellar API
-        
-        Raises:
-            Exception: If database operation fails
         """
         try:
             account_id = account_data['id']
@@ -626,60 +483,44 @@ class UBECDataSynchronizer:
             logger.error(f"Error storing account {account_data.get('id')}: {e}")
             raise
     
-    async def _store_balances(
-        self, 
-        account_id: str, 
-        balances: List[Dict[str, Any]]
-    ) -> None:
+    async def _store_balances(self, account_id: str, balances: List[Dict]):
         """
-        Store account balances in database - UBEC family tokens only.
+        Store account balances in database - ONLY UBEC family tokens.
         
-        Filters for UBEC, UBECrc, UBECgpi, and UBECtt tokens.
-        XLM and other assets explicitly excluded per database constraints.
+        This method filters for UBEC, UBECrc, UBECgpi, and UBECtt tokens only.
+        XLM and other assets are explicitly excluded to match database constraints.
         
         Args:
             account_id: Stellar account ID
             balances: List of balance records from Stellar API
-        
-        Raises:
-            Exception: If database operation fails
-        
-        Note:
-            Requires account to exist in stellar_accounts table.
-            Uses UPSERT pattern for idempotency.
         """
         try:
             stored_count = 0
             skipped_count = 0
             
             for balance in balances:
-                # Determine token code
+                # Determine token info
                 if balance['asset_type'] == 'native':
                     token_code = 'XLM'
                 else:
                     token_code = balance.get('asset_code', 'UNKNOWN')
                 
-                # CRITICAL: Only store UBEC family tokens
+                # CRITICAL FIX: Only store UBEC family tokens
+                # Skip XLM and any other assets
                 if token_code not in self.VALID_UBEC_TOKENS:
                     skipped_count += 1
-                    logger.debug(
-                        f"Skipping non-UBEC token: {token_code} "
-                        f"for account {account_id}"
-                    )
+                    logger.debug(f"Skipping non-UBEC token: {token_code} for account {account_id}")
                     continue
                 
                 # Get element for this UBEC token
-                element = self.ELEMENT_MAP.get(token_code, 'air')
+                element = self.ELEMENT_MAP.get(token_code, 'air')  # Default to air if not found
                 
                 # Calculate numeric balance
                 balance_amount = Decimal(balance.get('balance', '0'))
                 
                 # Get authorization flags
                 is_authorized = balance.get('is_authorized', False)
-                is_auth_maintain = balance.get(
-                    'is_authorized_to_maintain_liabilities', 
-                    False
-                )
+                is_auth_maintain = balance.get('is_authorized_to_maintain_liabilities', False)
                 is_clawback = balance.get('is_clawback_enabled', False)
                 
                 query = """
@@ -702,8 +543,7 @@ class UBECDataSynchronizer:
                         buying_liabilities = EXCLUDED.buying_liabilities,
                         selling_liabilities = EXCLUDED.selling_liabilities,
                         is_authorized = EXCLUDED.is_authorized,
-                        is_authorized_to_maintain_liabilities = 
-                            EXCLUDED.is_authorized_to_maintain_liabilities,
+                        is_authorized_to_maintain_liabilities = EXCLUDED.is_authorized_to_maintain_liabilities,
                         is_clawback_enabled = EXCLUDED.is_clawback_enabled,
                         last_modified_at = CURRENT_TIMESTAMP
                 """
@@ -726,18 +566,13 @@ class UBECDataSynchronizer:
             
             logger.debug(
                 f"Balance storage for {account_id}: "
-                f"{stored_count} UBEC tokens stored, "
-                f"{skipped_count} non-UBEC assets skipped"
+                f"{stored_count} UBEC tokens stored, {skipped_count} non-UBEC assets skipped"
             )
             
         except Exception as e:
             logger.error(f"Error storing balances for {account_id}: {e}")
             raise
-    
-    # ========================================================================
-    # TRANSACTION SYNCHRONIZATION
-    # ========================================================================
-    
+
     async def sync_transactions(
         self,
         account_id: str,
@@ -751,12 +586,9 @@ class UBECDataSynchronizer:
             account_id: Stellar account ID
             limit: Maximum transactions to fetch
             cursor: Starting cursor for pagination
-        
+            
         Returns:
             int: Number of transactions synchronized
-        
-        Note:
-            Automatically ensures account exists before storing transactions.
         """
         try:
             logger.info(f"Syncing transactions for {account_id} (limit: {limit})")
@@ -781,10 +613,9 @@ class UBECDataSynchronizer:
             if hasattr(response, 'headers'):
                 self._update_rate_limits(response.headers)
             
-            # Get transaction records
+            # Store transactions
             transactions = response.get('_embedded', {}).get('records', [])
             
-            # Store each transaction
             for tx in transactions:
                 await self._ensure_account_exists(tx['source_account'])
                 await self._store_transaction(tx)
@@ -796,18 +627,12 @@ class UBECDataSynchronizer:
             logger.error(f"Error syncing transactions for {account_id}: {e}")
             return 0
     
-    async def _ensure_account_exists(self, account_id: str) -> None:
+    async def _ensure_account_exists(self, account_id: str):
         """
-        Ensure an account record exists before storing related data.
-        
-        Creates minimal account record if not exists.
-        Prevents foreign key constraint violations.
+        Ensure an account record exists in the database before storing related data.
         
         Args:
             account_id: Stellar account ID
-        
-        Raises:
-            Exception: If database operation fails
         """
         try:
             query = """
@@ -821,19 +646,17 @@ class UBECDataSynchronizer:
             logger.error(f"Error ensuring account exists {account_id}: {e}")
             raise
     
-    async def _store_transaction(self, tx_data: Dict[str, Any]) -> None:
+    async def _store_transaction(self, tx_data: Dict):
         """
         Store transaction in database.
         
         Args:
             tx_data: Transaction data from Stellar API
-        
+            
         Note:
-            created_at field is ISO 8601 string from Stellar.
-            Datetime conversion handled by database_manager.py for asyncpg.
-        
-        Raises:
-            Exception: If database operation fails
+            The created_at field from Stellar is an ISO 8601 string.
+            Datetime conversion is handled automatically by database_manager.py
+            for proper asyncpg compatibility.
         """
         try:
             query = """
@@ -848,11 +671,13 @@ class UBECDataSynchronizer:
                     result_code = EXCLUDED.result_code
             """
             
-            # created_at passed as ISO 8601 string - auto-converted by database_manager
+            # FIXED: Use 'ledger_sequence' instead of 'ledger' to match database schema
+            # The created_at is passed as ISO 8601 string - database_manager.py 
+            # will automatically convert it to datetime for asyncpg
             params = (
                 tx_data['hash'],
-                tx_data.get('ledger_sequence', 0),
-                tx_data.get('created_at'),  # ISO 8601 string
+                tx_data.get('ledger_sequence', 0),  # FIXED: was 'ledger'
+                tx_data.get('created_at'),  # ISO 8601 string - auto-converted by database_manager
                 tx_data.get('source_account'),
                 int(tx_data.get('fee_charged', 0)),
                 tx_data.get('operation_count', 0),
@@ -882,20 +707,13 @@ class UBECDataSynchronizer:
         """
         Discover accounts holding a specific asset from Stellar network.
         
-        Paginates through Horizon API to find all holders up to max_accounts.
-        Stores account and balance data for each holder found.
-        
         Args:
             asset_code: Asset code to search for (UBEC, UBECrc, UBECgpi, UBECtt)
-            limit: Records per page (Horizon API limit)
+            limit: Records per page
             max_accounts: Maximum accounts to discover
-        
+            
         Returns:
-            int: Number of accounts discovered and stored
-        
-        Note:
-            Uses correct issuer for each token via _get_issuer_for_token().
-            Implements rate limiting and pagination.
+            int: Number of accounts discovered
         """
         if not self.server:
             logger.error("Stellar server not initialized")
@@ -907,17 +725,17 @@ class UBECDataSynchronizer:
             discovered = 0
             cursor = None
             
-            # Get the correct issuer for this specific token
+            # Get the CORRECT issuer for this specific token
             asset_issuer = self._get_issuer_for_token(asset_code)
+            
             logger.info(f"Using issuer: {asset_issuer} for {asset_code}")
             
             # Import Asset class
             from stellar_sdk import Asset
             
-            # Create Asset object with correct issuer
+            # Create Asset object with the CORRECT issuer
             asset = Asset(asset_code, asset_issuer)
             
-            # Pagination loop
             while discovered < max_accounts:
                 # Check rate limits
                 await self._check_rate_limit()
@@ -949,10 +767,10 @@ class UBECDataSynchronizer:
                 # Process each account
                 for account_data in records:
                     try:
-                        # Store account (FIRST)
+                        # Store account
                         await self._store_account(account_data)
                         
-                        # Store balances (SECOND)
+                        # Store balances (only UBEC tokens will be stored)
                         balances = account_data.get('balances', [])
                         await self._store_balances(account_data['id'], balances)
                         
@@ -962,9 +780,7 @@ class UBECDataSynchronizer:
                             logger.info(f"  Discovered {discovered} {asset_code} holders...")
                         
                     except Exception as e:
-                        logger.error(
-                            f"Error processing account {account_data.get('id')}: {e}"
-                        )
+                        logger.error(f"Error processing account {account_data.get('id')}: {e}")
                         continue
                 
                 # Check if there are more pages
@@ -978,154 +794,146 @@ class UBECDataSynchronizer:
                 else:
                     break
                 
-                # Small delay between pages to be respectful
+                # Small delay between pages
                 await asyncio.sleep(0.5)
             
             logger.info(f"✓ Discovered {discovered} holders of {asset_code}")
             return discovered
             
         except Exception as e:
-            logger.error(f"Error discovering asset holders: {e}")
+            logger.error(f"Error discovering {asset_code} holders: {e}")
             return 0
     
-    # ========================================================================
-    # LIQUIDITY POOL SYNCHRONIZATION
-    # ========================================================================
-    
-    async def sync_liquidity_pools(
-        self,
-        asset_code: str = 'UBEC',
-        limit: int = 200
-    ) -> Dict[str, Any]:
+    async def discover_all_ubec_holders(self, max_per_asset: int = 1000) -> Dict[str, int]:
         """
-        Synchronize liquidity pools involving a specific asset.
-        
-        Fetches all liquidity pools containing the specified asset and stores
-        them in the database for tracking and analysis.
+        Discover all holders of all 4 UBEC tokens.
         
         Args:
-            asset_code: Asset code to search for (UBEC, UBECrc, UBECgpi, UBECtt)
-            limit: Maximum pools to fetch per request
-        
+            max_per_asset: Maximum accounts to discover per asset
+            
         Returns:
-            dict: Sync results with counts and status
+            dict: Discovery results per asset
         """
-        logger.info(f"Syncing liquidity pools for {asset_code}...")
+        logger.info("="*70)
+        logger.info("Discovering All UBEC Token Holders")
+        logger.info("="*70)
+        
+        results = {}
+        assets = ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']
+        
+        for asset_code in assets:
+            logger.info(f"\nSearching for {asset_code} holders...")
+            count = await self.discover_asset_holders(
+                asset_code=asset_code,
+                limit=200,
+                max_accounts=max_per_asset
+            )
+            results[asset_code] = count
+        
+        total = sum(results.values())
+        logger.info("="*70)
+        logger.info(f"Discovery Complete: {total} total account records")
+        for asset, count in results.items():
+            logger.info(f"  {asset}: {count} holders")
+        logger.info("="*70)
+        
+        return results
+
+    # ========================================================================
+    # BULK SYNCHRONIZATION METHODS
+    # ========================================================================
+    
+    async def sync_account_data(
+        self,
+        asset_code: str = 'UBEC',
+        limit: Optional[int] = 5000
+    ) -> Dict[str, Any]:
+        """
+        Synchronize account data for all holders of a specific asset.
+        
+        Args:
+            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            limit: Maximum accounts to sync (default: 5000)
+                   Set to None for unlimited sync (use cautiously with rate limits)
+            
+        Returns:
+            dict: Sync results with counts
+            
+        Note:
+            This syncs full account details from Stellar (sequence, subentry_count, etc.)
+            If you only need balance updates, use sync_balance_data() instead.
+            
+        Examples:
+            # Sync up to 1000 accounts
+            result = await sync.sync_account_data('UBEC', limit=1000)
+            
+            # Sync ALL accounts (no limit)
+            result = await sync.sync_account_data('UBEC', limit=None)
+        """
+        logger.info(f"Syncing account data for {asset_code} holders (limit: {limit})...")
         
         try:
-            if not self.server:
-                logger.error("Stellar server not initialized")
+            # Get all accounts that hold this token from database
+            if limit is None:
+                # Unlimited - fetch all accounts
+                query = """
+                    SELECT DISTINCT account_id
+                    FROM ubec_balances
+                    WHERE token_code = $1
+                """
+                rows = await self.db.fetch_all(query, (asset_code,))
+            else:
+                # Limited - fetch up to limit
+                query = """
+                    SELECT DISTINCT account_id
+                    FROM ubec_balances
+                    WHERE token_code = $1
+                    LIMIT $2
+                """
+                rows = await self.db.fetch_all(query, (asset_code, limit))
+            
+            if not rows:
+                logger.warning(f"No accounts found holding {asset_code}")
                 return {
-                    'success': False,
-                    'error': 'Stellar server not initialized'
+                    'success': True,
+                    'asset_code': asset_code,
+                    'accounts_synced': 0,
+                    'message': f'No accounts found holding {asset_code}'
                 }
-            
-            # Get correct issuer for this token
-            asset_issuer = self._get_issuer_for_token(asset_code)
-            
-            from stellar_sdk import Asset
-            asset = Asset(asset_code, asset_issuer)
-            
-            # Check rate limits
-            await self._check_rate_limit()
-            
-            # Fetch liquidity pools
-            response = await self.server.liquidity_pools().for_assets(asset).limit(limit).call()
-            
-            # Update rate limits
-            if hasattr(response, 'headers'):
-                self._update_rate_limits(response.headers)
-            
-            pools = response.get('_embedded', {}).get('records', [])
             
             synced = 0
             failed = 0
             
-            for pool in pools:
-                try:
-                    await self._store_liquidity_pool(pool, asset_code)
+            for row in rows:
+                account_id = row['account_id']
+                success = await self.sync_account(account_id)
+                
+                if success:
                     synced += 1
-                except Exception as e:
-                    logger.error(f"Error storing pool {pool.get('id')}: {e}")
+                else:
                     failed += 1
+                
+                # Progress logging
+                if (synced + failed) % 50 == 0:
+                    logger.info(f"  Progress: {synced + failed}/{len(rows)} accounts processed")
             
-            logger.info(
-                f"✓ LP sync complete: {synced} pools synced, {failed} failed"
-            )
+            logger.info(f"✓ Account sync complete: {synced} synced, {failed} failed")
             
             return {
                 'success': True,
                 'asset_code': asset_code,
-                'pools_synced': synced,
-                'pools_failed': failed,
-                'total_pools': len(pools)
+                'accounts_synced': synced,
+                'accounts_failed': failed,
+                'total_accounts': len(rows)
             }
             
         except Exception as e:
-            logger.error(f"Error syncing liquidity pools: {e}")
+            logger.error(f"Error syncing account data for {asset_code}: {e}")
             return {
                 'success': False,
                 'asset_code': asset_code,
                 'error': str(e)
             }
-    
-    async def _store_liquidity_pool(
-        self, 
-        pool_data: Dict[str, Any], 
-        asset_code: str
-    ) -> None:
-        """
-        Store liquidity pool data in database.
-        
-        Args:
-            pool_data: Pool data from Stellar API
-            asset_code: Asset code for categorization
-        
-        Raises:
-            Exception: If database operation fails
-        """
-        try:
-            pool_id = pool_data['id']
-            
-            # Extract reserve amounts
-            reserves = pool_data.get('reserves', [])
-            reserve_amounts = [Decimal(r.get('amount', '0')) for r in reserves]
-            
-            query = """
-                INSERT INTO stellar_liquidity_pools (
-                    pool_id, asset_code, total_trustlines, total_shares,
-                    reserve_a, reserve_b, fee_bp
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (pool_id) DO UPDATE SET
-                    total_trustlines = EXCLUDED.total_trustlines,
-                    total_shares = EXCLUDED.total_shares,
-                    reserve_a = EXCLUDED.reserve_a,
-                    reserve_b = EXCLUDED.reserve_b,
-                    fee_bp = EXCLUDED.fee_bp,
-                    last_modified_at = CURRENT_TIMESTAMP
-            """
-            
-            params = (
-                pool_id,
-                asset_code,
-                int(pool_data.get('total_trustlines', 0)),
-                Decimal(pool_data.get('total_shares', '0')),
-                reserve_amounts[0] if len(reserve_amounts) > 0 else Decimal('0'),
-                reserve_amounts[1] if len(reserve_amounts) > 1 else Decimal('0'),
-                int(pool_data.get('fee_bp', 30))
-            )
-            
-            await self.db.execute(query, params)
-            logger.debug(f"Liquidity pool stored: {pool_id}")
-            
-        except Exception as e:
-            logger.error(f"Error storing liquidity pool: {e}")
-            raise
-    
-    # ========================================================================
-    # BULK SYNC OPERATIONS
-    # ========================================================================
     
     async def sync_balance_data(
         self,
@@ -1134,16 +942,16 @@ class UBECDataSynchronizer:
         """
         Synchronize balance data for all holders of a specific asset.
         
-        Updates balance information for all accounts holding the specified token.
-        Uses parallel processing for efficiency while respecting rate limits.
+        This updates the balance information for all accounts holding the asset.
+        Note: sync_account() already syncs balances, so this is complementary.
         
         Args:
             asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
-        
+            
         Returns:
-            dict: Sync results with counts and status
+            dict: Sync results with counts
         """
-        logger.info(f"Syncing balance data for {asset_code} holders...")
+        logger.info(f"Syncing balance data for {asset_code}...")
         
         try:
             # Get all accounts that hold this token
@@ -1156,27 +964,34 @@ class UBECDataSynchronizer:
             rows = await self.db.fetch_all(query, (asset_code,))
             
             if not rows:
-                logger.warning(f"No accounts found holding {asset_code}")
+                logger.warning(f"No balances found for {asset_code}")
                 return {
                     'success': True,
                     'asset_code': asset_code,
                     'balances_synced': 0,
-                    'message': f'No accounts found holding {asset_code}'
+                    'message': f'No balances found for {asset_code}'
                 }
             
             synced = 0
             failed = 0
             
-            # Sync balances for each account
+            # Sync each account (which includes balance updates)
             for row in rows:
                 account_id = row['account_id']
                 
                 try:
-                    success = await self.sync_account(account_id)
-                    if success:
-                        synced += 1
-                    else:
+                    # Fetch fresh account data from Stellar
+                    if not self.server:
+                        logger.error("Stellar server not initialized")
                         failed += 1
+                        continue
+                    
+                    await self._check_rate_limit()
+                    account = await self.server.accounts().account_id(account_id).call()
+                    
+                    # Update balances
+                    await self._store_balances(account_id, account.get('balances', []))
+                    synced += 1
                     
                     if synced % 50 == 0:
                         logger.info(f"  Progress: {synced}/{len(rows)} balances synced")
@@ -1217,14 +1032,11 @@ class UBECDataSynchronizer:
             asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
             days_back: Number of days of transaction history to sync
             limit_per_account: Maximum transactions per account
-        
+            
         Returns:
-            dict: Sync results with counts and status
+            dict: Sync results with counts
         """
-        logger.info(
-            f"Syncing transaction data for {asset_code} holders "
-            f"(last {days_back} days)..."
-        )
+        logger.info(f"Syncing transaction data for {asset_code} holders (last {days_back} days)...")
         
         try:
             # Get all accounts that hold this token
@@ -1294,50 +1106,38 @@ class UBECDataSynchronizer:
                 'asset_code': asset_code,
                 'error': str(e)
             }
-    
+
     # ========================================================================
-    # STATUS AND HEALTH
+    # UTILITY METHODS
     # ========================================================================
     
     async def get_sync_status(self) -> Dict[str, Any]:
         """
         Get current synchronization status.
         
-        Returns comprehensive statistics about synchronized data.
-        
         Returns:
-            dict: Synchronization statistics including counts and last sync time
+            dict: Synchronization statistics
         """
         try:
-            stats: Dict[str, Any] = {}
+            stats = {}
             
             # Count accounts
-            result = await self.db.fetch_one(
-                "SELECT COUNT(*) as count FROM stellar_accounts"
-            )
+            result = await self.db.fetch_one("SELECT COUNT(*) as count FROM stellar_accounts")
             stats['total_accounts'] = result['count'] if result else 0
             
             # Count balances
-            result = await self.db.fetch_one(
-                "SELECT COUNT(*) as count FROM ubec_balances"
-            )
+            result = await self.db.fetch_one("SELECT COUNT(*) as count FROM ubec_balances")
             stats['total_balances'] = result['count'] if result else 0
             
             # Count transactions
-            result = await self.db.fetch_one(
-                "SELECT COUNT(*) as count FROM stellar_transactions"
-            )
+            result = await self.db.fetch_one("SELECT COUNT(*) as count FROM stellar_transactions")
             stats['total_transactions'] = result['count'] if result else 0
             
             # Get last activity time
             result = await self.db.fetch_one(
                 "SELECT MAX(last_activity_at) as last_activity FROM stellar_accounts"
             )
-            stats['last_sync_time'] = (
-                result['last_activity'] 
-                if result and result['last_activity'] 
-                else 'Never'
-            )
+            stats['last_sync_time'] = result['last_activity'] if result and result['last_activity'] else 'Never'
             
             # Rate limit info
             stats['rate_limit'] = {
@@ -1354,19 +1154,12 @@ class UBECDataSynchronizer:
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Perform health check on synchronizer service.
-        
-        Tests database connectivity, Stellar connection, and settings.
+        Perform health check.
         
         Returns:
             dict: Health status information
-                - status: 'healthy', 'degraded', 'unhealthy', or 'error'
-                - database: bool - database connectivity
-                - stellar: bool - Stellar connection status
-                - settings_loaded: bool - settings availability
-                - accounts_loaded: int - number of accounts in memory
         """
-        health: Dict[str, Any] = {
+        health = {
             'status': 'unknown',
             'database': False,
             'stellar': False,
@@ -1385,7 +1178,7 @@ class UBECDataSynchronizer:
                     # Simple ledger query to test connection
                     await self.server.ledgers().limit(1).call()
                     health['stellar'] = True
-                except Exception:
+                except:
                     health['stellar'] = False
             
             # Determine overall status
@@ -1403,9 +1196,7 @@ class UBECDataSynchronizer:
         return health
 
 
-# ============================================================================
-# MODULE EXPORTS
-# ============================================================================
+# ==================== MODULE EXPORTS ====================
 
 __all__ = [
     'UBECDataSynchronizer',
