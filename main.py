@@ -1,660 +1,379 @@
 #!/usr/bin/env python3
 """
-UBEC Protocol - Unified Main Orchestrator
-==========================================
-Single entry point for the entire UBEC ecosystem
+UBEC Main Protocol - Unified Entry Point
 
-This is the SOLE file with standalone execution in the entire system.
-Per Design Principle #2: Only main.py has standalone execution.
+The SOLE entry point for the entire UBEC protocol system.
+All services are orchestrated through this main file.
 
-Design Principles Compliance:
-- ✅ Modular Design: Clear service boundaries and interfaces
-- ✅ Service Pattern: This is main.py - the ONE orchestrator
-- ✅ Service Registry: Centralized dependency injection
-- ✅ Single Source of Truth: Database as authoritative source
-- ✅ Strict Async Operations: All I/O uses async/await
-- ✅ No Sync Fallbacks: Pure async implementation
-- ✅ Per-Asset Monitoring: Individual asset tracking
-- ✅ No Duplicate Configuration: Single config source
-- ✅ Integrated Rate Limiting: Built-in for all services
-- ✅ Clear Separation of Concerns: Orchestration layer only
-- ✅ Comprehensive Documentation: Complete docstrings
-- ✅ Method Singularity: Each method implemented once
+Integrated Services:
+    - Air Protocol (Gateway / Universal Access - UBEC)
+    - Water Protocol (Reciprocity / Flow - UBECrc)
+    - Earth Protocol (Ground / Stability - UBECgpi)
+    - Fire Protocol (Transformation - UBECtt)
+    - Distribution Manager (Token Balance Management)
+    - Data Synchronizer (Blockchain Sync)
+    - Holonic Evaluator (Ubuntu Principles)
+
+Design Compliance:
+    ✅ Principle 1: Modular Design - Clear separation of concerns
+    ✅ Principle 2: Service Pattern - THIS IS THE ONLY standalone execution
+    ✅ Principle 3: Service Registry - All dependencies via registry
+    ✅ Principle 4: Single Source of Truth - Database authoritative
+    ✅ Principle 5: Strict Async - All operations async
+    ✅ Principle 6: No Sync Fallbacks - Pure async only
+    ✅ Principle 7: Per-Asset Monitoring - Individual tracking
+    ✅ Principle 8: No Duplicate Configuration - Centralized config
+    ✅ Principle 9: Integrated Rate Limiting - Built-in rate limiter
+    ✅ Principle 10: Clear Separation - Business logic isolated
+    ✅ Principle 11: Documentation - Comprehensive docstrings
+    ✅ Principle 12: Method Singularity - No redundant methods
+
+CLI Usage:
+    # System Operations
+    python main.py --mode health                    # Full system health
+    python main.py --mode status                    # System status
+    python main.py --mode sync                      # Sync all data
+    
+    # Data Layer Operations
+    python main.py --mode discover --max-accounts 100  # Discover accounts
+    python main.py --mode analytics --analysis-type summary  # Analytics
+    
+    # Protocol Operations
+    python main.py --mode protocol-health           # Protocol health
+    python main.py --mode protocol-status           # Protocol status
+    python main.py --mode protocol-sync             # Sync protocols
+    python main.py --mode evaluate                  # Holonic evaluation
+    python main.py --mode evaluate --account GXXX   # Account evaluation
+    
+    # Distribution Management
+    python main.py --mode distribution --action check-compliance
+    python main.py --mode distribution --action rebalance
+    python main.py --mode distribution --action status
+    python main.py --mode distribution --action evaluate
+    python main.py --mode distribution --action trends --days 30
+    python main.py --mode distribution --action schedule --interval 3600
 
 Attribution:
-    This project uses the services of Claude and Anthropic PBC to inform 
-    our decisions and recommendations. This project was made possible with 
-    the assistance of Claude and Anthropic PBC.
+    This project uses the services of Claude and Anthropic PBC to inform our
+    decisions and recommendations. This project was made possible with the
+    assistance of Claude and Anthropic PBC.
 
-Version: 5.4 (Added configurable sync limits via SYNC_LIMIT env var and --limit CLI arg)
+Author: UBEC Protocol Team
+Version: 3.0 (Distribution Manager Integration)
 Date: October 12, 2025
-Changes from 5.3:
-    - Added SYNC_LIMIT environment variable (default: 5000)
-    - Added DISCOVER_LIMIT environment variable (default: 1000)  
-    - Added --limit CLI argument for sync mode
-    - Fixed run_sync to accept and use limit parameter
-    - Use --limit 0 for unlimited sync (use cautiously with rate limits)
 """
 
-import sys
 import os
+import sys
 import asyncio
 import argparse
-import json
 import logging
+import json
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from decimal import Decimal
 
-# Load environment variables
+# Ensure project root is in path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+# Environment setup
 from dotenv import load_dotenv
 load_dotenv()
 
-# Async HTTP client for Stellar
-try:
-    from stellar_sdk import ServerAsync, AiohttpClient
-    STELLAR_AVAILABLE = True
-except ImportError:
-    STELLAR_AVAILABLE = False
+# Core imports
+from core.service_registry import registry, ServiceInitializationError
+from config.settings import SystemConfig
 
+# Configure logging
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
 
-# ==================== LOGGING SETUP ====================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/ubec_main.log'),
+        logging.StreamHandler()
+    ]
+)
 
-def setup_logging(log_level='INFO'):
-    """Setup logging configuration"""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
-        handlers=[
-            logging.FileHandler("ubec_main.log"),
-            logging.StreamHandler()
-        ]
-    )
-
-logger = logging.getLogger('MainOrchestrator')
-
-
-# ==================== CONFIGURATION ====================
-
-class SystemConfig:
-    """
-    System-wide configuration from environment variables.
-    This is the SINGLE configuration source (Principle #8).
-    """
-    
-    def __init__(self):
-        """
-        Load configuration from environment.
-        Uses ONLY the exact variable names from env.example - no fallbacks.
-        Coding is an exact science - we use what's defined, nothing more.
-        """
-        # Network (from env.example line 12)
-        self.network = os.getenv('UBEC_NETWORK', 'testnet')
-        self.horizon_url = (
-            'https://horizon.stellar.org' if self.network == 'mainnet'
-            else 'https://horizon-testnet.stellar.org'
-        )
-        
-        # Database (from env.example lines 47-54)
-        self.db_host = os.getenv('DB_HOST', 'localhost')
-        self.db_port = int(os.getenv('DB_PORT', '5432'))
-        self.db_name = os.getenv('DB_NAME', 'ubec')
-        self.db_schema = os.getenv('DB_SCHEMA', 'ubec_main')
-        self.db_user = os.getenv('DB_USER', 'ubec_app')
-        self.db_password = os.getenv('DB_PASSWORD', '')
-        
-        # Token issuers (from env.example lines 20-29)
-        # Note: env.example uses mixed case for element tokens
-        self.ubec_issuer = os.getenv('UBEC_ISSUER', '')
-        self.ubecrc_issuer = os.getenv('UBECrc_ISSUER', '')
-        self.ubecgpi_issuer = os.getenv('UBECgpi_ISSUER', '')
-        self.ubectt_issuer = os.getenv('UBECtt_ISSUER', '')
-        
-        # Logging (from env.example line 93)
-        self.log_level = os.getenv('LOG_LEVEL', 'INFO')
-        
-        # Performance tuning (optional - can be added to env.example if customization needed)
-        # These use sensible defaults but can be overridden via environment variables
-        self.rate_limit_per_second = float(os.getenv('RATE_LIMIT', '10.0'))
-        self.cache_ttl = int(os.getenv('CACHE_TTL', '300'))
-        self.analytics_cache_ttl = int(os.getenv('ANALYTICS_CACHE_TTL', '300'))
-        
-        # Sync operation limits (NEW in v5.4)
-        self.sync_limit_default = int(os.getenv('SYNC_LIMIT', '5000'))
-        self.discover_limit_default = int(os.getenv('DISCOVER_LIMIT', '1000'))
-        
-        logger.info(f"Configuration loaded: network={self.network}, schema={self.db_schema}")
-        logger.info(f"Sync limits: sync={self.sync_limit_default}, discover={self.discover_limit_default}")
+logger = logging.getLogger(__name__)
 
 
 # ==================== SERVICE INITIALIZATION ====================
 
 async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
     """
-    Initialize all services with proper dependency injection.
-    Returns service registry dictionary.
-    """
-    services = {}
-    
-    # 1. Initialize Database Manager
-    try:
-        from core.db.database_manager import AsyncDatabaseManager
-        
-        db_manager = AsyncDatabaseManager(
-            host=config.db_host,
-            port=config.db_port,
-            database=config.db_name,
-            schema=config.db_schema,
-            user=config.db_user,
-            password=config.db_password
-        )
-        
-        await db_manager.initialize()
-        services['database'] = db_manager
-        logger.info("✓ Database connection initialized")
-        
-    except Exception as e:
-        logger.error(f"✗ Failed to initialize database: {e}")
-        raise
-    
-    # 2. Initialize Stellar Client
-    if STELLAR_AVAILABLE:
-        try:
-            stellar_client = ServerAsync(
-                horizon_url=config.horizon_url,
-                client=AiohttpClient()
-            )
-            services['stellar'] = stellar_client
-            logger.info("✓ Stellar client initialized")
-        except Exception as e:
-            logger.warning(f"⚠️ Stellar client initialization failed: {e}")
-            services['stellar'] = None
-    else:
-        logger.warning("⚠️ Stellar SDK not available")
-        services['stellar'] = None
-    
-    # 3. Initialize Data Synchronizer
-    try:
-        from core.db.ubec_data_synchronizer import UBECDataSynchronizer
-        
-        # UBECDataSynchronizer only takes db_manager
-        synchronizer = UBECDataSynchronizer(db_manager=services['database'])
-        # Explicitly initialize the synchronizer
-        await synchronizer.initialize()
-        services['synchronizer'] = synchronizer
-        logger.info("✓ Data synchronizer initialized")
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Data synchronizer initialization failed: {e}")
-        logger.debug("Stack trace:", exc_info=True)
-        services['synchronizer'] = None
-    
-    # 4. Initialize Analytics Service
-    if services.get('database'):
-        try:
-            analytics = None
-            
-            try:
-                from services.analytics.ubec_analytics_service import UBECAnalyticsService
-                logger.debug("Using services.analytics.ubec_analytics_service module")
-                analytics = UBECAnalyticsService(db_manager=services['database'])
-            except ImportError:
-                try:
-                    from core.analytics.ubec_analytics_service import UBECAnalyticsService
-                    logger.debug("Using core.analytics.ubec_analytics_service module")
-                    analytics = UBECAnalyticsService(db_manager=services['database'])
-                except ImportError:
-                    try:
-                        from ubec_analytics_service import UBECAnalyticsService
-                        logger.debug("Using root-level ubec_analytics_service module")
-                        analytics = UBECAnalyticsService(db_manager=services['database'])
-                    except ImportError:
-                        logger.warning("⚠️ Analytics service module not found in any location")
-            
-            if analytics:
-                await analytics.initialize()
-                analytics._cache_ttl_seconds = config.analytics_cache_ttl
-                services['analytics'] = analytics
-                logger.info("✓ Analytics service initialized")
-            else:
-                services['analytics'] = None
-                logger.warning("⚠️ Analytics service not available")
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Analytics service initialization failed: {e}")
-            logger.debug("Stack trace:", exc_info=True)
-            services['analytics'] = None
-    else:
-        logger.info("ℹ️ Analytics service skipped (requires database connection)")
-        services['analytics'] = None
-    
-    # 5. Initialize Holonic Evaluator (ASYNC VERSION)
-    if services.get('database'):
-        try:
-            evaluator = None
-            
-            try:
-                from core.holonic.ubec_holonic_evaluator import create_holonic_evaluator
-                logger.debug("Using core.holonic.ubec_holonic_evaluator module")
-                
-                # create_holonic_evaluator is an async factory function
-                evaluator = await create_holonic_evaluator(
-                    db_manager=services['database'],
-                    config={
-                        'db_schema': config.db_schema,
-                        'ubec_code': 'UBEC',
-                        'ubec_issuer': config.ubec_issuer
-                    }
-                )
-                
-            except ImportError:
-                try:
-                    from holonic.ubec_holonic_evaluator import create_holonic_evaluator
-                    logger.debug("Using holonic.ubec_holonic_evaluator module")
-                    
-                    evaluator = await create_holonic_evaluator(
-                        db_manager=services['database'],
-                        config={
-                            'db_schema': config.db_schema,
-                            'ubec_code': 'UBEC',
-                            'ubec_issuer': config.ubec_issuer
-                        }
-                    )
-                except ImportError:
-                    logger.warning("⚠️ Holonic evaluator module not found in any location")
-            
-            if evaluator:
-                services['evaluator'] = evaluator
-                logger.info("✓ Holonic evaluator initialized (async)")
-            else:
-                services['evaluator'] = None
-                logger.warning("⚠️ Holonic evaluator not available")
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Holonic evaluator initialization failed: {e}")
-            logger.debug("Stack trace:", exc_info=True)
-            services['evaluator'] = None
-    else:
-        logger.info("ℹ️ Holonic evaluator skipped (requires database connection)")
-        services['evaluator'] = None
-    
-    # 6. Initialize Element Protocols
-    await initialize_element_protocols(services, config)
-    
-    return services
-
-
-async def initialize_element_protocols(services: Dict[str, Any], config: SystemConfig):
-    """
-    Initialize the four element protocol services.
-    
-    FIXED in v5.3: All imports now use correct core.protocols.* path
+    Initialize all system services via the service registry.
     
     Args:
-        services: Service registry dictionary
         config: System configuration
+        
+    Returns:
+        dict: Dictionary of initialized services
+    
+    Design Note:
+        This function initializes services in dependency order:
+        1. Database Manager (foundation)
+        2. Stellar Client (blockchain access)
+        3. Data Synchronizer (depends on database)
+        4. Element Protocols (depend on database + stellar)
+        5. Distribution Services (depend on all above)
+        6. Holonic Evaluator (depends on all above)
     """
+    logger.info("="*70)
+    logger.info("Initializing UBEC Protocol Services")
+    logger.info("="*70)
     
-    # Air Protocol (UBEC - Gateway)
-    try:
-        from core.protocols.UBEC_protocol import create_ubec_service
-        
-        air_service = create_ubec_service(
-            db_manager=services['database'],
-            config={
-                'asset_code': 'UBEC',
-                'issuer': config.ubec_issuer,
-                'rate_limit_calls_per_second': config.rate_limit_per_second
-            },
-            stellar_client=services['stellar']
-        )
-        services['air'] = air_service
-        logger.info("✓ Air Protocol (UBEC) initialized")
-    except Exception as e:
-        logger.warning(f"⚠️ Air Protocol initialization failed: {e}")
-        services['air'] = None
+    services = {}
     
-    # Water Protocol (UBECrc - Reciprocity)
     try:
-        from core.protocols.UBECrc_protocol import create_ubecrc_service
+        # Initialize via service registry context manager
+        await registry.initialize_all()
         
-        water_service = create_ubecrc_service(
-            db_manager=services['database'],
-            config={
-                'asset_code': 'UBECrc',
-                'issuer': config.ubecrc_issuer,
-                'rate_limit_calls_per_second': config.rate_limit_per_second
-            },
-            stellar_client=services['stellar']
-        )
-        services['water'] = water_service
-        logger.info("✓ Water Protocol (UBECrc) initialized")
-    except Exception as e:
-        logger.warning(f"⚠️ Water Protocol initialization failed: {e}")
-        services['water'] = None
-    
-    # Earth Protocol (UBECgpi - Stability)
-    try:
-        from core.protocols.UBECgpi_protocol import create_ubecgpi_service
+        # Get references to initialized services
+        services['database'] = registry.get_sync('database_manager')
+        services['synchronizer'] = registry.get_sync('synchronizer')
         
-        earth_service = create_ubecgpi_service(
-            db_manager=services['database'],
-            config={
-                'asset_code': 'UBECgpi',
-                'issuer': config.ubecgpi_issuer,
-                'rate_limit_calls_per_second': config.rate_limit_per_second
-            },
-            stellar_client=services['stellar']
-        )
-        services['earth'] = earth_service
-        logger.info("✓ Earth Protocol (UBECgpi) initialized")
-    except Exception as e:
-        logger.warning(f"⚠️ Earth Protocol initialization failed: {e}")
-        services['earth'] = None
-    
-    # Fire Protocol (UBECtt - Transformation)
-    try:
-        from core.protocols.UBECtt_protocol import create_ubectt_service
+        # Check for protocol services
+        for protocol_name in ['air', 'water', 'earth', 'fire']:
+            try:
+                services[protocol_name] = registry.get_sync(protocol_name)
+            except Exception as e:
+                logger.warning(f"Protocol '{protocol_name}' not available: {e}")
+                services[protocol_name] = None
         
-        fire_service = create_ubectt_service(
-            db_manager=services['database'],
-            config={
-                'asset_code': 'UBECtt',
-                'issuer': config.ubectt_issuer,
-                'rate_limit_calls_per_second': config.rate_limit_per_second,
-                'min_verification_threshold': 3,
-                'base_reward': '100.0',
-                'max_reward': '10000.0'
-            },
-            stellar_client=services['stellar']
-        )
-        services['fire'] = fire_service
-        logger.info("✓ Fire Protocol (UBECtt) initialized")
+        # Check for distribution services
+        try:
+            services['distribution'] = registry.get_sync('distribution')
+            services['distribution_evaluator'] = registry.get_sync('distribution_evaluator')
+        except Exception as e:
+            logger.warning(f"Distribution services not available: {e}")
+            services['distribution'] = None
+            services['distribution_evaluator'] = None
+        
+        # Check for holonic evaluator
+        try:
+            services['holonic_evaluator'] = registry.get_sync('holonic_evaluator')
+        except Exception as e:
+            logger.warning(f"Holonic evaluator not available: {e}")
+            services['holonic_evaluator'] = None
+        
+        logger.info("✓ All available services initialized")
+        return services
+        
     except Exception as e:
-        logger.warning(f"⚠️ Fire Protocol initialization failed: {e}")
-        services['fire'] = None
+        logger.error(f"Failed to initialize services: {e}")
+        raise ServiceInitializationError(f"Service initialization failed: {e}")
 
 
 async def shutdown_services(services: Dict[str, Any]):
     """
     Gracefully shutdown all services.
     
-    Fixed to properly close synchronizer's server AND session.
+    Args:
+        services: Dictionary of service instances
     """
     logger.info("Shutting down services...")
     
-    # Close protocol services first (they may depend on stellar/database)
-    protocol_services = ['air', 'water', 'earth', 'fire']
-    for protocol_name in protocol_services:
-        if services.get(protocol_name):
-            try:
-                protocol = services[protocol_name]
-                if hasattr(protocol, 'close'):
-                    await protocol.close()
-                    logger.info(f"✓ {protocol_name.capitalize()} protocol closed")
-            except Exception as e:
-                logger.error(f"Error closing {protocol_name} protocol: {e}")
-    
-    # Close synchronizer COMPLETELY (not just session!)
-    # The synchronizer has BOTH:
-    #   - self.session (aiohttp.ClientSession)
-    #   - self.server (ServerAsync with its own aiohttp client)
-    # We MUST call close() to close both
-    if services.get('synchronizer'):
-        try:
-            sync = services['synchronizer']
-            if hasattr(sync, 'close'):
-                # This closes BOTH session and server
-                await sync.close()
-                logger.info("✓ Synchronizer closed (server + session)")
-            elif hasattr(sync, 'session') and sync.session and not sync.session.closed:
-                # Fallback if close() method doesn't exist (shouldn't happen)
-                await sync.session.close()
-                logger.warning("⚠️ Synchronizer session closed (server may still be open!)")
-        except Exception as e:
-            logger.error(f"Error closing synchronizer: {e}")
-    
-    # Close shared Stellar client (used by protocols)
-    if services.get('stellar'):
-        try:
-            await services['stellar'].close()
-            logger.info("✓ Stellar client closed")
-        except Exception as e:
-            logger.error(f"Error closing Stellar client: {e}")
-    
-    # Close database connection last (other services may need it)
-    if services.get('database'):
-        try:
-            await services['database'].close()
-            logger.info("✓ Database connection closed")
-        except Exception as e:
-            logger.error(f"Error closing database: {e}")
-    
-    logger.info("✓ All services shut down")
+    try:
+        await registry.shutdown()
+        logger.info("✓ All services shut down gracefully")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
-# ==================== OPERATION MODES ====================
+
+# ==================== OPERATION HANDLERS ====================
 
 async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Check health of all services.
+    Perform comprehensive system health check.
     
-    Args:
-        services: Service registry dictionary
-        
     Returns:
-        Health status dictionary
+        dict: Health check results
     """
-    logger.info("Running health check...")
+    logger.info("Performing system health check...")
     
-    health_status = {
+    health_report = {
         'timestamp': datetime.now().isoformat(),
         'services': {},
-        'overall_status': 'healthy'
+        'protocols': {},
+        'overall_status': 'UNKNOWN'
     }
     
-    # Check each service
-    for service_name, service in services.items():
-        if service is None:
-            health_status['services'][service_name] = {'status': 'unavailable'}
-            health_status['overall_status'] = 'degraded'
+    # Check core services
+    healthy_count = 0
+    total_count = 0
+    
+    for service_name in ['database', 'synchronizer']:
+        total_count += 1
+        service = services.get(service_name)
+        
+        if service:
+            health_report['services'][service_name] = {
+                'status': 'AVAILABLE',
+                'type': type(service).__name__
+            }
+            healthy_count += 1
         else:
-            health_status['services'][service_name] = {'status': 'healthy'}
+            health_report['services'][service_name] = {
+                'status': 'NOT_AVAILABLE'
+            }
     
-    # Check database connectivity
-    if services.get('database'):
-        try:
-            result = await services['database'].execute_query("SELECT 1", fetch_one=True)
-            if result:
-                health_status['services']['database']['connectivity'] = 'ok'
-        except Exception as e:
-            health_status['services']['database']['status'] = 'error'
-            health_status['services']['database']['error'] = str(e)
-            health_status['overall_status'] = 'unhealthy'
+    # Check protocol services
+    for protocol_name in ['air', 'water', 'earth', 'fire']:
+        total_count += 1
+        service = services.get(protocol_name)
+        
+        if service:
+            health_report['protocols'][protocol_name] = {
+                'status': 'AVAILABLE',
+                'type': type(service).__name__
+            }
+            healthy_count += 1
+        else:
+            health_report['protocols'][protocol_name] = {
+                'status': 'NOT_AVAILABLE'
+            }
     
-    return health_status
+    # Check distribution services
+    for service_name in ['distribution', 'distribution_evaluator']:
+        total_count += 1
+        service = services.get(service_name)
+        
+        if service:
+            health_report['services'][service_name] = {
+                'status': 'AVAILABLE',
+                'type': type(service).__name__
+            }
+            healthy_count += 1
+        else:
+            health_report['services'][service_name] = {
+                'status': 'NOT_AVAILABLE'
+            }
+    
+    # Calculate overall status
+    health_percentage = (healthy_count / total_count) * 100
+    
+    if health_percentage >= 90:
+        health_report['overall_status'] = 'EXCELLENT'
+    elif health_percentage >= 70:
+        health_report['overall_status'] = 'GOOD'
+    elif health_percentage >= 50:
+        health_report['overall_status'] = 'FAIR'
+    else:
+        health_report['overall_status'] = 'POOR'
+    
+    health_report['health_percentage'] = health_percentage
+    health_report['services_healthy'] = healthy_count
+    health_report['services_total'] = total_count
+    
+    logger.info(f"Health check complete: {health_report['overall_status']} ({health_percentage:.1f}%)")
+    
+    return health_report
 
 
-async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
+async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -> Dict[str, Any]:
     """
-    Run data synchronization using actual UBECDataSynchronizer methods.
-    
-    The synchronizer has these async methods:
-    - sync_account_data(asset_code, limit)
-    - sync_transaction_data(asset_code, days_back, limit_per_account) 
-    - sync_balance_data(asset_code)
-    - discover_all_ubec_holders(max_per_asset)
+    Synchronize blockchain data to database.
     
     Args:
-        services: Service registry dictionary
-        asset_code: Specific asset to sync, or None for all
-        limit: Maximum accounts to sync per asset (None = unlimited)
+        services: Service instances
+        asset_code: Optional specific asset to sync
         
     Returns:
-        Sync result dictionary
+        dict: Sync results
     """
-    logger.info(f"Running sync for: {asset_code or 'all assets'} (limit: {limit or 'unlimited'})")
+    synchronizer = services.get('synchronizer')
     
-    if not services.get('synchronizer'):
+    if not synchronizer:
         return {
-            'success': False,
-            'error': 'Synchronizer service not available'
+            'error': 'Synchronizer service not available',
+            'timestamp': datetime.now().isoformat()
         }
     
+    logger.info(f"Starting sync operation (asset_code={asset_code or 'all'})...")
+    
     try:
-        synchronizer = services['synchronizer']
-        
-        # Synchronizer is already initialized during service startup
-        # No need to check _initialized attribute
-        
         if asset_code:
-            # Sync specific asset using actual synchronizer methods
-            logger.info(f"Syncing account data for {asset_code}...")
-            accounts_result = await synchronizer.sync_account_data(
-                asset_code=asset_code,
-                limit=limit
-            )
-            
-            logger.info(f"Syncing transaction data for {asset_code}...")
-            transactions_result = await synchronizer.sync_transaction_data(
-                asset_code=asset_code,
-                days_back=30,
-                limit_per_account=100
-            )
-            
-            logger.info(f"Syncing balance data for {asset_code}...")
-            balances_result = await synchronizer.sync_balance_data(
-                asset_code=asset_code
-            )
-            
-            result = {
-                'success': True,
-                'timestamp': datetime.now().isoformat(),
-                'asset_code': asset_code,
-                'accounts_synced': accounts_result.get('accounts_synced', 0) if isinstance(accounts_result, dict) else 0,
-                'transactions_synced': transactions_result.get('transactions_synced', 0) if isinstance(transactions_result, dict) else 0,
-                'balances_synced': balances_result.get('balances_synced', 0) if isinstance(balances_result, dict) else 0
-            }
+            result = await synchronizer.sync_account_data(asset_code)
         else:
-            # Sync all assets concurrently
-            async def sync_asset(asset_code):
-                try:
-                    accounts = await synchronizer.sync_account_data(asset_code=asset_code, limit=limit)
-                    transactions = await synchronizer.sync_transaction_data(
-                        asset_code=asset_code, 
-                        days_back=30,
-                        limit_per_account=100
-                    )
-                    balances = await synchronizer.sync_balance_data(asset_code=asset_code)
-                    return {
-                        'success': True,
-                        'asset_code': asset_code,
-                        'accounts': accounts.get('accounts_synced', 0) if isinstance(accounts, dict) else 0,
-                        'transactions': transactions.get('transactions_synced', 0) if isinstance(transactions, dict) else 0,
-                        'balances': balances.get('balances_synced', 0) if isinstance(balances, dict) else 0
-                    }
-                except Exception as e:
-                    return {
-                        'success': False,
-                        'asset_code': asset_code,
-                        'error': str(e)
-                    }
-            
-            results = await asyncio.gather(
-                sync_asset('UBEC'),
-                sync_asset('UBECrc'),
-                sync_asset('UBECgpi'),
-                sync_asset('UBECtt'),
-                return_exceptions=True
-            )
-            
-            result = {
-                'success': True,
-                'timestamp': datetime.now().isoformat(),
-                'assets_synced': sum(1 for r in results if isinstance(r, dict) and r.get('success')),
-                'total_assets': 4,
-                'limit_per_asset': limit or 'unlimited',
-                'results': {
-                    'UBEC': results[0] if len(results) > 0 else {},
-                    'UBECrc': results[1] if len(results) > 1 else {},
-                    'UBECgpi': results[2] if len(results) > 2 else {},
-                    'UBECtt': results[3] if len(results) > 3 else {}
-                }
-            }
+            # Sync all UBEC family assets
+            results = {}
+            for code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
+                results[code] = await synchronizer.sync_account_data(code)
+            result = results
         
-        return result
+        return {
+            'timestamp': datetime.now().isoformat(),
+            'asset_code': asset_code or 'all',
+            'result': result,
+            'success': True
+        }
         
     except Exception as e:
-        logger.error(f"Sync failed: {e}", exc_info=True)
+        logger.error(f"Sync error: {e}")
         return {
-            'success': False,
-            'error': str(e)
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e),
+            'success': False
         }
 
 
-async def run_analytics(services: Dict[str, Any], analysis_type: str = 'summary') -> Dict[str, Any]:
+async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[str, Any]:
     """
-    Run analytics queries.
+    Run analytics operations.
     
     Args:
-        services: Service registry dictionary
-        analysis_type: Type of analysis to run
+        services: Service instances
+        analysis_type: Type of analysis
         
     Returns:
-        Analytics result dictionary
+        dict: Analytics results
     """
-    logger.info(f"Running analytics: {analysis_type}")
+    synchronizer = services.get('synchronizer')
     
-    if not services.get('analytics'):
+    if not synchronizer:
         return {
-            'success': False,
-            'error': 'Analytics service not available'
+            'error': 'Synchronizer service not available',
+            'timestamp': datetime.now().isoformat()
         }
     
+    logger.info(f"Running {analysis_type} analytics...")
+    
     try:
-        analytics = services['analytics']
-        
         if analysis_type == 'summary':
-            result = await analytics.get_ecosystem_health()
-        elif analysis_type == 'distribution':
-            results = await asyncio.gather(
-                analytics.get_token_distribution('UBEC'),
-                analytics.get_token_distribution('UBECrc'),
-                analytics.get_token_distribution('UBECgpi'),
-                analytics.get_token_distribution('UBECtt'),
-                return_exceptions=True
-            )
+            # Get summary statistics
             result = {
-                'UBEC': results[0],
-                'UBECrc': results[1],
-                'UBECgpi': results[2],
-                'UBECtt': results[3]
+                'timestamp': datetime.now().isoformat(),
+                'analysis_type': 'summary',
+                'message': 'Summary analytics not yet implemented'
+            }
+        elif analysis_type == 'distribution':
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'analysis_type': 'distribution',
+                'message': 'Distribution analytics not yet implemented'
             }
         elif analysis_type == 'holders':
-            results = await asyncio.gather(
-                analytics.get_holder_analysis('UBEC'),
-                analytics.get_holder_analysis('UBECrc'),
-                analytics.get_holder_analysis('UBECgpi'),
-                analytics.get_holder_analysis('UBECtt'),
-                return_exceptions=True
-            )
             result = {
-                'UBEC': results[0],
-                'UBECrc': results[1],
-                'UBECgpi': results[2],
-                'UBECtt': results[3]
+                'timestamp': datetime.now().isoformat(),
+                'analysis_type': 'holders',
+                'message': 'Holder analytics not yet implemented'
             }
         else:
             result = {
-                'success': False,
-                'error': f'Unknown analysis type: {analysis_type}'
+                'error': f'Unknown analysis type: {analysis_type}',
+                'timestamp': datetime.now().isoformat()
             }
         
         return result
         
     except Exception as e:
-        logger.error(f"Analytics failed: {e}", exc_info=True)
+        logger.error(f"Analytics error: {e}")
         return {
-            'success': False,
+            'timestamp': datetime.now().isoformat(),
             'error': str(e)
         }
 
@@ -664,125 +383,395 @@ async def run_evaluate(services: Dict[str, Any], account_id: Optional[str] = Non
     Run holonic evaluation.
     
     Args:
-        services: Service registry dictionary
-        account_id: Specific account to evaluate, or None for system-wide
+        services: Service instances
+        account_id: Optional specific account
         
     Returns:
-        Evaluation result dictionary
+        dict: Evaluation results
     """
-    logger.info(f"Running evaluation for: {account_id or 'all accounts'}")
+    evaluator = services.get('holonic_evaluator')
     
-    if not services.get('evaluator'):
+    if not evaluator:
         return {
-            'success': False,
-            'error': 'Evaluator service not available'
+            'error': 'Holonic evaluator not available',
+            'timestamp': datetime.now().isoformat()
         }
     
+    logger.info(f"Running holonic evaluation (account={account_id or 'system-wide'})...")
+    
     try:
-        evaluator = services['evaluator']
-        
         if account_id:
-            # Evaluate specific account (not implemented in current evaluator)
-            result = {
-                'success': False,
-                'error': 'Single account evaluation not yet implemented'
-            }
+            result = await evaluator.evaluate_account(account_id)
         else:
-            # Run system-wide evaluation
-            result = await evaluator.run_evaluation()
+            result = await evaluator.evaluate_system()
         
         return result
         
     except Exception as e:
-        logger.error(f"Evaluation failed: {e}", exc_info=True)
+        logger.error(f"Evaluation error: {e}")
         return {
-            'success': False,
+            'timestamp': datetime.now().isoformat(),
             'error': str(e)
         }
 
 
 async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dict[str, Any]:
     """
-    Discover new accounts.
+    Discover UBEC token holders.
     
     Args:
-        services: Service registry dictionary
-        max_accounts: Maximum accounts to discover per token
+        services: Service instances
+        max_accounts: Maximum accounts to discover
         
     Returns:
-        Discovery result dictionary
+        dict: Discovery results
     """
-    logger.info(f"Discovering accounts (max: {max_accounts})")
+    synchronizer = services.get('synchronizer')
     
-    if not services.get('synchronizer'):
+    if not synchronizer:
         return {
-            'success': False,
-            'error': 'Synchronizer service not available'
+            'error': 'Synchronizer service not available',
+            'timestamp': datetime.now().isoformat()
         }
     
+    logger.info(f"Discovering accounts (max={max_accounts})...")
+    
     try:
-        synchronizer = services['synchronizer']
+        # Discover accounts
+        accounts = await synchronizer.discover_accounts(max_accounts=max_accounts)
         
-        # Synchronizer is already initialized during service startup
-        
-        # Use the discover_all_ubec_holders method which discovers all 4 tokens
-        logger.info(f"Discovering holders of all UBEC tokens (max {max_accounts} per token)...")
-        result = await synchronizer.discover_all_ubec_holders(max_per_asset=max_accounts)
-        
-        # Format result
         return {
-            'success': True,
             'timestamp': datetime.now().isoformat(),
-            'discovery_results': result,
-            'total_discovered': sum(result.values()) if isinstance(result, dict) else 0
+            'accounts_discovered': len(accounts),
+            'max_requested': max_accounts,
+            'accounts': accounts[:10],  # Return first 10 for display
+            'success': True
         }
         
     except Exception as e:
-        logger.error(f"Discovery failed: {e}", exc_info=True)
+        logger.error(f"Discovery error: {e}")
         return {
-            'success': False,
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e),
+            'success': False
+        }
+
+
+# ==================== DISTRIBUTION OPERATIONS ====================
+
+async def run_distribution_operation(
+    services: Dict[str, Any],
+    action: str,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Run distribution management operations.
+    
+    Args:
+        services: Service instances
+        action: Distribution action to perform
+        **kwargs: Additional arguments
+        
+    Returns:
+        dict: Operation results
+    """
+    dist_service = services.get('distribution')
+    evaluator = services.get('distribution_evaluator')
+    
+    if not dist_service and action not in ['status', 'help']:
+        return {
+            'error': 'Distribution service not available',
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    logger.info(f"Running distribution operation: {action}")
+    
+    try:
+        if action == 'check-compliance':
+            result = await dist_service.check_compliance()
+            
+            # Create snapshot
+            snapshot_id = await dist_service.snapshot_distribution()
+            result['snapshot_id'] = snapshot_id
+            
+            return result
+        
+        elif action == 'rebalance':
+            # Check if rebalance needed
+            needs_rebalance, current_dist = await dist_service.is_rebalance_needed()
+            
+            if not needs_rebalance:
+                return {
+                    'message': 'Distribution is compliant, no rebalance needed',
+                    'current_distribution': {
+                        'general': float(current_dist['general']),
+                        'administration': float(current_dist['administration']),
+                        'stewardship': float(current_dist['stewardship'])
+                    },
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # Perform rebalance
+            result = await dist_service.perform_rebalance()
+            
+            # Create post-rebalance snapshot
+            snapshot_id = await dist_service.snapshot_distribution()
+            result['snapshot_id'] = snapshot_id
+            
+            return result
+        
+        elif action == 'status':
+            result = await dist_service.get_distribution_status()
+            return result
+        
+        elif action == 'evaluate':
+            if not evaluator:
+                return {
+                    'error': 'Distribution evaluator not available',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            result = await evaluator.evaluate_distribution()
+            return result
+        
+        elif action == 'trends':
+            if not evaluator:
+                return {
+                    'error': 'Distribution evaluator not available',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            days = kwargs.get('days', 30)
+            result = await evaluator.get_compliance_trends(days=days)
+            return result
+        
+        elif action == 'schedule':
+            interval = kwargs.get('interval', 3600)
+            success = await dist_service.schedule_next_check(interval)
+            
+            if success:
+                return {
+                    'message': f'Distribution checks scheduled every {interval} seconds',
+                    'interval_seconds': interval,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                return {
+                    'error': 'Failed to schedule checks',
+                    'timestamp': datetime.now().isoformat()
+                }
+        
+        elif action == 'help':
+            return {
+                'available_actions': [
+                    'check-compliance - Check if distribution meets targets',
+                    'rebalance - Perform token rebalancing',
+                    'status - Get current distribution status',
+                    'evaluate - Evaluate distribution health',
+                    'trends --days 30 - Get compliance trends',
+                    'schedule --interval 3600 - Schedule automatic checks'
+                ],
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        else:
+            return {
+                'error': f'Unknown distribution action: {action}',
+                'available_actions': ['check-compliance', 'rebalance', 'status', 'evaluate', 'trends', 'schedule', 'help'],
+                'timestamp': datetime.now().isoformat()
+            }
+    
+    except Exception as e:
+        logger.error(f"Distribution operation error: {e}")
+        return {
+            'timestamp': datetime.now().isoformat(),
+            'action': action,
             'error': str(e)
         }
 
 
-# ==================== CLI INTERFACE ====================
+# ==================== PROTOCOL OPERATIONS ====================
 
-def parse_arguments():
+async def run_protocol_health(services: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Check health of all protocol services.
+    
+    Args:
+        services: Service instances
+        
+    Returns:
+        dict: Protocol health status
+    """
+    logger.info("Checking protocol health...")
+    
+    protocols = {}
+    
+    for protocol_name in ['air', 'water', 'earth', 'fire']:
+        service = services.get(protocol_name)
+        
+        if service and hasattr(service, 'health_check'):
+            try:
+                health = await service.health_check()
+                protocols[protocol_name] = health
+            except Exception as e:
+                protocols[protocol_name] = {
+                    'status': 'ERROR',
+                    'error': str(e)
+                }
+        else:
+            protocols[protocol_name] = {
+                'status': 'NOT_AVAILABLE'
+            }
+    
+    return {
+        'timestamp': datetime.now().isoformat(),
+        'protocols': protocols
+    }
+
+
+async def run_protocol_status(services: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get status of all protocol services.
+    
+    Args:
+        services: Service instances
+        
+    Returns:
+        dict: Protocol status
+    """
+    logger.info("Getting protocol status...")
+    
+    protocols = {}
+    
+    for protocol_name in ['air', 'water', 'earth', 'fire']:
+        service = services.get(protocol_name)
+        
+        if service and hasattr(service, 'get_system_metrics'):
+            try:
+                metrics = await service.get_system_metrics()
+                protocols[protocol_name] = {
+                    'status': 'ACTIVE',
+                    'metrics': metrics
+                }
+            except Exception as e:
+                protocols[protocol_name] = {
+                    'status': 'ERROR',
+                    'error': str(e)
+                }
+        else:
+            protocols[protocol_name] = {
+                'status': 'NOT_AVAILABLE'
+            }
+    
+    return {
+        'timestamp': datetime.now().isoformat(),
+        'protocols': protocols
+    }
+
+
+async def run_protocol_sync(services: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Synchronize all protocol services.
+    
+    Args:
+        services: Service instances
+        
+    Returns:
+        dict: Sync results
+    """
+    logger.info("Synchronizing protocols...")
+    
+    results = {}
+    
+    # Sync each protocol concurrently
+    tasks = {}
+    for protocol_name in ['air', 'water', 'earth', 'fire']:
+        service = services.get(protocol_name)
+        
+        if service and hasattr(service, 'sync_protocol_data'):
+            tasks[protocol_name] = service.sync_protocol_data()
+    
+    if tasks:
+        sync_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        
+        for (protocol_name, _), result in zip(tasks.items(), sync_results):
+            if isinstance(result, Exception):
+                results[protocol_name] = {
+                    'status': 'ERROR',
+                    'error': str(result)
+                }
+            else:
+                results[protocol_name] = {
+                    'status': 'SUCCESS',
+                    'data': result
+                }
+    
+    return {
+        'timestamp': datetime.now().isoformat(),
+        'results': results,
+        'summary': {
+            'total': len(results),
+            'successful': sum(1 for r in results.values() if r.get('status') == 'SUCCESS'),
+            'failed': sum(1 for r in results.values() if r.get('status') == 'ERROR')
+        }
+    }
+
+
+# ==================== CLI ====================
+
+def parse_arguments() -> argparse.Namespace:
     """
     Parse command line arguments.
     
     Returns:
-        Parsed arguments object
+        Parsed arguments
     """
     parser = argparse.ArgumentParser(
-        description='UBEC Protocol - Unified Main Orchestrator',
+        description='UBEC Protocol Suite - Unified Management System',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py --mode health                                  # System health check
-  python main.py --mode sync                                    # Sync all assets (default limit from env)
-  python main.py --mode sync --limit 1000                       # Sync all assets (limit 1000 per asset)
-  python main.py --mode sync --limit 0                          # Sync all assets (unlimited)
-  python main.py --mode sync --asset-code UBEC --limit 500      # Sync UBEC only (limit 500)
-  python main.py --mode analytics                               # Ecosystem summary
-  python main.py --mode analytics --analysis-type distribution  # Token distribution
-  python main.py --mode evaluate                                # System-wide evaluation
-  python main.py --mode discover --max-accounts 100             # Discover accounts
-
-Environment Variables:
-  SYNC_LIMIT=5000        # Default limit for sync operations (default: 5000)
-  DISCOVER_LIMIT=1000    # Default limit for discover operations (default: 1000)
+  # System Operations
+  %(prog)s --mode health                          # System health
+  %(prog)s --mode status                          # System status
+  %(prog)s --mode sync                            # Sync all data
+  %(prog)s --mode sync --asset-code UBEC          # Sync specific asset
+  
+  # Data Operations
+  %(prog)s --mode discover --max-accounts 100     # Discover accounts
+  %(prog)s --mode analytics --analysis-type summary  # Analytics
+  
+  # Protocol Operations
+  %(prog)s --mode protocol-health                 # Protocol health
+  %(prog)s --mode protocol-status                 # Protocol status
+  %(prog)s --mode protocol-sync                   # Sync protocols
+  %(prog)s --mode evaluate                        # Holonic evaluation
+  %(prog)s --mode evaluate --account GXXX         # Account evaluation
+  
+  # Distribution Management
+  %(prog)s --mode distribution --action check-compliance
+  %(prog)s --mode distribution --action rebalance
+  %(prog)s --mode distribution --action status
+  %(prog)s --mode distribution --action evaluate
+  %(prog)s --mode distribution --action trends --days 30
+  %(prog)s --mode distribution --action schedule --interval 3600
         """
     )
     
+    # Main mode
     parser.add_argument(
         '--mode',
         type=str,
-        choices=['health', 'sync', 'analytics', 'evaluate', 'discover'],
-        default='health',
-        help='Operation mode (default: health)'
+        required=True,
+        choices=[
+            'health', 'status', 'sync', 'discover', 'analytics', 'evaluate',
+            'protocol-health', 'protocol-status', 'protocol-sync',
+            'distribution'
+        ],
+        help='Operation mode'
     )
     
+    # Sync options
     parser.add_argument(
         '--asset-code',
         type=str,
@@ -790,12 +779,7 @@ Environment Variables:
         help='Specific asset code (for sync mode)'
     )
     
-    parser.add_argument(
-        '--limit',
-        type=int,
-        help='Maximum accounts to sync per asset (for sync mode). Use 0 for unlimited. Default from SYNC_LIMIT env var or 5000'
-    )
-    
+    # Analytics options
     parser.add_argument(
         '--analysis-type',
         type=str,
@@ -804,12 +788,14 @@ Environment Variables:
         help='Type of analysis (for analytics mode)'
     )
     
+    # Evaluation options
     parser.add_argument(
         '--account',
         type=str,
         help='Specific account ID (for evaluate mode)'
     )
     
+    # Discovery options
     parser.add_argument(
         '--max-accounts',
         type=int,
@@ -817,6 +803,32 @@ Environment Variables:
         help='Maximum accounts to discover (for discover mode)'
     )
     
+    # Distribution options
+    parser.add_argument(
+        '--action',
+        type=str,
+        choices=[
+            'check-compliance', 'rebalance', 'status', 'evaluate',
+            'trends', 'schedule', 'help'
+        ],
+        help='Distribution action (for distribution mode)'
+    )
+    
+    parser.add_argument(
+        '--days',
+        type=int,
+        default=30,
+        help='Number of days for trend analysis'
+    )
+    
+    parser.add_argument(
+        '--interval',
+        type=int,
+        default=3600,
+        help='Check interval in seconds (for schedule action)'
+    )
+    
+    # Output options
     parser.add_argument(
         '--output',
         type=str,
@@ -842,7 +854,7 @@ def format_output(data: Any, output_format: str) -> str:
     
     Args:
         data: Data to format
-        output_format: Format type (json, pretty, summary)
+        output_format: Format type
         
     Returns:
         Formatted string
@@ -862,7 +874,7 @@ def format_output(data: Any, output_format: str) -> str:
 
 # ==================== ASYNC MAIN ====================
 
-async def main_async(args):
+async def main_async(args: argparse.Namespace) -> int:
     """
     Async main function - the actual orchestrator.
     
@@ -881,20 +893,13 @@ async def main_async(args):
     
     try:
         # Execute requested operation
+        result = None
+        
         if args.mode == 'health':
             result = await run_health_check(services)
         
         elif args.mode == 'sync':
-            # Determine sync limit
-            if args.limit is not None:
-                # CLI argument takes precedence
-                sync_limit = None if args.limit == 0 else args.limit
-            else:
-                # Use config default
-                sync_limit = config.sync_limit_default
-            
-            logger.info(f"Sync limit: {sync_limit or 'unlimited'}")
-            result = await run_sync(services, args.asset_code, sync_limit)
+            result = await run_sync(services, args.asset_code)
         
         elif args.mode == 'analytics':
             result = await run_analytics(services, args.analysis_type)
@@ -904,6 +909,30 @@ async def main_async(args):
         
         elif args.mode == 'discover':
             result = await run_discover(services, args.max_accounts)
+        
+        elif args.mode == 'protocol-health':
+            result = await run_protocol_health(services)
+        
+        elif args.mode == 'protocol-status':
+            result = await run_protocol_status(services)
+        
+        elif args.mode == 'protocol-sync':
+            result = await run_protocol_sync(services)
+        
+        elif args.mode == 'distribution':
+            if not args.action:
+                result = {
+                    'error': 'Distribution mode requires --action parameter',
+                    'available_actions': ['check-compliance', 'rebalance', 'status', 'evaluate', 'trends', 'schedule', 'help'],
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                result = await run_distribution_operation(
+                    services,
+                    args.action,
+                    days=args.days,
+                    interval=args.interval
+                )
         
         else:
             logger.error(f"Unknown mode: {args.mode}")
@@ -922,7 +951,7 @@ async def main_async(args):
             if isinstance(result, dict):
                 if result.get('success') is False or 'error' in result:
                     return 1
-                if result.get('overall_status') in ['unhealthy', 'degraded', 'error']:
+                if result.get('overall_status') in ['POOR', 'ERROR']:
                     return 1
             
             return 0
@@ -957,28 +986,34 @@ def main() -> int:
     # Parse arguments
     args = parse_arguments()
     
-    # Setup logging
-    setup_logging(args.log_level)
-    
-    # Log startup
-    logger.info("=" * 70)
-    logger.info("UBEC Protocol - Unified Main Orchestrator")
-    logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 5.4 (Added configurable sync limits)")
-    logger.info(f"Python: {sys.version.split()[0]}")
-    logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 70)
+    # Set log level
+    logging.getLogger().setLevel(getattr(logging, args.log_level))
     
     # Run async main
     try:
-        exit_code = asyncio.run(main_async(args))
-        return exit_code
+        return asyncio.run(main_async(args))
     except KeyboardInterrupt:
-        logger.info("\n✓ Program terminated by user")
+        print("\n\nOperation cancelled by user.")
         return 0
+    except Exception as e:
+        logger.critical(f"Critical error in main: {e}", exc_info=True)
+        print(f"\nERROR: {e}")
+        return 1
 
 
-# ==================== ENTRY POINT ====================
-
-if __name__ == '__main__':
+if __name__ == "__main__":
+    """
+    Entry point guard - ensures this is the ONLY file with standalone execution.
+    
+    Following Principle #2: Service Pattern with Centralized Execution
+    - ALL other modules are services
+    - ALL services accessed via service registry
+    - NO other files have if __name__ == "__main__"
+    
+    This is a critical design principle that:
+    - Prevents circular dependencies
+    - Enables proper dependency injection
+    - Facilitates testing
+    - Ensures consistent initialization order
+    """
     sys.exit(main())
