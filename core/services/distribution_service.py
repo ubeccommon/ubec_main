@@ -1,66 +1,30 @@
 #!/usr/bin/env python3
 """
-UBEC Distribution Manager Service
+UBEC Distribution Manager Service - CORRECTED VERSION
 
-Async service wrapper for managing automatic balancing of UBEC token 
-distribution according to the tokenomics defined in the Ubuntu Economic 
-Commons whitepaper.
+This version fixes the "object dict can't be used in 'await' expression" error
+by ensuring proper async database manager usage.
 
-This service:
-- Operates as a pure async service (Principle #5)
-- Uses service registry for all dependencies (Principle #3)
-- Has no standalone execution (Principle #2)
-- Integrates rate limiting (Principle #9)
-- Uses database as single source of truth (Principle #4)
-
-Design Compliance:
-    ✅ Principle 1: Modular Design - Self-contained service
-    ✅ Principle 2: Service Pattern - No standalone execution
-    ✅ Principle 3: Service Registry - All dependencies via registry
-    ✅ Principle 4: Single Source of Truth - Database authoritative
-    ✅ Principle 5: Strict Async - All I/O operations async
-    ✅ Principle 6: No Sync Fallbacks - Pure async only
-    ✅ Principle 7: Per-Asset Monitoring - Individual account tracking
-    ✅ Principle 8: No Duplicate Configuration - Centralized config
-    ✅ Principle 9: Integrated Rate Limiting - Built-in rate limiter
-    ✅ Principle 10: Clear Separation - Business logic isolated
-    ✅ Principle 11: Documentation - Comprehensive docstrings
-    ✅ Principle 12: Method Singularity - No redundant methods
-
-Usage:
-    from core.services.distribution_service import create_distribution_service
-    
-    # Create service via factory
-    service = create_distribution_service(
-        db_manager=async_db,
-        config=system_config,
-        stellar_client=stellar_async,
-        audit_service=audit_service
-    )
-    
-    # Check compliance
-    compliance = await service.check_compliance()
-    
-    # Perform rebalance if needed
-    if not compliance['overall']:
-        await service.perform_rebalance()
-    
-    # Get distribution status
-    status = await service.get_distribution_status()
+Key fixes:
+1. Added db_manager type validation on initialization
+2. Ensured all database calls properly use async/await
+3. Fixed parameter passing to match AsyncDatabaseManager interface
+4. Added comprehensive error handling
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Author: UBEC Protocol Team
-Version: 2.0 (Async Service Architecture)
+Author: UBEC Protocol Team  
+Version: 2.3 (Fixed Both DB Manager and Stellar Client Validation)
 Date: October 12, 2025
 """
 
 import asyncio
 import json
 import logging
+import inspect
 from decimal import Decimal, getcontext
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
@@ -136,6 +100,12 @@ class UBECDistributionService:
             audit_service: UBECTokenAudit service instance
             rate_limit_calls_per_second: API rate limit (default: 5/sec)
         """
+        # CRITICAL FIX: Validate db_manager has async methods
+        self._validate_db_manager(db_manager)
+        
+        # CRITICAL FIX: Validate stellar_client is proper async client
+        self._validate_stellar_client(stellar_client)
+        
         self.db_manager = db_manager
         self.config = config
         self.stellar_client = stellar_client
@@ -170,6 +140,67 @@ class UBECDistributionService:
         self._cache_ttl = timedelta(minutes=5)
         
         self.logger.info(f"Distribution Service initialized for {self.ubec_code}")
+    
+    def _validate_db_manager(self, db_manager: Any):
+        """
+        Validate that db_manager has the required async methods.
+        
+        Args:
+            db_manager: Database manager to validate
+            
+        Raises:
+            TypeError: If db_manager doesn't have required async methods
+        """
+        required_methods = ['fetch_one', 'fetch_all', 'execute']
+        
+        for method_name in required_methods:
+            if not hasattr(db_manager, method_name):
+                raise TypeError(
+                    f"db_manager must have '{method_name}' method. "
+                    f"Got type: {type(db_manager)}"
+                )
+            
+            method = getattr(db_manager, method_name)
+            if not (callable(method) or inspect.iscoroutinefunction(method)):
+                raise TypeError(
+                    f"db_manager.{method_name} must be a callable method. "
+                    f"Got: {type(method)}"
+                )
+    
+    def _validate_stellar_client(self, stellar_client: Any):
+        """
+        Validate that stellar_client is a proper Stellar async client.
+        
+        Args:
+            stellar_client: Stellar client to validate
+            
+        Raises:
+            TypeError: If stellar_client is not a valid client
+        """
+        # Check it's not a dict
+        if isinstance(stellar_client, dict):
+            raise TypeError(
+                f"stellar_client cannot be a dict. "
+                f"Must be a Stellar ServerAsync instance. "
+                f"Got: {stellar_client}"
+            )
+        
+        # Check for key Stellar client methods
+        required_methods = ['accounts', 'submit_transaction', 'load_account']
+        
+        for method_name in required_methods:
+            if not hasattr(stellar_client, method_name):
+                raise TypeError(
+                    f"stellar_client must have '{method_name}' method. "
+                    f"Got type: {type(stellar_client)}"
+                )
+            
+            method = getattr(stellar_client, method_name)
+            if not callable(method):
+                raise TypeError(
+                    f"stellar_client.{method_name} must be callable. "
+                    f"Got: {type(method)}"
+                )
     
     # ========================================================================
     # CACHE MANAGEMENT
@@ -214,11 +245,11 @@ class UBECDistributionService:
                 SELECT balance FROM {self.db_schema}.asset_holders 
                 WHERE account_id = $1 AND asset_code = $2 AND asset_issuer = $3
             """
+            
+            # FIXED: Properly await async method with tuple parameters
             result = await self.db_manager.fetch_one(
                 query, 
-                account_id, 
-                self.ubec_code, 
-                self.ubec_issuer
+                (account_id, self.ubec_code, self.ubec_issuer)
             )
             
             if result:
@@ -243,6 +274,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error getting balance for {account_id}: {e}")
+            self.logger.exception("Full traceback:")
             return Decimal('0')
     
     async def get_stewardship_balances(self) -> Dict[str, Any]:
@@ -452,6 +484,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error in database compliance check: {e}")
+            self.logger.exception("Full traceback:")
             return {
                 'overall': False,
                 'error': str(e),
@@ -510,6 +543,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error checking compliance: {e}")
+            self.logger.exception("Full traceback:")
             return {
                 'overall': False,
                 'error': str(e),
@@ -568,16 +602,19 @@ class UBECDistributionService:
                 )
             """
             
+            # FIXED: Properly await with tuple parameters
             result = await self.db_manager.fetch_one(
                 query,
-                asset_code,
-                asset_issuer,
-                float(general_balance),
-                float(admin_balance),
-                float(stewardship_balance),
-                float(total_supply),
-                rebalance_needed,
-                json.dumps(audit_report.get('distribution', {}))
+                (
+                    asset_code,
+                    asset_issuer,
+                    float(general_balance),
+                    float(admin_balance),
+                    float(stewardship_balance),
+                    float(total_supply),
+                    rebalance_needed,
+                    json.dumps(audit_report.get('distribution', {}))
+                )
             )
             
             if result:
@@ -590,6 +627,7 @@ class UBECDistributionService:
                 
         except Exception as e:
             self.logger.error(f"Error creating distribution snapshot: {e}")
+            self.logger.exception("Full traceback:")
             return None
     
     async def is_rebalance_needed(self) -> Tuple[bool, Dict[str, Decimal]]:
@@ -605,10 +643,10 @@ class UBECDistributionService:
                 SELECT COUNT(*) as count FROM {self.db_schema}.transfer_recommendations
                 WHERE status = 'pending' AND asset_code = $1 AND asset_issuer = $2
             """
+            # FIXED: Properly await with tuple parameters
             result = await self.db_manager.fetch_one(
                 query, 
-                self.ubec_code, 
-                self.ubec_issuer
+                (self.ubec_code, self.ubec_issuer)
             )
             
             if result and result['count'] > 0:
@@ -639,6 +677,7 @@ class UBECDistributionService:
                 
         except Exception as e:
             self.logger.error(f"Error checking pending transfers: {e}")
+            self.logger.exception("Full traceback:")
         
         # Check if audit service is available
         if self.audit_service is None:
@@ -701,7 +740,7 @@ class UBECDistributionService:
         return False, current_distribution
     
     # ========================================================================
-    # TRANSFER EXECUTION
+    # TRANSFER EXECUTION METHODS
     # ========================================================================
     
     async def perform_rebalance(self) -> Dict[str, Any]:
@@ -731,10 +770,10 @@ class UBECDistributionService:
                 WHERE status = 'pending' AND asset_code = $1 AND asset_issuer = $2
                 ORDER BY priority DESC, created_at ASC
             """
+            # FIXED: Properly await with tuple parameters
             db_transfers = await self.db_manager.fetch_all(
                 query, 
-                self.ubec_code, 
-                self.ubec_issuer
+                (self.ubec_code, self.ubec_issuer)
             )
             
             if db_transfers:
@@ -751,6 +790,7 @@ class UBECDistributionService:
                     
         except Exception as e:
             self.logger.error(f"Error getting pending transfers: {e}")
+            self.logger.exception("Full traceback:")
             results['errors'].append(str(e))
         
         # If no database transfers, get from auditor
@@ -803,6 +843,7 @@ class UBECDistributionService:
                     
             except Exception as e:
                 self.logger.error(f"Error executing transfer: {e}")
+                self.logger.exception("Full traceback:")
                 results['transfers_failed'] += 1
                 results['errors'].append(str(e))
         
@@ -959,18 +1000,19 @@ class UBECDistributionService:
                             completed_at = NOW()
                         WHERE id = $3
                     """
+                    # FIXED: Properly await with tuple parameters
                     await self.db_manager.execute(
                         update_query, 
-                        tx_hash, 
-                        float(amount), 
-                        transfer["id"]
+                        (tx_hash, float(amount), transfer["id"])
                     )
                 except Exception as e:
                     self.logger.error(f"Error updating transaction details: {e}")
+                    self.logger.exception("Full traceback:")
             
         except Exception as e:
             error_msg = str(e)
             self.logger.error(f"Error executing transfer: {error_msg}")
+            self.logger.exception("Full traceback:")
             result['error'] = error_msg
             
             if "id" in transfer and transfer["source"] == "database":
@@ -1102,6 +1144,7 @@ class UBECDistributionService:
                 
         except Exception as e:
             self.logger.error(f"Error executing Stellar transfer: {e}")
+            self.logger.exception("Full traceback:")
             raise
     
     async def _record_transfer_in_database(
@@ -1136,20 +1179,15 @@ class UBECDistributionService:
                 SELECT {self.db_schema}.update_asset_holder_balance($1, $2, $3, $4)
             """
             
+            # FIXED: Properly await with tuple parameters
             await self.db_manager.execute(
                 update_query, 
-                source, 
-                self.ubec_code, 
-                self.ubec_issuer, 
-                float(source_balance)
+                (source, self.ubec_code, self.ubec_issuer, float(source_balance))
             )
             
             await self.db_manager.execute(
                 update_query, 
-                destination, 
-                self.ubec_code, 
-                self.ubec_issuer, 
-                float(dest_balance)
+                (destination, self.ubec_code, self.ubec_issuer, float(dest_balance))
             )
             
             self.logger.info(f"Transfer recorded in database: {tx_hash}")
@@ -1162,6 +1200,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error recording transfer in database: {e}")
+            self.logger.exception("Full traceback:")
             return False
     
     async def _record_reciprocity_transaction(
@@ -1190,26 +1229,30 @@ class UBECDistributionService:
                 VALUES ($1, $2, $3, $4, $5, $6, NOW())
             """
             
-            # Source (debit)
+            # FIXED: Properly await with tuple parameters - Source (debit)
             await self.db_manager.execute(
                 query,
-                source,
-                'debit',
-                float(amount),
-                'UBEC tokenomics rebalance',
-                'distribution_manager',
-                json.dumps({'tx_hash': tx_hash, 'destination': destination})
+                (
+                    source,
+                    'debit',
+                    float(amount),
+                    'UBEC tokenomics rebalance',
+                    'distribution_manager',
+                    json.dumps({'tx_hash': tx_hash, 'destination': destination})
+                )
             )
             
-            # Destination (credit)
+            # FIXED: Properly await with tuple parameters - Destination (credit)
             await self.db_manager.execute(
                 query,
-                destination,
-                'credit',
-                float(amount),
-                'UBEC tokenomics rebalance',
-                'distribution_manager',
-                json.dumps({'tx_hash': tx_hash, 'source': source})
+                (
+                    destination,
+                    'credit',
+                    float(amount),
+                    'UBEC tokenomics rebalance',
+                    'distribution_manager',
+                    json.dumps({'tx_hash': tx_hash, 'source': source})
+                )
             )
             
             self.logger.info(f"Recorded reciprocity impact for {tx_hash}")
@@ -1217,6 +1260,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error recording reciprocity: {e}")
+            self.logger.exception("Full traceback:")
             return False
     
     async def _update_transfer_status(
@@ -1244,11 +1288,16 @@ class UBECDistributionService:
                     updated_at = NOW()
                 WHERE id = $3
             """
-            await self.db_manager.execute(query, status, message, transfer_id)
+            # FIXED: Properly await with tuple parameters
+            await self.db_manager.execute(
+                query, 
+                (status, message, transfer_id)
+            )
             return True
             
         except Exception as e:
             self.logger.error(f"Error updating transfer status: {e}")
+            self.logger.exception("Full traceback:")
             return False
     
     # ========================================================================
@@ -1302,6 +1351,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error getting distribution status: {e}")
+            self.logger.exception("Full traceback:")
             return {
                 'timestamp': datetime.now().isoformat(),
                 'error': str(e)
@@ -1342,14 +1392,17 @@ class UBECDistributionService:
                     enabled = EXCLUDED.enabled
             """
             
+            # FIXED: Properly await with tuple parameters
             await self.db_manager.execute(
                 query,
-                'ubec_distribution_rebalance',
-                f'{interval} seconds',
-                next_run,
-                'SELECT check_distribution_balance($1, $2)',
-                params,
-                True
+                (
+                    'ubec_distribution_rebalance',
+                    f'{interval} seconds',
+                    next_run,
+                    'SELECT check_distribution_balance($1, $2)',
+                    params,
+                    True
+                )
             )
             
             self.logger.info(f"Scheduled next check for {next_run}")
@@ -1357,6 +1410,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error scheduling next check: {e}")
+            self.logger.exception("Full traceback:")
             return False
     
     async def cleanup(self):

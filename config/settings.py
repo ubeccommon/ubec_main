@@ -217,12 +217,12 @@ class SystemConfig:
     def ACCOUNTS(self) -> Dict[str, Any]:
         # Load from environment as fallback until we add these to DB
         return {
-            'general': os.getenv('GENERAL_ACCOUNT', ''),
-            'administration': os.getenv('ADMIN_ACCOUNT', ''),
+            'general': os.getenv('GENERAL_PUBLIC_KEY', ''),
+            'administration': os.getenv('ADMIN_PUBLIC_KEY', ''),
             'stewardship': [
-                os.getenv('STEWARDSHIP_ACCOUNT_1', ''),
-                os.getenv('STEWARDSHIP_ACCOUNT_2', ''),
-                os.getenv('STEWARDSHIP_ACCOUNT_3', ''),
+                os.getenv('STEWARD_MGMT_PUBLIC_KEY', ''),
+                os.getenv('STEWARD_INFRA_PUBLIC_KEY', ''),
+                os.getenv('STEWARD_LIQUIDITY_PUBLIC_KEY', ''),
             ]
         }
     
