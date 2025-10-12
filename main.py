@@ -26,8 +26,13 @@ Attribution:
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
 
-Version: 5.2 (Fixed initialization check and corrected all sync method names)
+Version: 5.3 (Fixed protocol import paths to use core.protocols.*)
 Date: October 12, 2025
+Changes:
+    - Fixed Air Protocol import: core.protocols.UBEC_protocol
+    - Fixed Water Protocol import: core.protocols.UBECrc_protocol
+    - Fixed Earth Protocol import: core.protocols.UBECgpi_protocol
+    - Fixed Fire Protocol import: core.protocols.UBECtt_protocol
 """
 
 import sys
@@ -274,11 +279,19 @@ async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
 
 
 async def initialize_element_protocols(services: Dict[str, Any], config: SystemConfig):
-    """Initialize the four element protocol services"""
+    """
+    Initialize the four element protocol services.
+    
+    FIXED in v5.3: All imports now use correct core.protocols.* path
+    
+    Args:
+        services: Service registry dictionary
+        config: System configuration
+    """
     
     # Air Protocol (UBEC - Gateway)
     try:
-        from UBEC_protocol import create_ubec_service
+        from core.protocols.UBEC_protocol import create_ubec_service
         
         air_service = create_ubec_service(
             db_manager=services['database'],
@@ -297,7 +310,7 @@ async def initialize_element_protocols(services: Dict[str, Any], config: SystemC
     
     # Water Protocol (UBECrc - Reciprocity)
     try:
-        from UBECrc_protocol import create_ubecrc_service
+        from core.protocols.UBECrc_protocol import create_ubecrc_service
         
         water_service = create_ubecrc_service(
             db_manager=services['database'],
@@ -316,7 +329,7 @@ async def initialize_element_protocols(services: Dict[str, Any], config: SystemC
     
     # Earth Protocol (UBECgpi - Stability)
     try:
-        from UBECgpi_protocol import create_ubecgpi_service
+        from core.protocols.UBECgpi_protocol import create_ubecgpi_service
         
         earth_service = create_ubecgpi_service(
             db_manager=services['database'],
@@ -335,7 +348,7 @@ async def initialize_element_protocols(services: Dict[str, Any], config: SystemC
     
     # Fire Protocol (UBECtt - Transformation)
     try:
-        from UBECtt_protocol import create_ubectt_service
+        from core.protocols.UBECtt_protocol import create_ubectt_service
         
         fire_service = create_ubectt_service(
             db_manager=services['database'],
@@ -357,7 +370,12 @@ async def initialize_element_protocols(services: Dict[str, Any], config: SystemC
 
 
 async def shutdown_services(services: Dict[str, Any]):
-    """Gracefully shutdown all services"""
+    """
+    Gracefully shutdown all services.
+    
+    Args:
+        services: Service registry dictionary
+    """
     logger.info("Shutting down services...")
     
     # Close Stellar client (which includes aiohttp session)
@@ -392,7 +410,15 @@ async def shutdown_services(services: Dict[str, Any]):
 # ==================== OPERATION MODES ====================
 
 async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
-    """Check health of all services"""
+    """
+    Check health of all services.
+    
+    Args:
+        services: Service registry dictionary
+        
+    Returns:
+        Health status dictionary
+    """
     logger.info("Running health check...")
     
     health_status = {
@@ -428,10 +454,17 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
     Run data synchronization using actual UBECDataSynchronizer methods.
     
     The synchronizer has these async methods:
-    - sync_accounts()
-    - sync_transactions() 
-    - sync_balances()
-    - discover_accounts()
+    - sync_account_data()
+    - sync_transaction_data() 
+    - sync_balance_data()
+    - discover_all_ubec_holders()
+    
+    Args:
+        services: Service registry dictionary
+        asset_code: Specific asset to sync, or None for all
+        
+    Returns:
+        Sync result dictionary
     """
     logger.info(f"Running sync for: {asset_code or 'all assets'}")
     
@@ -532,7 +565,16 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
 
 
 async def run_analytics(services: Dict[str, Any], analysis_type: str = 'summary') -> Dict[str, Any]:
-    """Run analytics queries"""
+    """
+    Run analytics queries.
+    
+    Args:
+        services: Service registry dictionary
+        analysis_type: Type of analysis to run
+        
+    Returns:
+        Analytics result dictionary
+    """
     logger.info(f"Running analytics: {analysis_type}")
     
     if not services.get('analytics'):
@@ -591,7 +633,16 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str = 'summary'
 
 
 async def run_evaluate(services: Dict[str, Any], account_id: Optional[str] = None) -> Dict[str, Any]:
-    """Run holonic evaluation"""
+    """
+    Run holonic evaluation.
+    
+    Args:
+        services: Service registry dictionary
+        account_id: Specific account to evaluate, or None for system-wide
+        
+    Returns:
+        Evaluation result dictionary
+    """
     logger.info(f"Running evaluation for: {account_id or 'all accounts'}")
     
     if not services.get('evaluator'):
@@ -624,7 +675,16 @@ async def run_evaluate(services: Dict[str, Any], account_id: Optional[str] = Non
 
 
 async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dict[str, Any]:
-    """Discover new accounts"""
+    """
+    Discover new accounts.
+    
+    Args:
+        services: Service registry dictionary
+        max_accounts: Maximum accounts to discover per token
+        
+    Returns:
+        Discovery result dictionary
+    """
     logger.info(f"Discovering accounts (max: {max_accounts})")
     
     if not services.get('synchronizer'):
@@ -661,7 +721,12 @@ async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dic
 # ==================== CLI INTERFACE ====================
 
 def parse_arguments():
-    """Parse command line arguments"""
+    """
+    Parse command line arguments.
+    
+    Returns:
+        Parsed arguments object
+    """
     parser = argparse.ArgumentParser(
         description='UBEC Protocol - Unified Main Orchestrator',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -733,7 +798,16 @@ Examples:
 
 
 def format_output(data: Any, output_format: str) -> str:
-    """Format output based on specified format"""
+    """
+    Format output based on specified format.
+    
+    Args:
+        data: Data to format
+        output_format: Format type (json, pretty, summary)
+        
+    Returns:
+        Formatted string
+    """
     if output_format == 'json':
         return json.dumps(data, indent=2, default=str)
     elif output_format == 'summary':
@@ -842,7 +916,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 5.2 (Fixed initialization check and corrected all sync method names)")
+    logger.info(f"Version: 5.3 (Fixed protocol import paths to use core.protocols.*)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
