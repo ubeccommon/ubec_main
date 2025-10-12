@@ -26,8 +26,8 @@ Attribution:
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
 
-Version: 5.2 (Fixed initialization check and corrected all sync method names)
-Date: October 12, 2025
+Version: 5.0 (Added Analytics Integration)
+Date: October 11, 2025
 """
 
 import sys
@@ -166,21 +166,20 @@ async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
     try:
         from core.db.ubec_data_synchronizer import UBECDataSynchronizer
         
-        # UBECDataSynchronizer only takes db_manager
+        # Note: UBECDataSynchronizer only takes db_manager
         synchronizer = UBECDataSynchronizer(db_manager=services['database'])
-        # Explicitly initialize the synchronizer
         await synchronizer.initialize()
         services['synchronizer'] = synchronizer
         logger.info("✓ Data synchronizer initialized")
         
     except Exception as e:
         logger.warning(f"⚠️ Data synchronizer initialization failed: {e}")
-        logger.debug("Stack trace:", exc_info=True)
         services['synchronizer'] = None
     
-    # 4. Initialize Analytics Service
+    # 4. Initialize Analytics Service (NEW)
     if services.get('database'):
         try:
+            # Try multiple import locations with proper fallbacks
             analytics = None
             
             try:
@@ -201,8 +200,12 @@ async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
                         logger.warning("⚠️ Analytics service module not found in any location")
             
             if analytics:
+                # Initialize the analytics service
                 await analytics.initialize()
+                
+                # Configure cache TTL if specified
                 analytics._cache_ttl_seconds = config.analytics_cache_ttl
+                
                 services['analytics'] = analytics
                 logger.info("✓ Analytics service initialized")
             else:
@@ -220,34 +223,24 @@ async def initialize_services(config: SystemConfig) -> Dict[str, Any]:
     # 5. Initialize Holonic Evaluator (ASYNC VERSION)
     if services.get('database'):
         try:
+            # Try to import and instantiate evaluator directly
             evaluator = None
             
             try:
-                from core.holonic.ubec_holonic_evaluator import create_holonic_evaluator
+                from core.holonic.ubec_holonic_evaluator import UBECHolonicEvaluator
                 logger.debug("Using core.holonic.ubec_holonic_evaluator module")
-                
-                # create_holonic_evaluator is an async factory function
-                evaluator = await create_holonic_evaluator(
-                    db_manager=services['database'],
-                    config={
-                        'db_schema': config.db_schema,
-                        'ubec_code': 'UBEC',
-                        'ubec_issuer': config.ubec_issuer
-                    }
+                # UBECHolonicEvaluator takes config_path and db_connection
+                evaluator = UBECHolonicEvaluator(
+                    config_path=None,  # Will use defaults
+                    db_connection=None  # Will create its own connection
                 )
-                
             except ImportError:
                 try:
-                    from holonic.ubec_holonic_evaluator import create_holonic_evaluator
+                    from holonic.ubec_holonic_evaluator import UBECHolonicEvaluator
                     logger.debug("Using holonic.ubec_holonic_evaluator module")
-                    
-                    evaluator = await create_holonic_evaluator(
-                        db_manager=services['database'],
-                        config={
-                            'db_schema': config.db_schema,
-                            'ubec_code': 'UBEC',
-                            'ubec_issuer': config.ubec_issuer
-                        }
+                    evaluator = UBECHolonicEvaluator(
+                        config_path=None,
+                        db_connection=None
                     )
                 except ImportError:
                     logger.warning("⚠️ Holonic evaluator module not found in any location")
@@ -360,23 +353,13 @@ async def shutdown_services(services: Dict[str, Any]):
     """Gracefully shutdown all services"""
     logger.info("Shutting down services...")
     
-    # Close Stellar client (which includes aiohttp session)
+    # Close Stellar client
     if services.get('stellar'):
         try:
             await services['stellar'].close()
             logger.info("✓ Stellar client closed")
         except Exception as e:
             logger.error(f"Error closing Stellar client: {e}")
-    
-    # Close synchronizer's session if it has one
-    if services.get('synchronizer'):
-        try:
-            sync = services['synchronizer']
-            if hasattr(sync, 'session') and sync.session and not sync.session.closed:
-                await sync.session.close()
-                logger.info("✓ Synchronizer session closed")
-        except Exception as e:
-            logger.error(f"Error closing synchronizer session: {e}")
     
     # Close database connection
     if services.get('database'):
@@ -424,15 +407,7 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Run data synchronization using actual UBECDataSynchronizer methods.
-    
-    The synchronizer has these async methods:
-    - sync_accounts()
-    - sync_transactions() 
-    - sync_balances()
-    - discover_accounts()
-    """
+    """Run data synchronization"""
     logger.info(f"Running sync for: {asset_code or 'all assets'}")
     
     if not services.get('synchronizer'):
@@ -444,80 +419,28 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
     try:
         synchronizer = services['synchronizer']
         
-        # Synchronizer is already initialized during service startup
-        # No need to check _initialized attribute
-        
         if asset_code:
-            # Sync specific asset using actual synchronizer methods
-            logger.info(f"Syncing account data for {asset_code}...")
-            accounts_result = await synchronizer.sync_account_data(
-                asset_code=asset_code,
-                limit=100
-            )
-            
-            logger.info(f"Syncing transaction data for {asset_code}...")
-            transactions_result = await synchronizer.sync_transaction_data(
-                asset_code=asset_code,
-                days_back=30,
-                limit_per_account=100
-            )
-            
-            logger.info(f"Syncing balance data for {asset_code}...")
-            balances_result = await synchronizer.sync_balance_data(
-                asset_code=asset_code
-            )
-            
-            result = {
-                'success': True,
-                'timestamp': datetime.now().isoformat(),
-                'asset_code': asset_code,
-                'accounts_synced': accounts_result.get('accounts_synced', 0) if isinstance(accounts_result, dict) else 0,
-                'transactions_synced': transactions_result.get('transactions_synced', 0) if isinstance(transactions_result, dict) else 0,
-                'balances_synced': balances_result.get('balances_synced', 0) if isinstance(balances_result, dict) else 0
-            }
+            # Sync specific asset
+            result = await synchronizer.sync_asset_data(asset_code)
         else:
-            # Sync all assets concurrently
-            async def sync_asset(asset_code):
-                try:
-                    accounts = await synchronizer.sync_account_data(asset_code=asset_code, limit=100)
-                    transactions = await synchronizer.sync_transaction_data(
-                        asset_code=asset_code, 
-                        days_back=30,
-                        limit_per_account=100
-                    )
-                    balances = await synchronizer.sync_balance_data(asset_code=asset_code)
-                    return {
-                        'success': True,
-                        'asset_code': asset_code,
-                        'accounts': accounts.get('accounts_synced', 0) if isinstance(accounts, dict) else 0,
-                        'transactions': transactions.get('transactions_synced', 0) if isinstance(transactions, dict) else 0,
-                        'balances': balances.get('balances_synced', 0) if isinstance(balances, dict) else 0
-                    }
-                except Exception as e:
-                    return {
-                        'success': False,
-                        'asset_code': asset_code,
-                        'error': str(e)
-                    }
-            
+            # Sync all assets
             results = await asyncio.gather(
-                sync_asset('UBEC'),
-                sync_asset('UBECrc'),
-                sync_asset('UBECgpi'),
-                sync_asset('UBECtt'),
+                synchronizer.sync_asset_data('UBEC'),
+                synchronizer.sync_asset_data('UBECrc'),
+                synchronizer.sync_asset_data('UBECgpi'),
+                synchronizer.sync_asset_data('UBECtt'),
                 return_exceptions=True
             )
             
             result = {
-                'success': True,
                 'timestamp': datetime.now().isoformat(),
                 'assets_synced': sum(1 for r in results if isinstance(r, dict) and r.get('success')),
                 'total_assets': 4,
                 'results': {
-                    'UBEC': results[0] if len(results) > 0 else {},
-                    'UBECrc': results[1] if len(results) > 1 else {},
-                    'UBECgpi': results[2] if len(results) > 2 else {},
-                    'UBECtt': results[3] if len(results) > 3 else {}
+                    'UBEC': results[0],
+                    'UBECrc': results[1],
+                    'UBECgpi': results[2],
+                    'UBECtt': results[3]
                 }
             }
         
@@ -545,8 +468,10 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str = 'summary'
         analytics = services['analytics']
         
         if analysis_type == 'summary':
+            # Get ecosystem overview
             result = await analytics.get_ecosystem_health()
         elif analysis_type == 'distribution':
+            # Get token distribution for all assets
             results = await asyncio.gather(
                 analytics.get_token_distribution('UBEC'),
                 analytics.get_token_distribution('UBECrc'),
@@ -561,6 +486,7 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str = 'summary'
                 'UBECtt': results[3]
             }
         elif analysis_type == 'holders':
+            # Get holder analysis for all assets
             results = await asyncio.gather(
                 analytics.get_holder_analysis('UBEC'),
                 analytics.get_holder_analysis('UBECrc'),
@@ -604,11 +530,8 @@ async def run_evaluate(services: Dict[str, Any], account_id: Optional[str] = Non
         evaluator = services['evaluator']
         
         if account_id:
-            # Evaluate specific account (not implemented in current evaluator)
-            result = {
-                'success': False,
-                'error': 'Single account evaluation not yet implemented'
-            }
+            # Evaluate specific account
+            result = await evaluator.evaluate_account(account_id)
         else:
             # Run system-wide evaluation
             result = await evaluator.run_evaluation()
@@ -635,20 +558,8 @@ async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dic
     
     try:
         synchronizer = services['synchronizer']
-        
-        # Synchronizer is already initialized during service startup
-        
-        # Use the discover_all_ubec_holders method which discovers all 4 tokens
-        logger.info(f"Discovering holders of all UBEC tokens (max {max_accounts} per token)...")
-        result = await synchronizer.discover_all_ubec_holders(max_per_asset=max_accounts)
-        
-        # Format result
-        return {
-            'success': True,
-            'timestamp': datetime.now().isoformat(),
-            'discovery_results': result,
-            'total_discovered': sum(result.values()) if isinstance(result, dict) else 0
-        }
+        result = await synchronizer.discover_accounts(max_accounts=max_accounts)
+        return result
         
     except Exception as e:
         logger.error(f"Discovery failed: {e}", exc_info=True)
@@ -673,6 +584,7 @@ Examples:
   python main.py --mode analytics                     # Ecosystem summary
   python main.py --mode analytics --analysis-type distribution  # Token distribution
   python main.py --mode evaluate                      # System-wide evaluation
+  python main.py --mode evaluate --account GXXX...    # Account evaluation
   python main.py --mode discover --max-accounts 100   # Discover accounts
         """
     )
@@ -737,6 +649,7 @@ def format_output(data: Any, output_format: str) -> str:
     if output_format == 'json':
         return json.dumps(data, indent=2, default=str)
     elif output_format == 'summary':
+        # Brief summary
         if isinstance(data, dict):
             lines = []
             lines.append(f"Timestamp: {data.get('timestamp', 'N/A')}")
@@ -842,7 +755,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 5.2 (Fixed initialization check and corrected all sync method names)")
+    logger.info(f"Version: 5.0 (Added Analytics Integration)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
