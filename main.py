@@ -45,9 +45,10 @@ CLI Usage:
     python main.py --mode evaluate                  # Holonic evaluation
     python main.py --mode evaluate --account GXXX   # Account evaluation
     
-    # Distribution Management
+    # Distribution Management (with dry-run support)
     python main.py --mode distribution --action check-compliance
-    python main.py --mode distribution --action rebalance
+    python main.py --mode distribution --action rebalance --dry-run  # PREVIEW ONLY
+    python main.py --mode distribution --action rebalance             # EXECUTE
     python main.py --mode distribution --action status
     python main.py --mode distribution --action evaluate
     python main.py --mode distribution --action trends --days 30
@@ -59,14 +60,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.1 (Fixed Async Stellar Client + Service Validation)
+Version: 4.2 (Added Dry-Run + Confirmation Workflow for Safety)
 Date: October 12, 2025
 
-Changes in v4.1:
-    - CRITICAL FIX: Changed from sync Server to async ServerAsync
-    - Added service instance validation before distribution service creation
-    - Added diagnostic logging for service types
-    - Ensures strict async compliance (Principle #6)
+Changes in v4.2:
+    - CRITICAL: Added --dry-run flag for distribution rebalance preview
+    - CRITICAL: Added confirmation workflow before executing transactions
+    - Added preview display showing proposed operations
+    - Added validation checks before destructive operations
+    - Improved error handling and user feedback
+    - Added operation safety checks per financial software best practices
 """
 
 import os
@@ -171,12 +174,10 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
     
     try:
         # CRITICAL FIX: Use ServerAsync for async operations (Principle #6)
-        # Changed from: from stellar_sdk import Server
-        # Changed to: from stellar_sdk import ServerAsync
         try:
-            from stellar_sdk import ServerAsync  # ← FIXED: Async client
+            from stellar_sdk import ServerAsync
             
-            stellar_client = ServerAsync(horizon_url=config.HORIZON_URL)  # ← FIXED: Async
+            stellar_client = ServerAsync(horizon_url=config.HORIZON_URL)
             services['stellar_client'] = stellar_client
             
             # Validation logging
@@ -284,9 +285,9 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
         
         # Initialize Distribution Service
         try:
-            from core.services.distribution_service import create_distribution_service
+            from services.distribution.distribution_service import create_distribution_service
             
-            # NEW: Validate service instances before passing to distribution service
+            # Validate service instances before passing to distribution service
             logger.info("="*70)
             logger.info("SERVICE INSTANCE VALIDATION")
             logger.info("="*70)
@@ -303,7 +304,7 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
                 
                 # CRITICAL: Verify it's ServerAsync, not Server
                 if type(stellar_client).__name__ == 'Server':
-                    logger.error("❌ CRITICAL: stellar_client is sync Server, not async ServerAsync!")
+                    logger.error("✗ CRITICAL: stellar_client is sync Server, not async ServerAsync!")
                     raise TypeError("stellar_client must be ServerAsync for async operations")
                 else:
                     logger.info(f"✓ stellar_client is async: {type(stellar_client).__name__}")
@@ -334,10 +335,10 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
             
             # Create distribution service with validated instances
             dist_service = create_distribution_service(
-                db_manager=db_manager,  # ✓ AsyncDatabaseManager instance
+                db_manager=db_manager,
                 config=dist_config,
-                stellar_client=services.get('stellar_client'),  # ✓ ServerAsync instance (or None)
-                audit_service=services.get('audit'),  # May be None
+                stellar_client=services.get('stellar_client'),
+                audit_service=services.get('audit'),
                 rate_limit_calls_per_second=5.0
             )
             services['distribution'] = dist_service
@@ -349,7 +350,7 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
         except TypeError as e:
             logger.error(f"Distribution service initialization failed - type error: {e}")
             services['distribution'] = None
-            raise  # Re-raise TypeError to fail fast
+            raise
         except Exception as e:
             logger.warning(f"Distribution service initialization failed: {e}")
             services['distribution'] = None
@@ -432,16 +433,14 @@ async def shutdown_services(services: Dict[str, Any]):
         # Close Stellar client (ASYNC for ServerAsync)
         stellar_client = services.get('stellar_client')
         if stellar_client and hasattr(stellar_client, 'close'):
-            # ServerAsync's close() is async
             close_method = getattr(stellar_client, 'close')
             if asyncio.iscoroutinefunction(close_method):
                 await stellar_client.close()
             else:
-                # Fallback for sync close (shouldn't happen with ServerAsync)
                 stellar_client.close()
             logger.info("✓ Stellar client closed")
         
-        # Close synchronizer (check if async or sync)
+        # Close synchronizer
         synchronizer = services.get('synchronizer')
         if synchronizer and hasattr(synchronizer, 'close'):
             close_method = getattr(synchronizer, 'close')
@@ -451,7 +450,7 @@ async def shutdown_services(services: Dict[str, Any]):
                 synchronizer.close()
             logger.info("✓ Synchronizer closed")
         
-        # Close protocol services (check if async or sync)
+        # Close protocol services
         for protocol_name in ['air', 'water', 'earth', 'fire']:
             protocol = services.get(protocol_name)
             if protocol and hasattr(protocol, 'close'):
@@ -462,13 +461,13 @@ async def shutdown_services(services: Dict[str, Any]):
                     protocol.close()
                 logger.info(f"✓ {protocol_name.title()} Protocol closed")
         
-        # Close analytics service (async)
+        # Close analytics service
         analytics = services.get('analytics')
         if analytics and hasattr(analytics, 'close'):
             await analytics.close()
             logger.info("✓ Analytics service closed")
         
-        # Close audit service (check if async or sync)
+        # Close audit service
         audit = services.get('audit')
         if audit and hasattr(audit, 'close'):
             close_method = getattr(audit, 'close')
@@ -478,13 +477,13 @@ async def shutdown_services(services: Dict[str, Any]):
                 audit.close()
             logger.info("✓ Audit service closed")
         
-        # Close distribution service (async)
+        # Close distribution service
         distribution = services.get('distribution')
         if distribution and hasattr(distribution, 'cleanup'):
             await distribution.cleanup()
             logger.info("✓ Distribution service closed")
         
-        # Close distribution evaluator (async)
+        # Close distribution evaluator
         dist_evaluator = services.get('distribution_evaluator')
         if dist_evaluator and hasattr(dist_evaluator, 'cleanup'):
             await dist_evaluator.cleanup()
@@ -643,10 +642,6 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
         
     Returns:
         dict: Analytics results
-        
-    Design Note:
-        Uses the UBECAnalyticsService for comprehensive ecosystem analysis.
-        All data comes from database (single source of truth).
     """
     analytics = services.get('analytics')
     
@@ -661,13 +656,8 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
     
     try:
         if analysis_type == 'summary':
-            # Get ecosystem health
             health = await analytics.get_ecosystem_health()
-            
-            # Get all token distributions
             distributions = await analytics.get_all_token_distributions()
-            
-            # Get token comparison (already formatted)
             comparison = await analytics.compare_tokens()
             
             result = {
@@ -695,7 +685,6 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
                     }
                     for token in distributions
                 },
-                # Use comparison data directly - it's already properly formatted
                 'token_comparison': comparison.get('tokens', {}),
                 'totals': comparison.get('totals', {}),
                 'rankings': comparison.get('rankings', {})
@@ -704,9 +693,6 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
             logger.info("✓ Summary analytics complete")
             
         elif analysis_type == 'distribution':
-            # Detailed distribution analysis for each token
-            logger.info("Analyzing token distributions...")
-            
             distributions = await analytics.get_all_token_distributions()
             
             result = {
@@ -735,9 +721,6 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
             logger.info("✓ Distribution analysis complete")
             
         elif analysis_type == 'holders':
-            # Holder concentration analysis
-            logger.info("Analyzing holder concentrations...")
-            
             from decimal import Decimal
             
             result = {
@@ -748,14 +731,12 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
             
             for token_code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
                 try:
-                    # Analyze holder concentration
                     holder_analysis = await analytics.analyze_holder_concentration(
                         token_code,
                         whale_threshold=Decimal('50000'),
                         mid_tier_threshold=Decimal('5000')
                     )
                     
-                    # Identify top whales
                     whales = await analytics.identify_whales(
                         token_code,
                         threshold=Decimal('50000'),
@@ -867,14 +848,13 @@ async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dic
     logger.info(f"Discovering accounts (max={max_accounts})...")
     
     try:
-        # Discover accounts
         accounts = await synchronizer.discover_accounts(max_accounts=max_accounts)
         
         return {
             'timestamp': datetime.now().isoformat(),
             'accounts_discovered': len(accounts),
             'max_requested': max_accounts,
-            'accounts': accounts[:10],  # Return first 10 for display
+            'accounts': accounts[:10],
             'success': True
         }
         
@@ -889,32 +869,135 @@ async def run_discover(services: Dict[str, Any], max_accounts: int = 100) -> Dic
 
 # ==================== DISTRIBUTION OPERATIONS ====================
 
+def display_rebalance_preview(preview: Dict[str, Any]) -> None:
+    """
+    Display rebalance preview in user-friendly format.
+    
+    Args:
+        preview: Preview data from distribution service
+        
+    Design Note:
+        Provides clear, readable output before user confirmation.
+    """
+    print("\n" + "="*70)
+    print("REBALANCE OPERATION PREVIEW")
+    print("="*70)
+    
+    # Current state
+    current = preview.get('current_state', {})
+    if current:
+        print("\n📊 CURRENT STATE:")
+        compliance = current.get('compliance', {})
+        print(f"   Compliance: {'✓ COMPLIANT' if compliance.get('overall') else '✗ NON-COMPLIANT'}")
+        
+        dist = current.get('distribution', {})
+        if dist:
+            print(f"   General:        {dist.get('general', 0)*100:6.2f}%")
+            print(f"   Administration: {dist.get('administration', 0)*100:6.2f}%")
+            print(f"   Stewardship:    {dist.get('stewardship', 0)*100:6.2f}%")
+    
+    # Proposed operations
+    operations = preview.get('proposed_operations', [])
+    print(f"\n🔄 PROPOSED OPERATIONS ({len(operations)} transfers):")
+    for i, op in enumerate(operations, 1):
+        print(f"\n   {i}. Transfer {op['amount']:,.2f} UBEC")
+        print(f"      From: {op['from']} ({op['from_address'][:8]}...)")
+        print(f"      To:   {op['to']} ({op['to_address'][:8]}...)")
+        if op.get('reason'):
+            print(f"      Reason: {op['reason']}")
+    
+    # Projected state
+    projected = preview.get('projected_state', {})
+    if projected:
+        print("\n📈 PROJECTED STATE (after rebalance):")
+        proj_compliance = projected.get('compliance', {})
+        print(f"   Compliance: {'✓ COMPLIANT' if proj_compliance.get('overall') else '✗ STILL NON-COMPLIANT'}")
+        
+        proj_dist = projected.get('distribution', {})
+        if proj_dist:
+            print(f"   General:        {proj_dist.get('general', 0)*100:6.2f}%")
+            print(f"   Administration: {proj_dist.get('administration', 0)*100:6.2f}%")
+            print(f"   Stewardship:    {proj_dist.get('stewardship', 0)*100:6.2f}%")
+    
+    # Cost estimate
+    cost = preview.get('estimated_cost', {})
+    if cost:
+        print("\n💰 ESTIMATED COST:")
+        print(f"   Operations: {cost.get('operations', 0)}")
+        print(f"   Total Fee:  {cost.get('total_fee_xlm', 'N/A')}")
+    
+    print("\n" + "="*70)
+
+
+async def get_user_confirmation() -> bool:
+    """
+    Get user confirmation for executing rebalance.
+    
+    Returns:
+        bool: True if user confirms, False otherwise
+        
+    Design Note:
+        Implements confirmation workflow for financial operations.
+        Requires explicit "yes" input to proceed.
+    """
+    print("\n⚠️  WARNING: This will execute REAL blockchain transactions")
+    print("   These operations are IRREVERSIBLE once submitted to the network")
+    print()
+    
+    try:
+        # Get user input
+        confirmation = input("Type 'yes' to execute these operations: ").strip().lower()
+        
+        if confirmation == 'yes':
+            print("\n✓ Confirmed - Proceeding with rebalance operation")
+            return True
+        else:
+            print("\n✗ Operation cancelled")
+            return False
+            
+    except (KeyboardInterrupt, EOFError):
+        print("\n\n✗ Operation cancelled by user")
+        return False
+
+
 async def run_distribution_operation(
     services: Dict[str, Any],
     action: str,
+    dry_run: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Run distribution management operations.
+    Run distribution management operations with dry-run support.
     
     Args:
         services: Service instances
         action: Distribution action to perform
+        dry_run: If True, preview operations without executing
         **kwargs: Additional arguments
         
     Returns:
         dict: Operation results
+        
+    Design Note:
+        Implements proper separation between preview (dry-run) and execution.
+        For rebalance operations:
+        1. Always generate preview first
+        2. If dry-run mode, return preview and exit
+        3. If execution mode, display preview and require confirmation
+        4. Only execute after explicit user confirmation
     """
     dist_service = services.get('distribution')
     evaluator = services.get('distribution_evaluator')
     
+    # Some actions don't require distribution service
     if not dist_service and action not in ['status', 'help']:
         return {
             'error': 'Distribution service not available',
+            'message': 'Distribution service failed to initialize. Check logs for details.',
             'timestamp': datetime.now().isoformat()
         }
     
-    logger.info(f"Running distribution operation: {action}")
+    logger.info(f"Running distribution operation: {action} (dry_run={dry_run})")
     
     try:
         if action == 'check-compliance':
@@ -927,7 +1010,10 @@ async def run_distribution_operation(
             return result
         
         elif action == 'rebalance':
-            # Check if rebalance needed
+            # Check if distribution service supports dry-run
+            # If not, we'll implement preview logic here
+            
+            # First, check if rebalance is needed
             needs_rebalance, current_dist = await dist_service.is_rebalance_needed()
             
             if not needs_rebalance:
@@ -941,14 +1027,73 @@ async def run_distribution_operation(
                     'timestamp': datetime.now().isoformat()
                 }
             
-            # Perform rebalance
-            result = await dist_service.perform_rebalance()
+            # Check if perform_rebalance supports dry_run parameter
+            import inspect
+            rebalance_sig = inspect.signature(dist_service.perform_rebalance)
+            supports_dry_run = 'dry_run' in rebalance_sig.parameters
             
-            # Create post-rebalance snapshot
-            snapshot_id = await dist_service.snapshot_distribution()
-            result['snapshot_id'] = snapshot_id
-            
-            return result
+            if supports_dry_run:
+                # Service supports dry-run natively
+                if dry_run:
+                    # Just get preview
+                    preview = await dist_service.perform_rebalance(dry_run=True)
+                    display_rebalance_preview(preview)
+                    return preview
+                else:
+                    # Get preview first, then confirm and execute
+                    preview = await dist_service.perform_rebalance(dry_run=True)
+                    display_rebalance_preview(preview)
+                    
+                    # Get user confirmation
+                    if not await get_user_confirmation():
+                        return {
+                            'status': 'cancelled',
+                            'message': 'Rebalance operation cancelled by user',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                    
+                    # Execute rebalance
+                    print("\n📡 Executing rebalance operations...")
+                    result = await dist_service.perform_rebalance(dry_run=False)
+                    
+                    # Create post-rebalance snapshot
+                    snapshot_id = await dist_service.snapshot_distribution()
+                    result['snapshot_id'] = snapshot_id
+                    
+                    print("✓ Rebalance complete")
+                    return result
+            else:
+                # Service doesn't support dry-run yet
+                if dry_run:
+                    return {
+                        'error': 'Dry-run mode not yet implemented in distribution service',
+                        'message': 'Please update distribution_service.py to support dry_run parameter',
+                        'recommendation': 'See comprehensive review for implementation details',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    # Legacy behavior - direct execution (NOT RECOMMENDED)
+                    logger.warning("⚠️  Executing rebalance without dry-run support - this is not recommended!")
+                    
+                    print("\n⚠️  WARNING: Dry-run mode not available in distribution service")
+                    print("   Rebalance will execute immediately without preview")
+                    print()
+                    
+                    confirmation = input("Type 'yes' to proceed WITHOUT preview: ").strip().lower()
+                    if confirmation != 'yes':
+                        return {
+                            'status': 'cancelled',
+                            'message': 'Operation cancelled - dry-run mode recommended',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                    
+                    result = await dist_service.perform_rebalance()
+                    
+                    # Create post-rebalance snapshot
+                    snapshot_id = await dist_service.snapshot_distribution()
+                    result['snapshot_id'] = snapshot_id
+                    
+                    return result
         
         elif action == 'status':
             result = await dist_service.get_distribution_status()
@@ -995,12 +1140,14 @@ async def run_distribution_operation(
             return {
                 'available_actions': [
                     'check-compliance - Check if distribution meets targets',
-                    'rebalance - Perform token rebalancing',
+                    'rebalance --dry-run - Preview rebalancing operations (RECOMMENDED FIRST)',
+                    'rebalance - Execute token rebalancing (with confirmation)',
                     'status - Get current distribution status',
                     'evaluate - Evaluate distribution health',
                     'trends --days 30 - Get compliance trends',
                     'schedule --interval 3600 - Schedule automatic checks'
                 ],
+                'safety_note': 'Always use --dry-run first to preview operations',
                 'timestamp': datetime.now().isoformat()
             }
         
@@ -1013,10 +1160,12 @@ async def run_distribution_operation(
     
     except Exception as e:
         logger.error(f"Distribution operation error: {e}")
+        logger.exception("Full traceback:")
         return {
             'timestamp': datetime.now().isoformat(),
             'action': action,
-            'error': str(e)
+            'error': str(e),
+            'traceback': 'See logs for full traceback'
         }
 
 
@@ -1068,10 +1217,6 @@ async def run_protocol_status(services: Dict[str, Any]) -> Dict[str, Any]:
         
     Returns:
         dict: Protocol status
-        
-    Design Note:
-        Calls get_status() method on each protocol service.
-        Falls back to basic info if method not available.
     """
     logger.info("Getting protocol status...")
     
@@ -1093,7 +1238,6 @@ async def run_protocol_status(services: Dict[str, Any]) -> Dict[str, Any]:
                     'error': str(e)
                 }
         elif service:
-            # Service exists but doesn't have get_status() method
             protocols[protocol_name] = {
                 'status': 'AVAILABLE',
                 'message': 'Service initialized but get_status() method not implemented',
@@ -1189,9 +1333,10 @@ Examples:
   %(prog)s --mode evaluate                        # Holonic evaluation
   %(prog)s --mode evaluate --account GXXX         # Account evaluation
   
-  # Distribution Management
+  # Distribution Management (with dry-run support)
   %(prog)s --mode distribution --action check-compliance
-  %(prog)s --mode distribution --action rebalance
+  %(prog)s --mode distribution --action rebalance --dry-run    # PREVIEW ONLY
+  %(prog)s --mode distribution --action rebalance              # EXECUTE
   %(prog)s --mode distribution --action status
   %(prog)s --mode distribution --action evaluate
   %(prog)s --mode distribution --action trends --days 30
@@ -1269,6 +1414,13 @@ Examples:
         help='Check interval in seconds (for schedule action)'
     )
     
+    # CRITICAL: Dry-run flag for safe preview
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Preview operations without executing (RECOMMENDED for rebalance)'
+    )
+    
     # Output options
     parser.add_argument(
         '--output',
@@ -1324,12 +1476,6 @@ async def main_async(args: argparse.Namespace) -> int:
     
     Returns:
         Exit code
-        
-    Design Note:
-        This follows the correct initialization order:
-        1. Initialize database manager
-        2. Load configuration from database (Single Source of Truth)
-        3. Initialize all other services with database-backed config
     """
     services = None
     
@@ -1377,12 +1523,14 @@ async def main_async(args: argparse.Namespace) -> int:
                 result = {
                     'error': 'Distribution mode requires --action parameter',
                     'available_actions': ['check-compliance', 'rebalance', 'status', 'evaluate', 'trends', 'schedule', 'help'],
+                    'hint': 'Try: python main.py --mode distribution --action help',
                     'timestamp': datetime.now().isoformat()
                 }
             else:
                 result = await run_distribution_operation(
                     services,
                     args.action,
+                    dry_run=args.dry_run,
                     days=args.days,
                     interval=args.interval
                 )
@@ -1393,12 +1541,14 @@ async def main_async(args: argparse.Namespace) -> int:
         
         # Output result
         if result:
-            output = format_output(result, args.output)
-            print("\n" + "=" * 70)
-            print(f"UBEC Protocol - {args.mode.upper()} Result")
-            print("=" * 70)
-            print(output)
-            print("=" * 70 + "\n")
+            # Special handling for dry-run rebalance (already displayed)
+            if not (args.mode == 'distribution' and args.action == 'rebalance' and args.dry_run):
+                output = format_output(result, args.output)
+                print("\n" + "=" * 70)
+                print(f"UBEC Protocol - {args.mode.upper()} Result")
+                print("=" * 70)
+                print(output)
+                print("=" * 70 + "\n")
             
             # Determine exit code
             if isinstance(result, dict):
@@ -1406,6 +1556,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     return 1
                 if result.get('overall_status') in ['POOR', 'ERROR']:
                     return 1
+                if result.get('status') == 'cancelled':
+                    return 0  # Cancellation is not an error
             
             return 0
         
@@ -1447,7 +1599,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 4.1 (Fixed Async Stellar Client + Service Validation)")
+    logger.info(f"Version: 4.2 (Added Dry-Run + Confirmation Workflow for Safety)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
