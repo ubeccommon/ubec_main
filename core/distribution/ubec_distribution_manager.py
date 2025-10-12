@@ -1,4 +1,5 @@
-# ubec_distribution_manager.py
+#!/usr/bin/env python3
+# core/distribution/ubec_distribution_manager.py
 """
 UBEC Distribution Manager
 
