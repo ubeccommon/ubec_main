@@ -254,30 +254,76 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
                 logger.warning(f"{protocol_name.title()} Protocol initialization failed: {e}")
                 services[protocol_name] = None
         
-        # Initialize Distribution Services
+        # Initialize Audit Service (optional - required by distribution services)
         try:
-            from services.distribution.distribution_service import DistributionService
-            dist_service = DistributionService(
+            from core.audit.ubec_token_audit import UBECTokenAudit
+            audit_service = UBECTokenAudit(
+                data_source="hybrid",
+                db_manager=db_manager
+            )
+            services['audit'] = audit_service
+            logger.info("✓ Audit service initialized")
+        except ImportError:
+            logger.warning("Audit service module not found - distribution features may be limited")
+            services['audit'] = None
+        except Exception as e:
+            logger.warning(f"Audit service initialization failed: {e} - distribution features may be limited")
+            services['audit'] = None
+        
+        # Initialize Distribution Service
+        try:
+            from core.services.distribution_service import create_distribution_service
+            
+            # Build distribution config from system config
+            # Use .get() for attributes that may not exist, direct access for core attributes
+            dist_config = {
+                'db_schema': os.getenv('DB_SCHEMA', 'ubec_main'),  # From environment
+                'ubec_issuer': config.UBEC_ISSUER,
+                'ubec_code': config.UBEC_CODE,
+                'accounts': config.ACCOUNTS,
+                'target_distribution': config.TARGET_DISTRIBUTION,
+                'rebalance_threshold': config.REBALANCE_THRESHOLD,
+                'secret_keys': {
+                    'general': os.getenv('GENERAL_SECRET_KEY'),
+                    'administration': os.getenv('ADMIN_SECRET_KEY'),
+                    'stewardship': [
+                        os.getenv('STEWARD_MGMT_SECRET_KEY'),
+                        os.getenv('STEWARD_INFRA_SECRET_KEY'),
+                        os.getenv('STEWARD_LIQUIDITY_SECRET_KEY')
+                    ]
+                },
+                'check_interval': config.get('check_interval', 3600)  # Use .get() with default
+            }
+            
+            dist_service = create_distribution_service(
                 db_manager=db_manager,
+                config=dist_config,
                 stellar_client=services.get('stellar_client'),
-                config=config
+                audit_service=services.get('audit'),  # May be None
+                rate_limit_calls_per_second=5.0
             )
             services['distribution'] = dist_service
             logger.info("✓ Distribution service initialized")
-        except ImportError:
-            logger.warning("Distribution service module not found")
+        except ImportError as e:
+            logger.warning(f"Distribution service module not found: {e}")
             services['distribution'] = None
         except Exception as e:
             logger.warning(f"Distribution service initialization failed: {e}")
             services['distribution'] = None
         
+        # Initialize Distribution Evaluator
         try:
-            from core.distribution.distribution_evaluator import DistributionEvaluator
-            evaluator = DistributionEvaluator(db_manager=db_manager)
+            from core.evaluation.distribution_evaluator import create_evaluator_service
+            
+            evaluator = create_evaluator_service(
+                distribution_service=services.get('distribution'),
+                audit_service=services.get('audit'),
+                db_manager=db_manager
+            )
             services['distribution_evaluator'] = evaluator
             logger.info("✓ Distribution evaluator initialized")
-        except ImportError:
-            logger.warning("Distribution evaluator module not found")
+        except ImportError as e:
+            logger.warning(f"Distribution evaluator module not found: {e}")
             services['distribution_evaluator'] = None
         except Exception as e:
             logger.warning(f"Distribution evaluator initialization failed: {e}")
@@ -295,6 +341,20 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
         except Exception as e:
             logger.warning(f"Holonic evaluator initialization failed: {e}")
             services['holonic_evaluator'] = None
+        
+        # Initialize Analytics Service
+        try:
+            from services.analytics.ubec_analytics_service import UBECAnalyticsService
+            analytics_service = UBECAnalyticsService(db_manager)
+            await analytics_service.initialize()
+            services['analytics'] = analytics_service
+            logger.info("✓ Analytics service initialized")
+        except ImportError:
+            logger.warning("Analytics service module not found")
+            services['analytics'] = None
+        except Exception as e:
+            logger.warning(f"Analytics service initialization failed: {e}")
+            services['analytics'] = None
         
         logger.info("✓ All available services initialized")
         logger.info("="*70)
@@ -353,6 +413,34 @@ async def shutdown_services(services: Dict[str, Any]):
                 else:
                     protocol.close()
                 logger.info(f"✓ {protocol_name.title()} Protocol closed")
+        
+        # Close analytics service (async)
+        analytics = services.get('analytics')
+        if analytics and hasattr(analytics, 'close'):
+            await analytics.close()
+            logger.info("✓ Analytics service closed")
+        
+        # Close audit service (check if async or sync)
+        audit = services.get('audit')
+        if audit and hasattr(audit, 'close'):
+            close_method = getattr(audit, 'close')
+            if asyncio.iscoroutinefunction(close_method):
+                await audit.close()
+            else:
+                audit.close()
+            logger.info("✓ Audit service closed")
+        
+        # Close distribution service (async)
+        distribution = services.get('distribution')
+        if distribution and hasattr(distribution, 'cleanup'):
+            await distribution.cleanup()
+            logger.info("✓ Distribution service closed")
+        
+        # Close distribution evaluator (async)
+        dist_evaluator = services.get('distribution_evaluator')
+        if dist_evaluator and hasattr(dist_evaluator, 'cleanup'):
+            await dist_evaluator.cleanup()
+            logger.info("✓ Distribution evaluator closed")
         
         logger.info("✓ All services shut down gracefully")
         
@@ -414,7 +502,7 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
             }
     
     # Check distribution services
-    for service_name in ['distribution', 'distribution_evaluator', 'holonic_evaluator']:
+    for service_name in ['audit', 'distribution', 'distribution_evaluator', 'holonic_evaluator', 'analytics']:
         total_count += 1
         service = services.get(service_name)
         
@@ -499,20 +587,25 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
 
 async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[str, Any]:
     """
-    Run analytics operations.
+    Run analytics operations using the UBEC Analytics Service.
     
     Args:
         services: Service instances
-        analysis_type: Type of analysis
+        analysis_type: Type of analysis (summary, distribution, holders)
         
     Returns:
         dict: Analytics results
+        
+    Design Note:
+        Uses the UBECAnalyticsService for comprehensive ecosystem analysis.
+        All data comes from database (single source of truth).
     """
-    synchronizer = services.get('synchronizer')
+    analytics = services.get('analytics')
     
-    if not synchronizer:
+    if not analytics:
         return {
-            'error': 'Synchronizer service not available',
+            'error': 'Analytics service not available',
+            'message': 'Please ensure services/analytics/ubec_analytics_service.py is in place',
             'timestamp': datetime.now().isoformat()
         }
     
@@ -520,27 +613,140 @@ async def run_analytics(services: Dict[str, Any], analysis_type: str) -> Dict[st
     
     try:
         if analysis_type == 'summary':
-            # Get summary statistics
+            # Get ecosystem health
+            health = await analytics.get_ecosystem_health()
+            
+            # Get all token distributions
+            distributions = await analytics.get_all_token_distributions()
+            
+            # Get token comparison (already formatted)
+            comparison = await analytics.compare_tokens()
+            
             result = {
                 'timestamp': datetime.now().isoformat(),
                 'analysis_type': 'summary',
-                'message': 'Summary analytics not yet implemented'
+                'ecosystem_health': {
+                    'total_holders': health.total_holders,
+                    'total_accounts': health.total_accounts,
+                    'total_transactions': health.total_transactions,
+                    'total_supply_all_tokens': float(health.total_supply_all_tokens),
+                    'active_accounts_24h': health.active_accounts_24h,
+                    'active_accounts_7d': health.active_accounts_7d,
+                    'active_accounts_30d': health.active_accounts_30d,
+                    'element_balance_score': float(health.element_balance_score)
+                },
+                'token_summary': {
+                    token.token_code: {
+                        'element': token.element,
+                        'holders': token.total_holders,
+                        'supply': float(token.total_supply),
+                        'avg_balance': float(token.average_balance),
+                        'median_balance': float(token.median_balance),
+                        'top_10_concentration': float(token.top_10_concentration),
+                        'gini_coefficient': float(token.gini_coefficient) if token.gini_coefficient else None
+                    }
+                    for token in distributions
+                },
+                # Use comparison data directly - it's already properly formatted
+                'token_comparison': comparison.get('tokens', {}),
+                'totals': comparison.get('totals', {}),
+                'rankings': comparison.get('rankings', {})
             }
+            
+            logger.info("✓ Summary analytics complete")
+            
         elif analysis_type == 'distribution':
+            # Detailed distribution analysis for each token
+            logger.info("Analyzing token distributions...")
+            
+            distributions = await analytics.get_all_token_distributions()
+            
             result = {
                 'timestamp': datetime.now().isoformat(),
                 'analysis_type': 'distribution',
-                'message': 'Distribution analytics not yet implemented'
+                'tokens': []
             }
+            
+            for dist in distributions:
+                result['tokens'].append({
+                    'token_code': dist.token_code,
+                    'element': dist.element,
+                    'total_holders': dist.total_holders,
+                    'total_supply': float(dist.total_supply),
+                    'average_balance': float(dist.average_balance),
+                    'median_balance': float(dist.median_balance),
+                    'min_balance': float(dist.min_balance),
+                    'max_balance': float(dist.max_balance),
+                    'concentration': {
+                        'top_10': float(dist.top_10_concentration),
+                        'top_100': float(dist.top_100_concentration),
+                        'gini': float(dist.gini_coefficient) if dist.gini_coefficient else None
+                    }
+                })
+            
+            logger.info("✓ Distribution analysis complete")
+            
         elif analysis_type == 'holders':
+            # Holder concentration analysis
+            logger.info("Analyzing holder concentrations...")
+            
+            from decimal import Decimal
+            
             result = {
                 'timestamp': datetime.now().isoformat(),
                 'analysis_type': 'holders',
-                'message': 'Holder analytics not yet implemented'
+                'tokens': []
             }
+            
+            for token_code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
+                try:
+                    # Analyze holder concentration
+                    holder_analysis = await analytics.analyze_holder_concentration(
+                        token_code,
+                        whale_threshold=Decimal('50000'),
+                        mid_tier_threshold=Decimal('5000')
+                    )
+                    
+                    # Identify top whales
+                    whales = await analytics.identify_whales(
+                        token_code,
+                        threshold=Decimal('50000'),
+                        limit=10
+                    )
+                    
+                    result['tokens'].append({
+                        'token_code': holder_analysis.token_code,
+                        'total_holders': holder_analysis.total_holders,
+                        'whales': {
+                            'count': holder_analysis.whale_count,
+                            'holdings': float(holder_analysis.whale_holdings),
+                            'percentage': float(holder_analysis.whale_percentage),
+                            'top_10': [
+                                {
+                                    'account': whale['account_id'],
+                                    'balance': float(whale['balance'])
+                                }
+                                for whale in whales[:10]
+                            ]
+                        },
+                        'mid_tier': {
+                            'count': holder_analysis.mid_tier_count,
+                            'holdings': float(holder_analysis.mid_tier_holdings)
+                        },
+                        'small_holders': {
+                            'count': holder_analysis.small_holder_count,
+                            'holdings': float(holder_analysis.small_holder_holdings)
+                        }
+                    })
+                except Exception as e:
+                    logger.warning(f"Could not analyze {token_code} holders: {e}")
+            
+            logger.info("✓ Holder analysis complete")
+            
         else:
             result = {
                 'error': f'Unknown analysis type: {analysis_type}',
+                'available_types': ['summary', 'distribution', 'holders'],
                 'timestamp': datetime.now().isoformat()
             }
         
@@ -814,6 +1020,10 @@ async def run_protocol_status(services: Dict[str, Any]) -> Dict[str, Any]:
         
     Returns:
         dict: Protocol status
+        
+    Design Note:
+        Calls get_status() method on each protocol service.
+        Falls back to basic info if method not available.
     """
     logger.info("Getting protocol status...")
     
@@ -822,18 +1032,25 @@ async def run_protocol_status(services: Dict[str, Any]) -> Dict[str, Any]:
     for protocol_name in ['air', 'water', 'earth', 'fire']:
         service = services.get(protocol_name)
         
-        if service and hasattr(service, 'get_system_metrics'):
+        if service and hasattr(service, 'get_status'):
             try:
-                metrics = await service.get_system_metrics()
+                status = await service.get_status()
                 protocols[protocol_name] = {
                     'status': 'ACTIVE',
-                    'metrics': metrics
+                    'data': status
                 }
             except Exception as e:
                 protocols[protocol_name] = {
                     'status': 'ERROR',
                     'error': str(e)
                 }
+        elif service:
+            # Service exists but doesn't have get_status() method
+            protocols[protocol_name] = {
+                'status': 'AVAILABLE',
+                'message': 'Service initialized but get_status() method not implemented',
+                'service_type': type(service).__name__
+            }
         else:
             protocols[protocol_name] = {
                 'status': 'NOT_AVAILABLE'
