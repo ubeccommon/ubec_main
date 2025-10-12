@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# core/protocols/UBECgpi_protocol.py
 """
 UBECgpi Protocol - Earth Element (Stability & Mutualism)
 ========================================================
@@ -225,6 +226,10 @@ class UBECgpiProtocolService:
         This is the single source of truth.
         """
         try:
+            # Ensure connection is established
+            if hasattr(self.db_manager, 'conn') and self.db_manager.conn is None:
+                await self.db_manager.connect()
+            
             # Query distribution state
             query_dist = """
                 SELECT 
@@ -233,7 +238,7 @@ class UBECgpiProtocolService:
                     target_amount,
                     actual_percentage
                 FROM ubec_main.distribution_state
-                WHERE asset_code = %s
+                WHERE asset_code = $1
             """
             
             dist_results = await self.db_manager.fetch_all(query_dist, (self.asset_code,))
@@ -278,7 +283,7 @@ class UBECgpiProtocolService:
                     relationship_strength,
                     last_interaction
                 FROM ubec_main.mutualism_relationships
-                WHERE asset_code = %s
+                WHERE asset_code = $1
                   AND relationship_strength > 0.3
                 ORDER BY relationship_strength DESC
                 LIMIT 1000
@@ -385,7 +390,7 @@ class UBECgpiProtocolService:
                 SUM(balance) as total_supply,
                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY balance) as median_balance
             FROM ubec_main.account_balances
-            WHERE asset_code = %s
+            WHERE asset_code = $1
               AND balance > 0
         """
         
@@ -457,7 +462,7 @@ class UBECgpiProtocolService:
         query = """
             SELECT balance
             FROM ubec_main.account_balances
-            WHERE asset_code = %s
+            WHERE asset_code = $1
               AND balance > 0
             ORDER BY balance ASC
         """

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# core/protocols/UBEC_protocol.py
 """
 UBEC Protocol - Air Element (Gateway & Universal Access)
 ========================================================
@@ -200,6 +201,10 @@ class UBECProtocolService:
         This is the single source of truth.
         """
         try:
+            # Ensure connection is established
+            if hasattr(self.db_manager, 'conn') and self.db_manager.conn is None:
+                await self.db_manager.connect()
+            
             # Query database for all accounts with UBEC trustlines
             query = """
                 SELECT 
@@ -210,10 +215,11 @@ class UBECProtocolService:
                     last_activity,
                     transaction_count
                 FROM ubec_main.gateway_accounts
-                WHERE asset_code = %s
+                WHERE asset_code = $1
                 ORDER BY last_activity DESC
             """
             
+            # Note: params must be passed as a tuple, even for single parameter
             results = await self.db_manager.fetch_all(query, (self.asset_code,))
             
             # Convert to GatewayAccount objects

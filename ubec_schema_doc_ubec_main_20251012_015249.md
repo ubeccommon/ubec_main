@@ -4,7 +4,7 @@
 
 **Schema:** `ubec_main`  
 **Database:** `ubec`  
-**Generated:** 2025-10-11T08:45:37.677986  
+**Generated:** 2025-10-12T01:52:49.645554  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Protocol Version:** Four-Element Protocol v1.0  
 
@@ -98,13 +98,13 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 ## Database Summary
 
 - **Total Tables:** 40
-- **Total Columns:** 473
+- **Total Columns:** 474
 - **Total Relationships:** 6
 - **Total Indexes:** 249
 - **Total Views:** 13
 - **Total Functions:** 72
 - **Total Custom Types:** 8
-- **Database Size:** 12 MB
+- **Database Size:** 47 MB
 
 ### Tables by Element
 
@@ -118,16 +118,16 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 | Table | Rows | Size |
 |-------|------|------|
-| ubec_balances | 201 | 280 kB |
-| stellar_accounts | 200 | 192 kB |
+| stellar_transactions | 51,289 | 34 MB |
+| stellar_accounts | 1,246 | 592 kB |
+| ubec_balances | 651 | 552 kB |
 | asset_holder_analysis | 63 | 184 kB |
 | system_settings | 37 | 80 kB |
 | ubec_distributions | 24 | 112 kB |
 | distribution_state | 12 | 104 kB |
-| holonic_metrics | 5 | 144 kB |
+| holonic_metrics | 10 | 152 kB |
 | system_configuration | 5 | 96 kB |
 | account_balances | 0 | 56 kB |
-| agent_activity_history | 0 | 56 kB |
 
 ---
 
@@ -170,7 +170,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Statistics:** 5 rows | Table: 48 kB | Indexes: 96 kB | Total: 144 kB
+**Statistics:** 10 rows | Table: 56 kB | Indexes: 96 kB | Total: 152 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -213,7 +213,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain accounts with element tracking*
 
-**Statistics:** 200 rows | Table: 64 kB | Indexes: 128 kB | Total: 192 kB
+**Statistics:** 1,246 rows | Table: 208 kB | Indexes: 384 kB | Total: 592 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -349,7 +349,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Stellar blockchain transactions with element context*
 
-**Statistics:** 0 rows | Table: 8192 bytes | Indexes: 72 kB | Total: 80 kB
+**Statistics:** 51,289 rows | Table: 17 MB | Indexes: 17 MB | Total: 34 MB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
@@ -367,11 +367,12 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 | memo_type | varchar(20) | ✓ | - | - |
 | memo | varchar(255) | ✓ | - | - |
 | successful | boolean | ✓ | true | - |
-| result_code | varchar(50) | ✓ | - | - |
+| result_code | text | ✓ | - | - |
 | result_xdr | text | ✓ | - | - |
 | created_at | timestamp with time zone | ✗ | - | - |
 | ledger_close_time | timestamp with time zone | ✓ | - | - |
 | metadata | jsonb | ✓ | - | - |
+| ledger | bigint | ✓ | - | Ledger sequence number where this transaction w... |
 
 **Constraints:**
 
@@ -439,7 +440,7 @@ Five Ubuntu principles: diversity, reciprocity, mutualism, regeneration, holism
 
 *Token balances for all four elements with distribution tracking*
 
-**Statistics:** 201 rows | Table: 80 kB | Indexes: 200 kB | Total: 280 kB
+**Statistics:** 651 rows | Table: 152 kB | Indexes: 400 kB | Total: 552 kB
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|

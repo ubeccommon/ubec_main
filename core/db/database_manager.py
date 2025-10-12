@@ -45,14 +45,19 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 1.1.0
-Date: October 10, 2025
+Version: 1.2.0
+Date: October 11, 2025
+Changes:
+    - Added automatic ISO 8601 datetime string to Python datetime conversion
+    - Ensures asyncpg compatibility by converting datetime strings transparently
+    - Implements Method Singularity principle: one conversion method system-wide
 """
 
 import asyncio
 import logging
 import re
-from typing import Optional, List, Dict, Any, Tuple
+from datetime import datetime
+from typing import Optional, List, Dict, Any, Tuple, Union
 from contextlib import asynccontextmanager
 
 try:
@@ -89,6 +94,85 @@ def convert_query_placeholders(query: str) -> str:
     
     converted = re.sub(r'%s', replace_placeholder, query)
     return converted
+
+
+def convert_iso8601_to_datetime(value: str) -> datetime:
+    """
+    Convert ISO 8601 datetime string to Python datetime object.
+    
+    Handles formats:
+    - 2024-08-14T11:09:45Z
+    - 2024-08-14T11:09:45+00:00
+    - 2024-08-14T11:09:45.123Z
+    
+    Args:
+        value: ISO 8601 formatted datetime string
+        
+    Returns:
+        Python datetime object
+    """
+    try:
+        # Handle 'Z' timezone indicator
+        if value.endswith('Z'):
+            value = value[:-1] + '+00:00'
+        
+        # Try parsing with timezone
+        return datetime.fromisoformat(value)
+    except Exception as e:
+        logger.warning(f"Failed to parse datetime string '{value}': {e}")
+        raise
+
+
+def convert_params_for_asyncpg(params: Union[Tuple, List, Dict]) -> Union[Tuple, List, Dict]:
+    """
+    Recursively convert parameter values for asyncpg compatibility.
+    
+    Converts ISO 8601 datetime strings to Python datetime objects.
+    asyncpg expects datetime objects, not strings.
+    
+    Args:
+        params: Query parameters (tuple, list, or dict)
+        
+    Returns:
+        Converted parameters with datetime objects
+    """
+    if isinstance(params, dict):
+        return {
+            key: convert_params_for_asyncpg(value) 
+            if isinstance(value, (dict, list, tuple)) 
+            else convert_iso8601_to_datetime(value) 
+            if isinstance(value, str) and _is_iso8601_datetime(value)
+            else value
+            for key, value in params.items()
+        }
+    elif isinstance(params, (list, tuple)):
+        converted = [
+            convert_params_for_asyncpg(item)
+            if isinstance(item, (dict, list, tuple))
+            else convert_iso8601_to_datetime(item)
+            if isinstance(item, str) and _is_iso8601_datetime(item)
+            else item
+            for item in params
+        ]
+        # Return same type as input
+        return type(params)(converted)
+    else:
+        return params
+
+
+def _is_iso8601_datetime(value: str) -> bool:
+    """
+    Check if a string looks like an ISO 8601 datetime.
+    
+    Args:
+        value: String to check
+        
+    Returns:
+        True if string matches ISO 8601 datetime pattern
+    """
+    # Pattern: YYYY-MM-DDTHH:MM:SS with optional microseconds and timezone
+    iso_pattern = r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
+    return bool(re.match(iso_pattern, value))
 
 
 class AsyncDatabaseManager:
@@ -212,6 +296,9 @@ class AsyncDatabaseManager:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
             
+            # Convert datetime strings to datetime objects
+            params = convert_params_for_asyncpg(params)
+            
             async with self._get_connection() as conn:
                 rows = await conn.fetch(query, *params)
                 # Convert Record objects to dictionaries
@@ -242,6 +329,9 @@ class AsyncDatabaseManager:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
             
+            # Convert datetime strings to datetime objects
+            params = convert_params_for_asyncpg(params)
+            
             async with self._get_connection() as conn:
                 row = await conn.fetchrow(query, *params)
                 return dict(row) if row else None
@@ -271,6 +361,9 @@ class AsyncDatabaseManager:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
             
+            # Convert datetime strings to datetime objects
+            params = convert_params_for_asyncpg(params)
+            
             async with self._get_connection() as conn:
                 status = await conn.execute(query, *params)
                 return status
@@ -297,8 +390,14 @@ class AsyncDatabaseManager:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
             
+            # Convert datetime strings in all parameter sets
+            converted_params = [
+                convert_params_for_asyncpg(params) 
+                for params in params_list
+            ]
+            
             async with self._get_connection() as conn:
-                await conn.executemany(query, params_list)
+                await conn.executemany(query, converted_params)
                 
         except Exception as e:
             logger.error(f"Error executing execute_many: {e}")
@@ -363,18 +462,21 @@ class TransactionManager:
     async def fetch_all(self, query: str, params: Tuple = ()) -> List[Dict[str, Any]]:
         """Fetch all within transaction"""
         query = convert_query_placeholders(query)
+        params = convert_params_for_asyncpg(params)
         rows = await self.conn.fetch(query, *params)
         return [dict(row) for row in rows]
     
     async def fetch_one(self, query: str, params: Tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one within transaction"""
         query = convert_query_placeholders(query)
+        params = convert_params_for_asyncpg(params)
         row = await self.conn.fetchrow(query, *params)
         return dict(row) if row else None
     
     async def execute(self, query: str, params: Tuple = ()) -> str:
         """Execute within transaction"""
         query = convert_query_placeholders(query)
+        params = convert_params_for_asyncpg(params)
         return await self.conn.execute(query, *params)
 
 
@@ -409,5 +511,7 @@ def create_database_manager_from_env() -> AsyncDatabaseManager:
 __all__ = [
     'AsyncDatabaseManager',
     'create_database_manager_from_env',
-    'convert_query_placeholders'
+    'convert_query_placeholders',
+    'convert_iso8601_to_datetime',
+    'convert_params_for_asyncpg'
 ]

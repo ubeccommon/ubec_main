@@ -21,6 +21,7 @@ Key Features:
 - Integrated rate limit management with async waiting
 - Progress tracking
 - Idempotent operations
+- Compatible with asyncpg datetime conversion (handled in database_manager)
 
 Schema Mapping:
 - stellar_accounts: Core account data
@@ -41,7 +42,7 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.1 (Fixed Balance Storage Logic)
+Version: 4.6 (Increased default account sync limit from 200 to 5000, added unlimited option)
 Date: October 11, 2025
 """
 
@@ -82,6 +83,10 @@ class UBECDataSynchronizer:
     All I/O operations use async/await patterns for maximum efficiency.
     
     Settings are loaded from database (single source of truth principle).
+    
+    Note: Datetime conversion is handled automatically by database_manager.py
+    This module passes ISO 8601 strings directly - they are converted at the
+    database boundary layer for proper asyncpg compatibility.
     """
     
     # Element mapping - ONLY for UBEC family tokens
@@ -193,6 +198,31 @@ class UBECDataSynchronizer:
             self.ubec_code = self.settings.get('ubec_code', 'UBEC')
             self.ubec_issuer = self.settings.get('ubec_issuer', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
             
+            # Load issuers for all 4 UBEC tokens
+            # Priority: 1) Database settings, 2) Environment variables, 3) Default to main issuer
+            self.ubecrc_issuer = self.settings.get('ubecrc_issuer') or os.getenv('UBECRC_ISSUER') or self.ubec_issuer
+            self.ubecgpi_issuer = self.settings.get('ubecgpi_issuer') or os.getenv('UBECGPI_ISSUER') or self.ubec_issuer
+            self.ubectt_issuer = self.settings.get('ubectt_issuer') or os.getenv('UBECTT_ISSUER') or self.ubec_issuer
+            
+            # Log issuer configuration
+            logger.info(f"Token issuer configuration:")
+            logger.info(f"  UBEC:    {self.ubec_issuer}")
+            logger.info(f"  UBECrc:  {self.ubecrc_issuer}")
+            logger.info(f"  UBECgpi: {self.ubecgpi_issuer}")
+            logger.info(f"  UBECtt:  {self.ubectt_issuer}")
+            
+            # Check if all tokens use the same issuer
+            unique_issuers = len(set([
+                self.ubec_issuer, 
+                self.ubecrc_issuer, 
+                self.ubecgpi_issuer, 
+                self.ubectt_issuer
+            ]))
+            if unique_issuers == 1:
+                logger.info("  All 4 tokens use the SAME issuer")
+            else:
+                logger.info(f"  Tokens use {unique_issuers} different issuers")
+            
         except Exception as e:
             logger.error(f"Error loading settings from database: {e}")
             # Use environment variables as fallback
@@ -207,6 +237,11 @@ class UBECDataSynchronizer:
             self.network = self.settings['network_passphrase']
             self.ubec_code = self.settings['ubec_code']
             self.ubec_issuer = self.settings['ubec_issuer']
+            
+            # Load issuers for other tokens from environment (fallback to main issuer)
+            self.ubecrc_issuer = os.getenv('UBECRC_ISSUER', self.ubec_issuer)
+            self.ubecgpi_issuer = os.getenv('UBECGPI_ISSUER', self.ubec_issuer)
+            self.ubectt_issuer = os.getenv('UBECTT_ISSUER', self.ubec_issuer)
             
             logger.warning("Using environment variables as fallback for settings")
     
@@ -299,6 +334,27 @@ class UBECDataSynchronizer:
         if self.server:
             await self.server.close()
             logger.info("Stellar connection closed")
+    
+    def _get_issuer_for_token(self, asset_code: str) -> str:
+        """
+        Get the correct issuer for a given token code.
+        
+        Args:
+            asset_code: Token code ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+        
+        Returns:
+            Issuer account ID for the token
+        """
+        issuer_map = {
+            'UBEC': self.ubec_issuer,
+            'UBECrc': self.ubecrc_issuer,
+            'UBECgpi': self.ubecgpi_issuer,
+            'UBECtt': self.ubectt_issuer
+        }
+        
+        issuer = issuer_map.get(asset_code, self.ubec_issuer)
+        logger.debug(f"Token {asset_code} -> Issuer {issuer}")
+        return issuer
     
     # ========================================================================
     # RATE LIMITING - ASYNC VERSION
@@ -561,6 +617,7 @@ class UBECDataSynchronizer:
             transactions = response.get('_embedded', {}).get('records', [])
             
             for tx in transactions:
+                await self._ensure_account_exists(tx['source_account'])
                 await self._store_transaction(tx)
             
             logger.info(f"✓ Synced {len(transactions)} transactions for {account_id}")
@@ -570,17 +627,41 @@ class UBECDataSynchronizer:
             logger.error(f"Error syncing transactions for {account_id}: {e}")
             return 0
     
+    async def _ensure_account_exists(self, account_id: str):
+        """
+        Ensure an account record exists in the database before storing related data.
+        
+        Args:
+            account_id: Stellar account ID
+        """
+        try:
+            query = """
+                INSERT INTO stellar_accounts (account_id, sync_status)
+                VALUES ($1, 'partial')
+                ON CONFLICT (account_id) DO NOTHING
+            """
+            await self.db.execute(query, (account_id,))
+            
+        except Exception as e:
+            logger.error(f"Error ensuring account exists {account_id}: {e}")
+            raise
+    
     async def _store_transaction(self, tx_data: Dict):
         """
         Store transaction in database.
         
         Args:
             tx_data: Transaction data from Stellar API
+            
+        Note:
+            The created_at field from Stellar is an ISO 8601 string.
+            Datetime conversion is handled automatically by database_manager.py
+            for proper asyncpg compatibility.
         """
         try:
             query = """
                 INSERT INTO stellar_transactions (
-                    transaction_hash, ledger, created_at, source_account,
+                    transaction_hash, ledger_sequence, created_at, source_account,
                     fee_charged, operation_count, memo_type, memo,
                     successful, result_code
                 )
@@ -590,10 +671,13 @@ class UBECDataSynchronizer:
                     result_code = EXCLUDED.result_code
             """
             
+            # FIXED: Use 'ledger_sequence' instead of 'ledger' to match database schema
+            # The created_at is passed as ISO 8601 string - database_manager.py 
+            # will automatically convert it to datetime for asyncpg
             params = (
                 tx_data['hash'],
-                tx_data.get('ledger', 0),
-                tx_data.get('created_at'),
+                tx_data.get('ledger_sequence', 0),  # FIXED: was 'ledger'
+                tx_data.get('created_at'),  # ISO 8601 string - auto-converted by database_manager
                 tx_data.get('source_account'),
                 int(tx_data.get('fee_charged', 0)),
                 tx_data.get('operation_count', 0),
@@ -609,7 +693,6 @@ class UBECDataSynchronizer:
         except Exception as e:
             logger.error(f"Error storing transaction {tx_data.get('hash')}: {e}")
             raise
-    
     
     # ========================================================================
     # ACCOUNT DISCOVERY
@@ -642,13 +725,15 @@ class UBECDataSynchronizer:
             discovered = 0
             cursor = None
             
-            # Get the asset issuer
-            asset_issuer = self.ubec_issuer  # Same issuer for all UBEC tokens
+            # Get the CORRECT issuer for this specific token
+            asset_issuer = self._get_issuer_for_token(asset_code)
+            
+            logger.info(f"Using issuer: {asset_issuer} for {asset_code}")
             
             # Import Asset class
             from stellar_sdk import Asset
             
-            # Create Asset object
+            # Create Asset object with the CORRECT issuer
             asset = Asset(asset_code, asset_issuer)
             
             while discovered < max_accounts:
@@ -755,9 +840,276 @@ class UBECDataSynchronizer:
         return results
 
     # ========================================================================
+    # BULK SYNCHRONIZATION METHODS
+    # ========================================================================
+    
+    async def sync_account_data(
+        self,
+        asset_code: str = 'UBEC',
+        limit: Optional[int] = 5000
+    ) -> Dict[str, Any]:
+        """
+        Synchronize account data for all holders of a specific asset.
+        
+        Args:
+            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            limit: Maximum accounts to sync (default: 5000)
+                   Set to None for unlimited sync (use cautiously with rate limits)
+            
+        Returns:
+            dict: Sync results with counts
+            
+        Note:
+            This syncs full account details from Stellar (sequence, subentry_count, etc.)
+            If you only need balance updates, use sync_balance_data() instead.
+            
+        Examples:
+            # Sync up to 1000 accounts
+            result = await sync.sync_account_data('UBEC', limit=1000)
+            
+            # Sync ALL accounts (no limit)
+            result = await sync.sync_account_data('UBEC', limit=None)
+        """
+        logger.info(f"Syncing account data for {asset_code} holders (limit: {limit})...")
+        
+        try:
+            # Get all accounts that hold this token from database
+            if limit is None:
+                # Unlimited - fetch all accounts
+                query = """
+                    SELECT DISTINCT account_id
+                    FROM ubec_balances
+                    WHERE token_code = $1
+                """
+                rows = await self.db.fetch_all(query, (asset_code,))
+            else:
+                # Limited - fetch up to limit
+                query = """
+                    SELECT DISTINCT account_id
+                    FROM ubec_balances
+                    WHERE token_code = $1
+                    LIMIT $2
+                """
+                rows = await self.db.fetch_all(query, (asset_code, limit))
+            
+            if not rows:
+                logger.warning(f"No accounts found holding {asset_code}")
+                return {
+                    'success': True,
+                    'asset_code': asset_code,
+                    'accounts_synced': 0,
+                    'message': f'No accounts found holding {asset_code}'
+                }
+            
+            synced = 0
+            failed = 0
+            
+            for row in rows:
+                account_id = row['account_id']
+                success = await self.sync_account(account_id)
+                
+                if success:
+                    synced += 1
+                else:
+                    failed += 1
+                
+                # Progress logging
+                if (synced + failed) % 50 == 0:
+                    logger.info(f"  Progress: {synced + failed}/{len(rows)} accounts processed")
+            
+            logger.info(f"✓ Account sync complete: {synced} synced, {failed} failed")
+            
+            return {
+                'success': True,
+                'asset_code': asset_code,
+                'accounts_synced': synced,
+                'accounts_failed': failed,
+                'total_accounts': len(rows)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error syncing account data for {asset_code}: {e}")
+            return {
+                'success': False,
+                'asset_code': asset_code,
+                'error': str(e)
+            }
+    
+    async def sync_balance_data(
+        self,
+        asset_code: str = 'UBEC'
+    ) -> Dict[str, Any]:
+        """
+        Synchronize balance data for all holders of a specific asset.
+        
+        This updates the balance information for all accounts holding the asset.
+        Note: sync_account() already syncs balances, so this is complementary.
+        
+        Args:
+            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            
+        Returns:
+            dict: Sync results with counts
+        """
+        logger.info(f"Syncing balance data for {asset_code}...")
+        
+        try:
+            # Get all accounts that hold this token
+            query = """
+                SELECT DISTINCT account_id
+                FROM ubec_balances
+                WHERE token_code = $1
+            """
+            
+            rows = await self.db.fetch_all(query, (asset_code,))
+            
+            if not rows:
+                logger.warning(f"No balances found for {asset_code}")
+                return {
+                    'success': True,
+                    'asset_code': asset_code,
+                    'balances_synced': 0,
+                    'message': f'No balances found for {asset_code}'
+                }
+            
+            synced = 0
+            failed = 0
+            
+            # Sync each account (which includes balance updates)
+            for row in rows:
+                account_id = row['account_id']
+                
+                try:
+                    # Fetch fresh account data from Stellar
+                    if not self.server:
+                        logger.error("Stellar server not initialized")
+                        failed += 1
+                        continue
+                    
+                    await self._check_rate_limit()
+                    account = await self.server.accounts().account_id(account_id).call()
+                    
+                    # Update balances
+                    await self._store_balances(account_id, account.get('balances', []))
+                    synced += 1
+                    
+                    if synced % 50 == 0:
+                        logger.info(f"  Progress: {synced}/{len(rows)} balances synced")
+                    
+                except Exception as e:
+                    logger.error(f"Error syncing balance for {account_id}: {e}")
+                    failed += 1
+                    continue
+            
+            logger.info(f"✓ Balance sync complete: {synced} synced, {failed} failed")
+            
+            return {
+                'success': True,
+                'asset_code': asset_code,
+                'balances_synced': synced,
+                'balances_failed': failed,
+                'total_balances': len(rows)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error syncing balance data for {asset_code}: {e}")
+            return {
+                'success': False,
+                'asset_code': asset_code,
+                'error': str(e)
+            }
+    
+    async def sync_transaction_data(
+        self,
+        asset_code: str = 'UBEC',
+        days_back: int = 7,
+        limit_per_account: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Synchronize recent transactions for all holders of a specific asset.
+        
+        Args:
+            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            days_back: Number of days of transaction history to sync
+            limit_per_account: Maximum transactions per account
+            
+        Returns:
+            dict: Sync results with counts
+        """
+        logger.info(f"Syncing transaction data for {asset_code} holders (last {days_back} days)...")
+        
+        try:
+            # Get all accounts that hold this token
+            query = """
+                SELECT DISTINCT account_id
+                FROM ubec_balances
+                WHERE token_code = $1
+            """
+            
+            rows = await self.db.fetch_all(query, (asset_code,))
+            
+            if not rows:
+                logger.warning(f"No accounts found holding {asset_code}")
+                return {
+                    'success': True,
+                    'asset_code': asset_code,
+                    'transactions_synced': 0,
+                    'message': f'No accounts found holding {asset_code}'
+                }
+            
+            total_transactions = 0
+            accounts_processed = 0
+            accounts_failed = 0
+            
+            # Sync transactions for each account
+            for row in rows:
+                account_id = row['account_id']
+                
+                try:
+                    tx_count = await self.sync_transactions(
+                        account_id=account_id,
+                        limit=limit_per_account
+                    )
+                    
+                    total_transactions += tx_count
+                    accounts_processed += 1
+                    
+                    if accounts_processed % 20 == 0:
+                        logger.info(
+                            f"  Progress: {accounts_processed}/{len(rows)} accounts, "
+                            f"{total_transactions} transactions synced"
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error syncing transactions for {account_id}: {e}")
+                    accounts_failed += 1
+                    continue
+            
+            logger.info(
+                f"✓ Transaction sync complete: {total_transactions} transactions from "
+                f"{accounts_processed} accounts ({accounts_failed} failed)"
+            )
+            
+            return {
+                'success': True,
+                'asset_code': asset_code,
+                'transactions_synced': total_transactions,
+                'accounts_processed': accounts_processed,
+                'accounts_failed': accounts_failed,
+                'total_accounts': len(rows)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error syncing transaction data for {asset_code}: {e}")
+            return {
+                'success': False,
+                'asset_code': asset_code,
+                'error': str(e)
+            }
+
+    # ========================================================================
     # UTILITY METHODS
     # ========================================================================
-
     
     async def get_sync_status(self) -> Dict[str, Any]:
         """

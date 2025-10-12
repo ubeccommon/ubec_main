@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# core/protocols/UBECtt_protoco.py
 """
 UBECtt Protocol - Transform Token (Fire Element)
 ================================================
@@ -336,6 +337,10 @@ class UBECttProtocolService:
     async def _load_from_database(self):
         """Load recent data from database into cache"""
         try:
+            # Ensure connection is established
+            if hasattr(self.db, 'conn') and self.db.conn is None:
+                await self.db.connect()
+            
             # Load recent actions (last 30 days)
             query = """
                 SELECT action_id, agent_id, action_type, description, impact_scale,
@@ -349,7 +354,7 @@ class UBECttProtocolService:
                 LIMIT 1000
             """
             
-            rows = await self.db.execute_query(query, fetch_all=True)
+            rows = await self.db.fetch_all(query)
             
             if rows:
                 for row in rows:
@@ -488,7 +493,7 @@ class UBECttProtocolService:
             json.dumps(action.metadata)
         )
         
-        await self.db.execute_query(query, params, fetch_all=False)
+        await self.db.execute(query, *params)
     
     async def verify_action(
         self,
@@ -514,7 +519,7 @@ class UBECttProtocolService:
             if not action:
                 # Try to load from database
                 query = "SELECT * FROM ubec_main.transformative_actions WHERE action_id = $1"
-                row = await self.db.execute_query(query, [action_id], fetch_one=True)
+                row = await self.db.fetch_one(query, action_id)
                 if not row:
                     self.logger.error(f"Action {action_id} not found")
                     return False
@@ -757,7 +762,7 @@ class UBECttProtocolService:
             float(phase.completion_percentage)
         )
         
-        await self.db.execute_query(query, params, fetch_all=False)
+        await self.db.execute(query, *params)
     
     async def update_phase_progress(self, phase_id: str) -> bool:
         """
@@ -905,6 +910,37 @@ class UBECttProtocolService:
                 self.logger.error(f"Error saving report: {e}")
         
         return report
+    
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Check service health.
+        
+        Returns:
+            Dict with health status
+        """
+        try:
+            await self._refresh_cache_if_needed()
+            
+            return {
+                'protocol': f'UBECtt (Fire)',
+                'status': 'healthy',
+                'cached_actions': len(self._action_cache),
+                'cached_phases': len(self._phase_cache),
+                'cache_age_seconds': (
+                    (asyncio.get_event_loop().time() - self._last_cache_refresh)
+                    if self._last_cache_refresh > 0 else None
+                ),
+                'timestamp': datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}")
+            return {
+                'protocol': f'UBECtt (Fire)',
+                'status': 'unhealthy',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            }
     
     # ==================== PROTOCOL COORDINATION ====================
     

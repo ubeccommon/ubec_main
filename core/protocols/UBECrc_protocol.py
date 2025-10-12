@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# core/protocols/UBECrc_protocol.py
 """
 UBECrc Protocol - Water Element (Flow & Reciprocity)
 ====================================================
@@ -210,6 +211,10 @@ class UBECrcProtocolService:
         This is the single source of truth.
         """
         try:
+            # Ensure connection is established
+            if hasattr(self.db_manager, 'conn') and self.db_manager.conn is None:
+                await self.db_manager.connect()
+            
             # Query recent transactions
             query_txs = """
                 SELECT 
@@ -220,7 +225,7 @@ class UBECrcProtocolService:
                     created_at,
                     memo
                 FROM ubec_main.flow_transactions
-                WHERE asset_code = %s
+                WHERE asset_code = $1
                   AND created_at >= NOW() - INTERVAL '7 days'
                 ORDER BY created_at DESC
             """
