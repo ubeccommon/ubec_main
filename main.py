@@ -20,7 +20,7 @@ Design Compliance:
     ✅ Principle 3: Service Registry - All dependencies via registry
     ✅ Principle 4: Single Source of Truth - Database authoritative
     ✅ Principle 5: Strict Async - All operations async
-    ✅ Principle 6: No Sync Fallbacks - Pure async only
+    ✅ Principle 6: No Sync Fallbacks - Pure async only (FIXED: ServerAsync)
     ✅ Principle 7: Per-Asset Monitoring - Individual tracking
     ✅ Principle 8: No Duplicate Configuration - Centralized config
     ✅ Principle 9: Integrated Rate Limiting - Built-in rate limiter
@@ -59,8 +59,14 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.0 (Database-Backed Configuration)
+Version: 4.1 (Fixed Async Stellar Client + Service Validation)
 Date: October 12, 2025
+
+Changes in v4.1:
+    - CRITICAL FIX: Changed from sync Server to async ServerAsync
+    - Added service instance validation before distribution service creation
+    - Added diagnostic logging for service types
+    - Ensures strict async compliance (Principle #6)
 """
 
 import os
@@ -148,7 +154,7 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
     Design Note:
         This function initializes services in dependency order:
         1. Database Manager (already initialized)
-        2. Stellar Client (blockchain access)
+        2. Stellar Client (blockchain access) - ASYNC ServerAsync
         3. Data Synchronizer (depends on database)
         4. Element Protocols (depend on database + stellar)
         5. Distribution Services (depend on all above)
@@ -164,12 +170,18 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
     }
     
     try:
-        # Initialize Stellar client
+        # CRITICAL FIX: Use ServerAsync for async operations (Principle #6)
+        # Changed from: from stellar_sdk import Server
+        # Changed to: from stellar_sdk import ServerAsync
         try:
-            from stellar_sdk import Server
-            stellar_client = Server(horizon_url=config.HORIZON_URL)
+            from stellar_sdk import ServerAsync  # ← FIXED: Async client
+            
+            stellar_client = ServerAsync(horizon_url=config.HORIZON_URL)  # ← FIXED: Async
             services['stellar_client'] = stellar_client
-            logger.info("✓ Stellar client initialized")
+            
+            # Validation logging
+            logger.info(f"✓ Stellar client initialized (type: {type(stellar_client).__name__})")
+            
         except Exception as e:
             logger.warning(f"Stellar client initialization failed: {e}")
             services['stellar_client'] = None
@@ -274,10 +286,35 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
         try:
             from core.services.distribution_service import create_distribution_service
             
+            # NEW: Validate service instances before passing to distribution service
+            logger.info("="*70)
+            logger.info("SERVICE INSTANCE VALIDATION")
+            logger.info("="*70)
+            
+            # Validate db_manager
+            logger.info(f"db_manager type: {type(db_manager).__name__}")
+            logger.info(f"db_manager has fetch_one: {hasattr(db_manager, 'fetch_one')}")
+            
+            # Validate stellar_client
+            stellar_client = services.get('stellar_client')
+            if stellar_client:
+                logger.info(f"stellar_client type: {type(stellar_client).__name__}")
+                logger.info(f"stellar_client has accounts: {hasattr(stellar_client, 'accounts')}")
+                
+                # CRITICAL: Verify it's ServerAsync, not Server
+                if type(stellar_client).__name__ == 'Server':
+                    logger.error("❌ CRITICAL: stellar_client is sync Server, not async ServerAsync!")
+                    raise TypeError("stellar_client must be ServerAsync for async operations")
+                else:
+                    logger.info(f"✓ stellar_client is async: {type(stellar_client).__name__}")
+            else:
+                logger.warning("stellar_client is None - distribution service may have limited functionality")
+            
+            logger.info("="*70)
+            
             # Build distribution config from system config
-            # Use .get() for attributes that may not exist, direct access for core attributes
             dist_config = {
-                'db_schema': os.getenv('DB_SCHEMA', 'ubec_main'),  # From environment
+                'db_schema': os.getenv('DB_SCHEMA', 'ubec_main'),
                 'ubec_issuer': config.UBEC_ISSUER,
                 'ubec_code': config.UBEC_CODE,
                 'accounts': config.ACCOUNTS,
@@ -292,21 +329,27 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
                         os.getenv('STEWARD_LIQUIDITY_SECRET_KEY')
                     ]
                 },
-                'check_interval': config.get('check_interval', 3600)  # Use .get() with default
+                'check_interval': config.get('check_interval', 3600)
             }
             
+            # Create distribution service with validated instances
             dist_service = create_distribution_service(
-                db_manager=db_manager,
+                db_manager=db_manager,  # ✓ AsyncDatabaseManager instance
                 config=dist_config,
-                stellar_client=services.get('stellar_client'),
+                stellar_client=services.get('stellar_client'),  # ✓ ServerAsync instance (or None)
                 audit_service=services.get('audit'),  # May be None
                 rate_limit_calls_per_second=5.0
             )
             services['distribution'] = dist_service
             logger.info("✓ Distribution service initialized")
+            
         except ImportError as e:
             logger.warning(f"Distribution service module not found: {e}")
             services['distribution'] = None
+        except TypeError as e:
+            logger.error(f"Distribution service initialization failed - type error: {e}")
+            services['distribution'] = None
+            raise  # Re-raise TypeError to fail fast
         except Exception as e:
             logger.warning(f"Distribution service initialization failed: {e}")
             services['distribution'] = None
@@ -375,7 +418,7 @@ async def shutdown_services(services: Dict[str, Any]):
         
     Design Note:
         Handles both sync and async close methods properly.
-        Stellar SDK's close() is synchronous, while custom services are async.
+        ServerAsync's close() is async (changed from sync Server).
     """
     logger.info("Shutting down services...")
     
@@ -386,11 +429,16 @@ async def shutdown_services(services: Dict[str, Any]):
             await db_manager.close()
             logger.info("✓ Database connection closed")
         
-        # Close Stellar client (SYNCHRONOUS close method)
+        # Close Stellar client (ASYNC for ServerAsync)
         stellar_client = services.get('stellar_client')
         if stellar_client and hasattr(stellar_client, 'close'):
-            # Stellar SDK's close() is NOT async - call it directly
-            stellar_client.close()
+            # ServerAsync's close() is async
+            close_method = getattr(stellar_client, 'close')
+            if asyncio.iscoroutinefunction(close_method):
+                await stellar_client.close()
+            else:
+                # Fallback for sync close (shouldn't happen with ServerAsync)
+                stellar_client.close()
             logger.info("✓ Stellar client closed")
         
         # Close synchronizer (check if async or sync)
@@ -1399,7 +1447,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 4.0 (Database-Backed Configuration)")
+    logger.info(f"Version: 4.1 (Fixed Async Stellar Client + Service Validation)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
