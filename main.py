@@ -26,13 +26,14 @@ Attribution:
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
 
-Version: 5.3 (Fixed protocol import paths to use core.protocols.*)
+Version: 5.4 (Added configurable sync limits via SYNC_LIMIT env var and --limit CLI arg)
 Date: October 12, 2025
-Changes:
-    - Fixed Air Protocol import: core.protocols.UBEC_protocol
-    - Fixed Water Protocol import: core.protocols.UBECrc_protocol
-    - Fixed Earth Protocol import: core.protocols.UBECgpi_protocol
-    - Fixed Fire Protocol import: core.protocols.UBECtt_protocol
+Changes from 5.3:
+    - Added SYNC_LIMIT environment variable (default: 5000)
+    - Added DISCOVER_LIMIT environment variable (default: 1000)  
+    - Added --limit CLI argument for sync mode
+    - Fixed run_sync to accept and use limit parameter
+    - Use --limit 0 for unlimited sync (use cautiously with rate limits)
 """
 
 import sys
@@ -118,7 +119,12 @@ class SystemConfig:
         self.cache_ttl = int(os.getenv('CACHE_TTL', '300'))
         self.analytics_cache_ttl = int(os.getenv('ANALYTICS_CACHE_TTL', '300'))
         
+        # Sync operation limits (NEW in v5.4)
+        self.sync_limit_default = int(os.getenv('SYNC_LIMIT', '5000'))
+        self.discover_limit_default = int(os.getenv('DISCOVER_LIMIT', '1000'))
+        
         logger.info(f"Configuration loaded: network={self.network}, schema={self.db_schema}")
+        logger.info(f"Sync limits: sync={self.sync_limit_default}, discover={self.discover_limit_default}")
 
 
 # ==================== SERVICE INITIALIZATION ====================
@@ -449,24 +455,25 @@ async def run_health_check(services: Dict[str, Any]) -> Dict[str, Any]:
     return health_status
 
 
-async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -> Dict[str, Any]:
+async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
     """
     Run data synchronization using actual UBECDataSynchronizer methods.
     
     The synchronizer has these async methods:
-    - sync_account_data()
-    - sync_transaction_data() 
-    - sync_balance_data()
-    - discover_all_ubec_holders()
+    - sync_account_data(asset_code, limit)
+    - sync_transaction_data(asset_code, days_back, limit_per_account) 
+    - sync_balance_data(asset_code)
+    - discover_all_ubec_holders(max_per_asset)
     
     Args:
         services: Service registry dictionary
         asset_code: Specific asset to sync, or None for all
+        limit: Maximum accounts to sync per asset (None = unlimited)
         
     Returns:
         Sync result dictionary
     """
-    logger.info(f"Running sync for: {asset_code or 'all assets'}")
+    logger.info(f"Running sync for: {asset_code or 'all assets'} (limit: {limit or 'unlimited'})")
     
     if not services.get('synchronizer'):
         return {
@@ -485,7 +492,7 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
             logger.info(f"Syncing account data for {asset_code}...")
             accounts_result = await synchronizer.sync_account_data(
                 asset_code=asset_code,
-                limit=100
+                limit=limit
             )
             
             logger.info(f"Syncing transaction data for {asset_code}...")
@@ -512,7 +519,7 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
             # Sync all assets concurrently
             async def sync_asset(asset_code):
                 try:
-                    accounts = await synchronizer.sync_account_data(asset_code=asset_code, limit=100)
+                    accounts = await synchronizer.sync_account_data(asset_code=asset_code, limit=limit)
                     transactions = await synchronizer.sync_transaction_data(
                         asset_code=asset_code, 
                         days_back=30,
@@ -546,6 +553,7 @@ async def run_sync(services: Dict[str, Any], asset_code: Optional[str] = None) -
                 'timestamp': datetime.now().isoformat(),
                 'assets_synced': sum(1 for r in results if isinstance(r, dict) and r.get('success')),
                 'total_assets': 4,
+                'limit_per_asset': limit or 'unlimited',
                 'results': {
                     'UBEC': results[0] if len(results) > 0 else {},
                     'UBECrc': results[1] if len(results) > 1 else {},
@@ -732,13 +740,19 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py --mode health                        # System health check
-  python main.py --mode sync                          # Sync all assets
-  python main.py --mode sync --asset-code UBEC        # Sync specific asset
-  python main.py --mode analytics                     # Ecosystem summary
+  python main.py --mode health                                  # System health check
+  python main.py --mode sync                                    # Sync all assets (default limit from env)
+  python main.py --mode sync --limit 1000                       # Sync all assets (limit 1000 per asset)
+  python main.py --mode sync --limit 0                          # Sync all assets (unlimited)
+  python main.py --mode sync --asset-code UBEC --limit 500      # Sync UBEC only (limit 500)
+  python main.py --mode analytics                               # Ecosystem summary
   python main.py --mode analytics --analysis-type distribution  # Token distribution
-  python main.py --mode evaluate                      # System-wide evaluation
-  python main.py --mode discover --max-accounts 100   # Discover accounts
+  python main.py --mode evaluate                                # System-wide evaluation
+  python main.py --mode discover --max-accounts 100             # Discover accounts
+
+Environment Variables:
+  SYNC_LIMIT=5000        # Default limit for sync operations (default: 5000)
+  DISCOVER_LIMIT=1000    # Default limit for discover operations (default: 1000)
         """
     )
     
@@ -755,6 +769,12 @@ Examples:
         type=str,
         choices=['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'],
         help='Specific asset code (for sync mode)'
+    )
+    
+    parser.add_argument(
+        '--limit',
+        type=int,
+        help='Maximum accounts to sync per asset (for sync mode). Use 0 for unlimited. Default from SYNC_LIMIT env var or 5000'
     )
     
     parser.add_argument(
@@ -846,7 +866,16 @@ async def main_async(args):
             result = await run_health_check(services)
         
         elif args.mode == 'sync':
-            result = await run_sync(services, args.asset_code)
+            # Determine sync limit
+            if args.limit is not None:
+                # CLI argument takes precedence
+                sync_limit = None if args.limit == 0 else args.limit
+            else:
+                # Use config default
+                sync_limit = config.sync_limit_default
+            
+            logger.info(f"Sync limit: {sync_limit or 'unlimited'}")
+            result = await run_sync(services, args.asset_code, sync_limit)
         
         elif args.mode == 'analytics':
             result = await run_analytics(services, args.analysis_type)
@@ -916,7 +945,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 5.3 (Fixed protocol import paths to use core.protocols.*)")
+    logger.info(f"Version: 5.4 (Added configurable sync limits)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
