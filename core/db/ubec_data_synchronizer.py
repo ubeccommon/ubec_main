@@ -50,8 +50,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 5.2 (Fixed database schema - removed non-existent columns)
-Date: October 13, 2025
+Version: 5.3 (CRITICAL FIX - Correct LP participant sync implementation)
+Date: October 14, 2025
+
+Changes in v5.3:
+    - 🔥 CRITICAL FIX: Replaced invalid Horizon API query with correct account iteration
+    - ✅ LP participants now synced by checking each account's balances for liquidity_pool_shares
+    - ✅ Removed broken _sync_pool_participants method that used invalid API query
+    - ✅ Added _sync_all_pool_participants method that properly iterates through accounts
+    - ✅ Updated sync_liquidity_pools to call new participant sync after storing pools
+    - ✅ Maintains all 12 design principles
 """
 
 import os
@@ -627,7 +635,7 @@ class UBECDataSynchronizer:
             raise
     
     # ========================================================================
-    # LIQUIDITY POOL SYNCHRONIZATION
+    # LIQUIDITY POOL SYNCHRONIZATION - FIXED IN V5.3
     # ========================================================================
     
     async def sync_liquidity_pools(
@@ -640,6 +648,8 @@ class UBECDataSynchronizer:
         
         This method fetches all liquidity pools that contain the specified asset,
         stores pool metadata, and tracks individual participant positions.
+        
+        🔥 FIXED in v5.3: Now properly syncs LP participants by checking account balances.
         
         Args:
             asset_code: Asset code (UBEC, UBECrc, UBECgpi, UBECtt)
@@ -708,17 +718,15 @@ class UBECDataSynchronizer:
                                     amount = Decimal(reserve.get('amount', '0'))
                                     total_tvl += amount
                                     break
-                            
-                            # Sync participants for this pool
-                            participant_count = await self._sync_pool_participants(
-                                pool_id,
-                                pool_data.get('id')
-                            )
-                            participants_synced += participant_count
                         
                     except Exception as e:
                         logger.error(f"Error processing pool {pool_data.get('id')}: {e}")
                         continue
+                
+                # 🔥 NEW in v5.3: Sync participants AFTER all pools are stored
+                # This ensures all pool records exist before we try to reference them
+                logger.info(f"Syncing LP participants for {asset_code}...")
+                participants_synced = await self._sync_all_pool_participants(asset_code)
                 
                 logger.info(
                     f"✓ LP sync complete for {asset_code}: "
@@ -866,110 +874,145 @@ class UBECDataSynchronizer:
             logger.error(f"Error storing liquidity pool: {e}")
             return None
     
-    async def _sync_pool_participants(
-        self,
-        pool_id: str,
-        stellar_pool_id: str
-    ) -> int:
+    async def _sync_all_pool_participants(self, token_code: str) -> int:
         """
-        Synchronize participants (liquidity providers) for a pool.
+        Sync LP participants by checking all accounts for liquidity_pool_shares.
+        
+        🔥 NEW in v5.3: Correct implementation that iterates through accounts.
+        
+        This is the ONLY way to find LP share holders on Stellar. You cannot
+        query "who owns shares in this pool?" directly from the Horizon API.
+        Instead, you must:
+        1. Get all accounts from the database
+        2. Fetch each account's data from Stellar
+        3. Check their balances for liquidity_pool_shares
+        4. Match pool IDs to the pools we're tracking
+        5. Store the ownership data
         
         Args:
-            pool_id: Pool ID (same as stellar_pool_id)
-            stellar_pool_id: Stellar network pool ID
+            token_code: Token code to sync participants for (UBEC, UBECrc, etc)
             
         Returns:
             int: Number of participants synced
         """
         try:
-            # Ensure settings are loaded (required for horizon_url)
-            if not self.settings or not self.horizon_url:
-                await self._load_settings_from_database()
+            # Get all accounts from database
+            query = "SELECT account_id FROM stellar_accounts"
+            account_rows = await self.db.fetch_all(query)
             
-            # Get pool data for ownership calculations
-            pool_query = "SELECT total_shares, balance, token_code FROM liquidity_pools WHERE id = $1"
-            pool_data = await self.db.fetch_one(pool_query, (pool_id,))
-            
-            if not pool_data:
-                logger.debug(f"Pool {pool_id[:8]}... not found in database for participant sync")
+            if not account_rows:
+                logger.info("No accounts in database to check for LP positions")
                 return 0
             
-            total_shares = Decimal(pool_data['total_shares'])
-            pool_ubec_balance = Decimal(pool_data['balance'])
-            token_code = pool_data['token_code']
-            element = self.ELEMENT_MAP.get(token_code, 'air')
-            
-            # Fetch accounts that hold shares in this pool
-            # Using direct API call since SDK doesn't support this directly
-            url = f"{self.horizon_url}/accounts"
-            params = {
-                'asset': f'liquidity_pool_shares:{stellar_pool_id}',
-                'limit': 200
-            }
+            logger.info(f"Checking {len(account_rows)} accounts for LP positions...")
             
             participants_synced = 0
+            accounts_checked = 0
             
-            async with self.session.get(url, params=params) as response:
-                if response.status != 200:
-                    logger.debug(f"No participants found for pool {stellar_pool_id[:8]}...")
-                    return 0
+            # Get element for this token
+            element = self.ELEMENT_MAP.get(token_code, 'air')
+            
+            for row in account_rows:
+                account_id = row['account_id']
                 
-                data = await response.json()
-                accounts = data.get('_embedded', {}).get('records', [])
-                
-                for account in accounts:
-                    account_id = account['id']
+                try:
+                    # Check rate limit
+                    await self._check_rate_limit()
                     
-                    # Find pool shares balance
-                    balances = account.get('balances', [])
+                    # Fetch account data from Stellar
+                    account_data = await self.server.accounts().account_id(account_id).call()
+                    
+                    # Update rate limits
+                    if hasattr(account_data, '_headers'):
+                        self._update_rate_limits(account_data._headers)
+                    
+                    # Look for liquidity_pool_shares in the balances
+                    balances = account_data.get('balances', [])
+                    
                     for balance in balances:
-                        if (balance.get('asset_type') == 'liquidity_pool_shares' and
-                            balance.get('liquidity_pool_id') == stellar_pool_id):
-                            
+                        if balance.get('asset_type') == 'liquidity_pool_shares':
+                            pool_id = balance.get('liquidity_pool_id')
                             shares = Decimal(balance.get('balance', '0'))
                             
-                            # Calculate ownership percentage and UBEC balance
-                            if total_shares > 0:
-                                ownership_percentage = (shares / total_shares) * Decimal('100')
-                                ubec_balance = (shares / total_shares) * pool_ubec_balance
-                            else:
-                                ownership_percentage = Decimal('0')
-                                ubec_balance = Decimal('0')
-                            
-                            # Store participant using liquidity_pool_owners table
-                            query = """
-                                INSERT INTO liquidity_pool_owners (
-                                    account_id, liquidity_pool_id, shares,
-                                    ownership_percentage, ubec_balance,
-                                    element, token_code,
-                                    sync_timestamp, sync_status
+                            if shares > 0:
+                                # Check if this pool is one we're tracking for this token
+                                pool_query = """
+                                    SELECT total_shares, balance, token_code
+                                    FROM liquidity_pools
+                                    WHERE id = $1 AND token_code = $2
+                                """
+                                pool_data = await self.db.fetch_one(
+                                    pool_query,
+                                    (pool_id, token_code)
                                 )
-                                VALUES (
-                                    $1, $2, $3, $4, $5,
-                                    $6::ubec_main.element_type, $7::ubec_main.token_code,
-                                    NOW(), 'synced'
-                                )
-                                ON CONFLICT (account_id, liquidity_pool_id) DO UPDATE SET
-                                    shares = EXCLUDED.shares,
-                                    ownership_percentage = EXCLUDED.ownership_percentage,
-                                    ubec_balance = EXCLUDED.ubec_balance,
-                                    sync_timestamp = NOW(),
-                                    last_modified_at = NOW()
-                            """
-                            
-                            await self.db.execute(query, (
-                                account_id, pool_id, shares,
-                                ownership_percentage, ubec_balance,
-                                element, token_code
-                            ))
-                            participants_synced += 1
-                            break
-                
-                logger.debug(f"Synced {participants_synced} participants for pool {stellar_pool_id[:8]}...")
-                return participants_synced
-                
+                                
+                                if pool_data:
+                                    # Calculate ownership percentage and UBEC balance
+                                    total_shares = Decimal(pool_data['total_shares'])
+                                    pool_ubec_balance = Decimal(pool_data['balance'])
+                                    
+                                    if total_shares > 0:
+                                        ownership_percentage = (shares / total_shares) * Decimal('100')
+                                        ubec_balance = (shares / total_shares) * pool_ubec_balance
+                                    else:
+                                        ownership_percentage = Decimal('0')
+                                        ubec_balance = Decimal('0')
+                                    
+                                    # Store participant position
+                                    insert_query = """
+                                        INSERT INTO liquidity_pool_owners (
+                                            account_id, liquidity_pool_id, shares,
+                                            ownership_percentage, ubec_balance,
+                                            element, token_code,
+                                            sync_timestamp, sync_status
+                                        )
+                                        VALUES (
+                                            $1, $2, $3, $4, $5,
+                                            $6::ubec_main.element_type, $7::ubec_main.token_code,
+                                            NOW(), 'synced'
+                                        )
+                                        ON CONFLICT (account_id, liquidity_pool_id) DO UPDATE SET
+                                            shares = EXCLUDED.shares,
+                                            ownership_percentage = EXCLUDED.ownership_percentage,
+                                            ubec_balance = EXCLUDED.ubec_balance,
+                                            sync_timestamp = NOW(),
+                                            last_modified_at = NOW()
+                                    """
+                                    
+                                    await self.db.execute(insert_query, (
+                                        account_id, pool_id, shares,
+                                        ownership_percentage, ubec_balance,
+                                        element, token_code
+                                    ))
+                                    
+                                    participants_synced += 1
+                                    logger.debug(
+                                        f"LP position synced: {account_id[:8]}... "
+                                        f"owns {ownership_percentage:.4f}% of pool {pool_id[:8]}..."
+                                    )
+                    
+                    accounts_checked += 1
+                    
+                    # Progress logging every 50 accounts
+                    if accounts_checked % 50 == 0:
+                        logger.info(
+                            f"  Progress: {accounts_checked}/{len(account_rows)} accounts checked, "
+                            f"{participants_synced} LP positions found"
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error checking LP positions for {account_id}: {e}")
+                    continue
+            
+            logger.info(
+                f"✓ LP participant sync complete: {participants_synced} positions found "
+                f"in {accounts_checked} accounts"
+            )
+            
+            return participants_synced
+            
         except Exception as e:
-            logger.error(f"Error syncing pool participants: {e}")
+            logger.error(f"Error syncing LP participants: {e}")
             return 0
     
     # ========================================================================
@@ -1473,9 +1516,13 @@ class UBECDataSynchronizer:
             result = await self.db.fetch_one("SELECT COUNT(*) as count FROM liquidity_pools")
             stats['total_pools'] = result['count'] if result else 0
             
+            # Count LP owners
+            result = await self.db.fetch_one("SELECT COUNT(*) as count FROM liquidity_pool_owners")
+            stats['total_lp_owners'] = result['count'] if result else 0
+            
             # Get last activity time
             result = await self.db.fetch_one(
-                "SELECT MAX(last_activity_at) as last_activity FROM stellar_accounts"
+                "SELECT MAX(last_modified_at) as last_activity FROM stellar_accounts"
             )
             stats['last_sync_time'] = result['last_activity'] if result and result['last_activity'] else 'Never'
             
