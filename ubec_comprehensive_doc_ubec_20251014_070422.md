@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-14T01:56:01.376071  
+**Generated:** 2025-10-14T07:04:22.011604  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 62 MB  
@@ -12,19 +12,19 @@
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 62  
-**Total Rows:** 66,582  
-**Total Columns:** 771  
+**Total Tables:** 63  
+**Total Rows:** 66,605  
+**Total Columns:** 786  
 **Total Views:** 26  
-**Total Functions:** 1127  
+**Total Functions:** 1128  
 **Total Relationships:** 7  
-**Total Indexes:** 379  
+**Total Indexes:** 388  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 41 | 58,082 | 17 | 74 |
+| ubec_main | Main schema for UBEC four-element protoc... | 42 | 58,105 | 17 | 75 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6378,14 +6378,14 @@
 
 ### Schema Statistics
 
-- **Tables:** 41
-- **Total Rows:** 58,082
-- **Columns:** 497
+- **Tables:** 42
+- **Total Rows:** 58,105
+- **Columns:** 512
 - **Views:** 17
 - **Relationships:** 7
-- **Indexes:** 269
-- **Triggers:** 19
-- **Functions:** 74
+- **Indexes:** 278
+- **Triggers:** 20
+- **Functions:** 75
 - **Custom Types:** 8
 
 ### Custom Types
@@ -6432,10 +6432,11 @@
 | asset_holder_analysis | 63 | 19 | 184 kB |
 | system_settings | 37 | 12 | 80 kB |
 | ubec_distributions | 24 | 14 | 112 kB |
+| liquidity_pool_owners | 23 | 13 | 240 kB |
 | holonic_metrics | 15 | 14 | 160 kB |
 | distribution_state | 12 | 9 | 104 kB |
 | distribution_history | 10 | 15 | 152 kB |
-| liquidity_pools | 10 | 20 | 176 kB |
+| liquidity_pools | 10 | 20 | 208 kB |
 | system_configuration | 5 | 8 | 96 kB |
 | account_balances | 0 | 6 | 56 kB |
 | agent_activity_history | 0 | 7 | 56 kB |
@@ -6445,7 +6446,6 @@
 | agents | 0 | 11 | 40 kB |
 | api_rate_limits | 0 | 6 | 8192 bytes |
 | asset_holders | 0 | 7 | 56 kB |
-| constraint_violations | 0 | 6 | 32 kB |
 
 #### ubec_main.account_balances
 
@@ -6694,6 +6694,35 @@
 - `distribution_state_percentages_check` (CHECK)
 - `distribution_state_pkey` (PRIMARY KEY)
 - `distribution_state_unique_asset_category` (UNIQUE)
+
+#### ubec_main.distribution_transfers
+
+*Records all distribution rebalancing transactions executed on Stellar blockchain*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('distribution_trans... | Unique identifier for each transfer r... |
+| tx_hash | text | ✗ | - | Stellar transaction hash (unique iden... |
+| from_account | text | ✗ | - | Source account public key (G...) |
+| to_account | text | ✗ | - | Destination account public key (G...) |
+| amount | numeric(20,7) | ✗ | - | Amount transferred (in token units, u... |
+| asset_code | text | ✗ | - | Asset code (e.g., UBEC, UBECrc, etc.) |
+| asset_issuer | text | ✗ | - | Asset issuer public key |
+| ledger | integer | ✓ | - | Stellar ledger number where transacti... |
+| memo | text | ✓ | - | Transaction memo text (max 28 charact... |
+| network | text | ✗ | - | Network where transaction occurred (T... |
+| executed_at | timestamp without time zone | ✗ | now() | Timestamp when transaction was execut... |
+| created_at | timestamp without time zone | ✗ | now() | Timestamp when record was created in ... |
+| updated_at | timestamp without time zone | ✗ | now() | Timestamp when record was last updated |
+| notes | text | ✓ | - | Optional notes or metadata about the ... |
+| recorded_by | text | ✓ | 'distribution_service'::text | System or service that recorded this ... |
+
+**Constraints:**
+- `distribution_transfers_network_check` (CHECK)
+- `distribution_transfers_pkey` (PRIMARY KEY)
+- `distribution_transfers_tx_hash_key` (UNIQUE)
+- `positive_amount` (CHECK)
+- `valid_network` (CHECK)
 
 #### ubec_main.flow_transactions
 
@@ -7541,12 +7570,12 @@
 
 ### Functions
 
-#### armor(bytea, text[], text[])
+#### armor(bytea)
 
 - **Returns:** text
 - **Language:** c
 
-#### armor(bytea)
+#### armor(bytea, text[], text[])
 
 - **Returns:** text
 - **Language:** c
@@ -7635,12 +7664,12 @@
 - **Returns:** uuid
 - **Language:** c
 
-#### gen_salt(text, integer)
+#### gen_salt(text)
 
 - **Returns:** text
 - **Language:** c
 
-#### gen_salt(text)
+#### gen_salt(text, integer)
 
 - **Returns:** text
 - **Language:** c
@@ -7679,12 +7708,12 @@
 - **Returns:** TABLE(setting_key character varying, setting_value text, setting_type character varying, description text)
 - **Language:** plpgsql
 
-#### hmac(text, text, text)
+#### hmac(bytea, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### hmac(bytea, bytea, text)
+#### hmac(text, text, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7705,11 +7734,6 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt(bytea, bytea, text)
-
-- **Returns:** text
-- **Language:** c
-
 #### pgp_pub_decrypt(bytea, bytea)
 
 - **Returns:** text
@@ -7720,12 +7744,17 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt_bytea(bytea, bytea)
+#### pgp_pub_decrypt(bytea, bytea, text)
+
+- **Returns:** text
+- **Language:** c
+
+#### pgp_pub_decrypt_bytea(bytea, bytea, text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_decrypt_bytea(bytea, bytea, text, text)
+#### pgp_pub_decrypt_bytea(bytea, bytea)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7735,17 +7764,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea, text)
-
-- **Returns:** bytea
-- **Language:** c
-
 #### pgp_pub_encrypt(text, bytea)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt_bytea(bytea, bytea, text)
+#### pgp_pub_encrypt(text, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7755,9 +7779,9 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt(bytea, text)
+#### pgp_pub_encrypt_bytea(bytea, bytea, text)
 
-- **Returns:** text
+- **Returns:** bytea
 - **Language:** c
 
 #### pgp_sym_decrypt(bytea, text, text)
@@ -7765,12 +7789,17 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_sym_decrypt_bytea(bytea, text)
+#### pgp_sym_decrypt(bytea, text)
+
+- **Returns:** text
+- **Language:** c
+
+#### pgp_sym_decrypt_bytea(bytea, text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt_bytea(bytea, text, text)
+#### pgp_sym_decrypt_bytea(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7785,12 +7814,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_encrypt_bytea(bytea, text)
+#### pgp_sym_encrypt_bytea(bytea, text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_encrypt_bytea(bytea, text, text)
+#### pgp_sym_encrypt_bytea(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7821,6 +7850,11 @@
 - **Returns:** void
 - **Language:** plpgsql
 - **Description:** Update or insert asset holder balance
+
+#### update_distribution_transfers_updated_at()
+
+- **Returns:** trigger
+- **Language:** plpgsql
 
 #### update_holonic_metrics_timestamp()
 

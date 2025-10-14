@@ -429,7 +429,7 @@ async def initialize_services(config: SystemConfig, db_manager: AsyncDatabaseMan
             }
             
             # Create distribution service with validated instances
-            dist_service = create_distribution_service(
+            dist_service = await create_distribution_service(
                 db_manager=db_manager,
                 config=dist_config,
                 stellar_client=services.get('stellar_client'),
@@ -1271,7 +1271,8 @@ def display_rebalance_preview(preview: Dict[str, Any]) -> None:
             print(f"   Stewardship:    {dist.get('stewardship', 0)*100:6.2f}%")
     
     # Proposed operations
-    operations = preview.get('proposed_operations', [])
+#    operations = preview.get('proposed_operations', [])
+    operations = preview.get('transfers', preview.get('proposed_operations', []))
     print(f"\n🔄 PROPOSED OPERATIONS ({len(operations)} transfers):")
     for i, op in enumerate(operations, 1):
         print(f"\n   {i}. Transfer {op['amount']:,.2f} UBEC")

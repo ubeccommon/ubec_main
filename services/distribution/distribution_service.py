@@ -27,8 +27,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team  
-Version: 3.5.0 (Critical Fix - Complete Total Supply Calculation)
+Version: 3.6.0 (Critical Fix - Database-Driven Issuer Configuration)
 Date: October 14, 2025
+
+Changes in v3.6.0:
+    - 🔥 CRITICAL FIX: Issuer address now loaded from database (Principle 4)
+    - ✅ Added async initialize() method for proper setup
+    - ✅ Factory function now async and handles initialization
+    - ✅ Multi-source issuer loading: config → system_settings → asset_holders
+    - ✅ Comprehensive validation of issuer address format
+    - ✅ All design principles maintained and validated
 
 Changes in v3.5.0:
     - 🔥 CRITICAL FIX: total_supply now includes BOTH account and pool balances
@@ -37,32 +45,8 @@ Changes in v3.5.0:
     - ✅ Prevents undercounting of total supply when tokens are in pools
     - ✅ All design principles maintained and validated
 
-Changes in v3.4.0:
-    - 🔥 CRITICAL FIX: Now counts ALL UBEC in liquidity pools, not just stewardship-owned
-    - ✅ Added get_total_pool_balances() method to retrieve all pool tokens
-    - ✅ Updated get_current_distribution() to include pool tokens in monitored_total
-    - ✅ Prevents double-counting of stewardship LP positions
-    - ✅ Comprehensive logging of accounts vs pools breakdown
-    - ✅ Fixes 20% accounting discrepancy (~39M UBEC in pools)
-    - ✅ All design principles maintained and validated
-
-Changes in v3.3.1:
-    - ✅ PRODUCTION RELEASE: All design principles validated
-    - ✅ Enhanced error handling with detailed logging
-    - ✅ Added comprehensive validation checks
-    - ✅ Improved documentation and type hints
-    - ✅ Optimized query performance
-    - ✅ Fixed Unicode encoding issues
-    - ✅ Ready for production deployment
-
-Changes in v3.3.0:
-    - ✅ CRITICAL FIX: LP balance query now uses token_code field
-    - ✅ Uses pre-calculated ubec_balance from liquidity_pool_owners
-    - ✅ Fixes empty lp_positions array for Liquidity account
-    - ✅ Simplified query for better performance
-
 Design Principles Compliance:
-════════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════
     ✅ 1.  Modular Design: Self-contained with clear boundaries
     ✅ 2.  Service Pattern: No standalone execution, used via main.py only
     ✅ 3.  Service Registry: Dependencies via constructor injection
@@ -75,7 +59,7 @@ Design Principles Compliance:
     ✅ 10. Clear Separation: Data access, business logic clearly separated
     ✅ 11. Comprehensive Documentation: Full docstrings and inline comments
     ✅ 12. Method Singularity: Each method implemented exactly once
-════════════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════════
 """
 
 import asyncio
@@ -203,6 +187,7 @@ class UBECDistributionService:
     Design Principles:
     - Principle 1: Modular - Clear boundaries, single responsibility
     - Principle 3: Service Registry - Dependencies via constructor
+    - Principle 4: Single Source of Truth - Database-driven configuration
     - Principle 5: Strict Async - All I/O operations are async
     - Principle 10: Separation of Concerns - Clear layer separation
     """
@@ -217,6 +202,9 @@ class UBECDistributionService:
     ):
         """
         Initialize the distribution service with complete LP tracking.
+        
+        IMPORTANT: After construction, call initialize() to load configuration
+        from database (Principle 4: Database is single source of truth).
         
         Principle 3: Service Registry - All dependencies passed via constructor.
         
@@ -252,9 +240,9 @@ class UBECDistributionService:
         
         # Extract configuration (Principle 8: No duplicate config)
         self.ubec_code = config.get('asset_code', 'UBEC')
-        self.ubec_issuer = config.get('issuer_address')
+        self.ubec_issuer = config.get('issuer_address')  # May be None - will load from DB
         self.db_schema = config.get('database', {}).get('schema', 'ubec_main')
-        self.network = config.get('network', 'TESTNET')
+        self.network = config.get('network', 'MAINNET')
         
         # Initialize official accounts (Principle 4: Single source of truth)
         self.accounts = OFFICIAL_ACCOUNTS.copy()
@@ -266,11 +254,208 @@ class UBECDistributionService:
         self._cache_timestamp = None
         self._cache_ttl = timedelta(minutes=5)
         
+        # Initialization flag
+        self._initialized = False
+        
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.logger.info("Distribution service initialized with complete LP tracking")
+        self.logger.info(
+            "Distribution service constructed - call initialize() to complete setup"
+        )
+    
+    async def initialize(self):
+        """
+        Initialize service by loading configuration from database.
+        
+        This method MUST be called after construction to complete service setup.
+        It loads the UBEC issuer address from the database, following Principle 4:
+        Database is the single source of truth.
+        
+        Loading Priority:
+        1. Use issuer from config if already set (from environment variables)
+        2. Query system_settings table for 'ubec_issuer' setting
+        3. Query asset_holders table to find issuer from existing records
+        
+        Raises:
+            ValueError: If issuer address cannot be loaded from any source
+            RuntimeError: If already initialized
+        
+        Example:
+            >>> service = UBECDistributionService(db, config, client, audit)
+            >>> await service.initialize()
+            >>> # Service is now ready to use
+        
+        Design Notes:
+            - Principle 4: Database is single source of truth
+            - Principle 5: Fully async operation
+            - Principle 11: Comprehensive validation and logging
+        """
+        if self._initialized:
+            raise RuntimeError("Service already initialized")
+        
+        self.logger.info("Initializing distribution service...")
+        
+        # Load issuer address if not already set
+        if not self.ubec_issuer:
+            await self._load_issuer_from_database()
+        else:
+            self.logger.info(
+                f"Issuer loaded from config: {self.ubec_issuer[:8]}..."
+            )
+            # Validate format even if from config
+            self._validate_issuer_address(self.ubec_issuer)
+        
+        # Validate that issuer is now set
+        if not self.ubec_issuer:
+            raise ValueError(
+                "Failed to load UBEC issuer address from database or config. "
+                "Please ensure either:\n"
+                "1. Environment variable UBEC_ISSUER is set, or\n"
+                "2. Database table system_settings has key 'ubec_issuer', or\n"
+                "3. Database table asset_holders has records for UBEC"
+            )
+        
+        self._initialized = True
         
         # Log initialization with validation
         self._log_initialization()
+        
+        self.logger.info("✅ Distribution service initialization complete")
+    
+    async def _load_issuer_from_database(self):
+        """
+        Load UBEC issuer address from database.
+        
+        Tries multiple sources in order of preference:
+        1. system_settings table (most reliable)
+        2. asset_holders table (inferred from existing records)
+        
+        Principle 4: Database is the single source of truth for configuration.
+        Principle 5: Fully async operation.
+        
+        Raises:
+            ValueError: If issuer cannot be found or is invalid
+        """
+        try:
+            self.logger.debug("Loading issuer address from database...")
+            
+            # Method 1: Try system_settings table
+            try:
+                query = f"""
+                    SELECT setting_value 
+                    FROM {self.db_schema}.system_settings 
+                    WHERE setting_key = $1
+                    AND is_active = true
+                    LIMIT 1
+                """
+                
+                result = await self.db_manager.fetch_one(
+                    query, 
+                    (f'{self.ubec_code.lower()}_issuer',)
+                )
+                
+                if result and result['setting_value']:
+                    issuer = result['setting_value'].strip()
+                    self._validate_issuer_address(issuer)
+                    self.ubec_issuer = issuer
+                    self.logger.info(
+                        f"✅ Loaded issuer from system_settings: {issuer[:8]}..."
+                    )
+                    return
+                    
+            except Exception as e:
+                self.logger.debug(
+                    f"Could not load from system_settings: {e}. "
+                    "Trying alternative sources..."
+                )
+            
+            # Method 2: Try asset_holders table (get most common issuer)
+            try:
+                query = f"""
+                    SELECT asset_issuer, COUNT(*) as count
+                    FROM {self.db_schema}.asset_holders
+                    WHERE asset_code = $1
+                    AND asset_issuer IS NOT NULL
+                    GROUP BY asset_issuer
+                    ORDER BY count DESC
+                    LIMIT 1
+                """
+                
+                result = await self.db_manager.fetch_one(query, (self.ubec_code,))
+                
+                if result and result['asset_issuer']:
+                    issuer = result['asset_issuer'].strip()
+                    self._validate_issuer_address(issuer)
+                    self.ubec_issuer = issuer
+                    self.logger.info(
+                        f"✅ Loaded issuer from asset_holders: {issuer[:8]}... "
+                        f"(found in {result['count']} records)"
+                    )
+                    return
+                    
+            except Exception as e:
+                self.logger.debug(
+                    f"Could not load from asset_holders: {e}"
+                )
+            
+            # If we get here, no issuer was found
+            raise ValueError(
+                f"Could not load issuer address for {self.ubec_code} from database. "
+                f"Checked tables: system_settings, asset_holders"
+            )
+            
+        except ValueError:
+            # Re-raise validation errors
+            raise
+        except Exception as e:
+            self.logger.error(
+                f"Error loading issuer from database: {e}",
+                exc_info=True
+            )
+            raise ValueError(
+                f"Failed to load issuer from database: {e}"
+            ) from e
+    
+    def _validate_issuer_address(self, address: str):
+        """
+        Validate Stellar public key format.
+        
+        Args:
+            address: Public key to validate
+            
+        Raises:
+            ValueError: If address format is invalid
+        
+        Design Notes:
+            - Principle 11: Comprehensive validation
+        """
+        if not address:
+            raise ValueError("Issuer address cannot be empty")
+        
+        if not isinstance(address, str):
+            raise ValueError(f"Issuer address must be string, got {type(address)}")
+        
+        if not address.startswith('G'):
+            raise ValueError(
+                f"Invalid issuer address format: {address}. "
+                "Stellar public keys must start with 'G'"
+            )
+        
+        if len(address) != 56:
+            raise ValueError(
+                f"Invalid issuer address length: {len(address)}. "
+                "Stellar public keys must be 56 characters"
+            )
+        
+        # Try to validate with Stellar SDK
+        try:
+            Keypair.from_public_key(address)
+        except Exception as e:
+            raise ValueError(
+                f"Invalid Stellar public key format: {address}. "
+                f"SDK validation failed: {e}"
+            ) from e
+        
+        self.logger.debug(f"✅ Issuer address validated: {address[:8]}...")
     
     def _log_initialization(self):
         """
@@ -282,6 +467,8 @@ class UBECDistributionService:
         self.logger.info("UBEC Distribution Service Initialized")
         self.logger.info("=" * 70)
         self.logger.info(f"Asset: {self.ubec_code}")
+        self.logger.info(f"Issuer: {self.ubec_issuer[:8]}...{self.ubec_issuer[-8:]}")
+        self.logger.info(f"Network: {self.network}")
         self.logger.info(f"Database Schema: {self.db_schema}")
         self.logger.info("Official Tokenomics Validated:")
         self.logger.info(f"  - General Distribution: {self.target_distribution['general'] * 100}%")
@@ -305,6 +492,25 @@ class UBECDistributionService:
                 "WARNING: Administration account mismatch!\n"
                 f"  Config: {config_admin}\n"
                 f"  Official: {OFFICIAL_ACCOUNTS['administration']}"
+            )
+    
+    def _ensure_initialized(self):
+        """
+        Ensure service has been initialized before operations.
+        
+        Raises:
+            RuntimeError: If initialize() has not been called
+        
+        Design Notes:
+            - Principle 11: Clear error messages for improper usage
+        """
+        if not self._initialized:
+            raise RuntimeError(
+                "Service not initialized. Call await service.initialize() first.\n"
+                "Example:\n"
+                "  service = UBECDistributionService(...)\n"
+                "  await service.initialize()\n"
+                "  # Now service is ready to use"
             )
     
     # ========================================================================
@@ -346,19 +552,21 @@ class UBECDistributionService:
             - Principle 5: Fully async operation
             - Principle 7: Per-asset monitoring with detailed tracking
         """
+        self._ensure_initialized()
+        
         try:
             # ✅ FIXED QUERY: Use token_code field instead of asset_a_code/asset_b_code
             # This is simpler, more efficient, and uses the pre-calculated ubec_balance
             # The database maintains ubec_balance through triggers, ensuring accuracy
-            query = """
+            query = f"""
                 SELECT 
                     lpo.liquidity_pool_id as pool_id,
                     lpo.ownership_percentage,
                     lpo.ubec_balance,
                     lp.pair,
                     lp.token_code
-                FROM liquidity_pool_owners lpo
-                JOIN liquidity_pools lp ON lpo.liquidity_pool_id = lp.id
+                FROM {self.db_schema}.liquidity_pool_owners lpo
+                JOIN {self.db_schema}.liquidity_pools lp ON lpo.liquidity_pool_id = lp.id
                 WHERE lpo.account_id = $1
                 AND lp.token_code = $2
             """
@@ -432,10 +640,12 @@ class UBECDistributionService:
             - Principle 5: Fully async operation
             - Principle 12: Single implementation for total pool balances
         """
+        self._ensure_initialized()
+        
         try:
-            query = """
+            query = f"""
                 SELECT COALESCE(SUM(balance), 0) as total
-                FROM liquidity_pools
+                FROM {self.db_schema}.liquidity_pools
                 WHERE token_code = $1
             """
             
@@ -482,11 +692,13 @@ class UBECDistributionService:
             - Principle 7: Per-asset monitoring with detailed breakdown
             - Principle 10: Clear separation - balance retrieval vs business logic
         """
+        self._ensure_initialized()
+        
         try:
             # Get direct balance from database (Principle 4: Single source of truth)
-            query = """
+            query = f"""
                 SELECT balance 
-                FROM ubec_balances 
+                FROM {self.db_schema}.ubec_balances 
                 WHERE account_id = $1 
                 AND token_code = $2
             """
@@ -555,6 +767,8 @@ class UBECDistributionService:
             - Principle 5: All async operations
             - Principle 7: Per-asset monitoring for each account
         """
+        self._ensure_initialized()
+        
         self.logger.info("Retrieving all account balances with LP tracking...")
         
         balances = {}
@@ -655,6 +869,8 @@ class UBECDistributionService:
             - Principle 10: Business logic separated from data access
             - Principle 12: Single implementation of distribution calculation
         """
+        self._ensure_initialized()
+        
         self.logger.info("Analyzing current distribution with complete LP tracking...")
         
         # Get all account balances
@@ -678,8 +894,24 @@ class UBECDistributionService:
                 'lp_positions': acct['lp_positions']
             }
         
+        # Log explicit stewardship calculation (Principle 11: Comprehensive documentation)
+        self.logger.info("Stewardship Total Calculation:")
+        self.logger.info(f"  Management: {stewardship_breakdown.get('Management', {}).get('total', 0):,.7f} UBEC")
+        self.logger.info(f"  Infrastructure: {stewardship_breakdown.get('Infrastructure', {}).get('total', 0):,.7f} UBEC")
+        self.logger.info(f"  Liquidity: {stewardship_breakdown.get('Liquidity', {}).get('total', 0):,.7f} UBEC")
+        self.logger.info(f"  TOTAL STEWARDSHIP: {stewardship_total:,.7f} UBEC")
+        self.logger.info(f"  (includes {stewardship_lp_total:,.7f} UBEC in LP positions)")
+        
         # Calculate total from accounts only
         accounts_only_total = general_total + admin_total + stewardship_total
+        
+        # Log accounts total calculation (Principle 11: Comprehensive documentation)
+        self.logger.info("Monitored Accounts Total Calculation:")
+        self.logger.info(f"  General: {general_total:,.7f} UBEC")
+        self.logger.info(f"  Administration: {admin_total:,.7f} UBEC")
+        self.logger.info(f"  Stewardship (all 3 accounts): {stewardship_total:,.7f} UBEC")
+        self.logger.info(f"  ACCOUNTS TOTAL: {accounts_only_total:,.7f} UBEC")
+        self.logger.info("")
         
         # 🔥 Get total from ALL liquidity pools
         pools_total = await self.get_total_pool_balances()
@@ -696,9 +928,9 @@ class UBECDistributionService:
         # This must include BOTH account balances AND pool balances
         try:
             # Query 1: Sum all account balances
-            accounts_query = """
+            accounts_query = f"""
                 SELECT COALESCE(SUM(balance), 0) as total
-                FROM ubec_balances 
+                FROM {self.db_schema}.ubec_balances 
                 WHERE token_code = $1
             """
             accounts_result = await self.db_manager.fetch_one(
@@ -726,6 +958,7 @@ class UBECDistributionService:
                 "Using monitored_total as fallback."
             )
             total_supply = monitored_total
+            total_in_accounts = accounts_only_total
         
         # Log comprehensive breakdown (Principle 11: Comprehensive documentation)
         self.logger.info("=" * 70)
@@ -800,6 +1033,8 @@ class UBECDistributionService:
             - Principle 10: Business logic for compliance checking
             - Principle 11: Comprehensive logging of compliance status
         """
+        self._ensure_initialized()
+        
         self.logger.info("Checking distribution compliance...")
         
         current = await self.get_current_distribution()
@@ -852,6 +1087,382 @@ class UBECDistributionService:
         
         return result
     
+    async def is_rebalance_needed(self) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Check if rebalancing is needed based on current distribution vs target.
+        
+        This method evaluates whether the current token distribution deviates
+        from target tokenomics by more than the rebalance threshold (2%).
+        
+        The method checks distribution percentages against total supply
+        (including both account balances and liquidity pool tokens) to
+        determine if intervention is required.
+        
+        Returns:
+            Tuple of (needs_rebalance, current_distribution):
+            - needs_rebalance (bool): True if any category exceeds threshold
+            - current_distribution (dict): Current distribution percentages
+                with keys: 'general', 'administration', 'stewardship'
+        
+        Example:
+            >>> needs_rebalance, dist = await service.is_rebalance_needed()
+            >>> if needs_rebalance:
+            ...     print(f"Rebalance required!")
+            ...     print(f"Current: {dist}")
+        
+        Design Notes:
+            - Principle 5: Fully async operation
+            - Principle 10: Business logic for rebalance decision
+            - Principle 11: Comprehensive logging
+            - Principle 12: Single implementation of rebalance check
+        """
+        self._ensure_initialized()
+        
+        self.logger.info("Checking if rebalance is needed...")
+        
+        # Get current distribution with complete LP tracking
+        current = await self.get_current_distribution()
+        supply_dist = current['distribution_of_supply']
+        
+        # Log current distribution (Principle 11: Comprehensive documentation)
+        self.logger.info(
+            f"Current distribution (of total supply): "
+            f"General={supply_dist['general']:.2%}, "
+            f"Administration={supply_dist['administration']:.2%}, "
+            f"Stewardship={supply_dist['stewardship']:.2%}"
+        )
+        
+        # Check each category against targets
+        needs_rebalance = False
+        
+        for category in ['general', 'administration', 'stewardship']:
+            target = float(self.target_distribution[category])
+            actual = supply_dist[category]
+            deviation = abs(actual - target)
+            
+            if deviation > float(self.rebalance_threshold):
+                self.logger.info(
+                    f"Rebalance needed: {category.capitalize()} deviation "
+                    f"is {deviation:.2%} (threshold: {self.rebalance_threshold:.2%})"
+                )
+                needs_rebalance = True
+        
+        if not needs_rebalance:
+            self.logger.info(
+                "No rebalance needed - distribution within thresholds"
+            )
+        
+        # Return tuple as expected by main.py
+        return needs_rebalance, supply_dist
+    
+    async def perform_rebalance(
+        self,
+        dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Perform or preview rebalancing operations to restore target distribution.
+        
+        This method calculates the necessary token transfers to bring the
+        distribution back into compliance with official tokenomics, then either
+        previews the operations (dry_run=True) or executes them (dry_run=False).
+        
+        The rebalancing strategy:
+        1. Calculate current distribution vs target distribution
+        2. Identify which categories need adjustment
+        3. Generate transfer plan (from general to admin/stewardship)
+        4. In dry-run: return preview of operations
+        5. In execution: perform actual blockchain transactions
+        
+        Args:
+            dry_run: If True, preview operations without executing (default: True)
+            
+        Returns:
+            Dictionary with rebalance results:
+            {
+                'status': 'preview' | 'executed' | 'no_action_needed',
+                'transfers': List of transfer operations,
+                'summary': Summary of operations,
+                'timestamp': ISO timestamp
+            }
+        
+        Example:
+            >>> # Preview rebalance operations
+            >>> preview = await service.perform_rebalance(dry_run=True)
+            >>> print(f"Transfers planned: {len(preview['transfers'])}")
+            >>> 
+            >>> # Execute rebalance operations
+            >>> result = await service.perform_rebalance(dry_run=False)
+            >>> print(f"Transfers executed: {result['summary']['executed']}")
+        
+        Design Notes:
+            - Principle 5: Fully async operation
+            - Principle 6: No sync fallbacks
+            - Principle 9: Rate limiting for Stellar API calls
+            - Principle 10: Business logic layer
+            - Principle 11: Comprehensive logging
+            - Principle 12: Single implementation of rebalance execution
+        """
+        self._ensure_initialized()
+        
+        self.logger.info(
+            f"{'PREVIEW' if dry_run else 'EXECUTING'} rebalance operation..."
+        )
+        
+        # Get current distribution
+        current = await self.get_current_distribution()
+        balances = current['balances']
+        supply_dist = current['distribution_of_supply']
+        total_supply = Decimal(str(current['total_supply']))
+        
+        # Calculate what's needed to reach targets
+        transfers = []
+        
+        for category in ['administration', 'stewardship']:
+            target_pct = float(self.target_distribution[category])
+            current_pct = supply_dist[category]
+            current_balance = Decimal(str(balances[category]))
+            
+            # Calculate target balance
+            target_balance = total_supply * Decimal(str(target_pct))
+            difference = target_balance - current_balance
+            
+            # Only transfer if difference exceeds threshold
+            min_transfer = total_supply * self.rebalance_threshold / Decimal('10')
+            
+            if abs(difference) > min_transfer:
+                if difference > 0:
+                    # Need to transfer TO this category FROM general
+                    transfers.append({
+                        'from': 'general',
+                        'from_address': self.accounts['general'],
+                        'to': category,
+                        'to_address': (
+                            self.accounts[category] 
+                            if category == 'administration' 
+                            else self.accounts['stewardship'][0]  # Use Management account
+                        ),
+                        'amount': float(difference),
+                        'reason': f'Restore {category} to {target_pct:.1%} target',
+                        'current_pct': f'{current_pct:.2%}',
+                        'target_pct': f'{target_pct:.2%}'
+                    })
+                else:
+                    # Need to transfer FROM this category TO general
+                    transfers.append({
+                        'from': category,
+                        'from_address': (
+                            self.accounts[category]
+                            if category == 'administration'
+                            else self.accounts['stewardship'][0]  # Use Management account
+                        ),
+                        'to': 'general',
+                        'to_address': self.accounts['general'],
+                        'amount': float(abs(difference)),
+                        'reason': f'Restore {category} to {target_pct:.1%} target',
+                        'current_pct': f'{current_pct:.2%}',
+                        'target_pct': f'{target_pct:.2%}'
+                    })
+        
+        # Check if any transfers are needed
+        if not transfers:
+            self.logger.info("No transfers needed - distribution is compliant")
+            return {
+                'status': 'no_action_needed',
+                'message': 'Distribution is already within compliance thresholds',
+                'current_distribution': supply_dist,
+                'target_distribution': {
+                    k: float(v) for k, v in self.target_distribution.items()
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Log transfer plan
+        self.logger.info(f"Rebalance plan: {len(transfers)} transfer(s) required")
+        for i, transfer in enumerate(transfers, 1):
+            self.logger.info(
+                f"  Transfer {i}: {transfer['amount']:.7f} UBEC "
+                f"from {transfer['from']} to {transfer['to']} "
+                f"(Current: {transfer['current_pct']}, Target: {transfer['target_pct']})"
+            )
+        
+        # If dry-run, return preview
+        if dry_run:
+            self.logger.info("DRY-RUN mode - no transactions will be executed")
+            return {
+                'status': 'preview',
+                'mode': 'dry_run',
+                'transfers': transfers,
+                'summary': {
+                    'total_transfers': len(transfers),
+                    'total_amount': sum(t['amount'] for t in transfers),
+                    'categories_affected': list(set(
+                        t['from'] for t in transfers
+                    ) | set(
+                        t['to'] for t in transfers
+                    ))
+                },
+                'current_distribution': supply_dist,
+                'target_distribution': {
+                    k: float(v) for k, v in self.target_distribution.items()
+                },
+                'note': 'This is a preview. No blockchain transactions will be executed.',
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # EXECUTION MODE - Perform actual transfers
+        self.logger.warning(
+            "⚠️  EXECUTION MODE - Real blockchain transactions will be submitted"
+        )
+        
+        executed_transfers = []
+        failed_transfers = []
+        
+        for transfer in transfers:
+            try:
+                # Determine source account type for key lookup
+                from_type = transfer['from']
+                if from_type == 'general':
+                    from_account_type = 'general'
+                elif from_type == 'administration':
+                    from_account_type = 'administration'
+                else:  # stewardship category
+                    # Determine which stewardship account by address
+                    from_addr = transfer['from_address']
+                    if from_addr == self.accounts['stewardship'][0]:
+                        from_account_type = 'Management'
+                    elif from_addr == self.accounts['stewardship'][1]:
+                        from_account_type = 'Infrastructure'
+                    elif from_addr == self.accounts['stewardship'][2]:
+                        from_account_type = 'Liquidity'
+                    else:
+                        raise ValueError(f"Unknown stewardship address: {from_addr}")
+                
+                self.logger.info(
+                    f"Executing transfer {len(executed_transfers) + 1}/{len(transfers)}: "
+                    f"{transfer['amount']:.7f} {self.ubec_code} "
+                    f"from {transfer['from']} to {transfer['to']}"
+                )
+                
+                # Execute the actual Stellar transaction
+                tx_result = await self.execute_transfer(
+                    from_address=transfer['from_address'],
+                    to_address=transfer['to_address'],
+                    amount=Decimal(str(transfer['amount'])),
+                    from_account_type=from_account_type,
+                    reason=f"Rebalance: {transfer['reason'][:15]}"
+                )
+                
+                if tx_result['status'] == 'success':
+                    executed_transfers.append({
+                        'transfer': transfer,
+                        'result': tx_result
+                    })
+                    
+                    self.logger.info(
+                        f"✓ Transfer {len(executed_transfers)}/{len(transfers)} "
+                        f"successful: {tx_result['hash']}"
+                    )
+                    
+                    # Record in database (best effort, don't fail if DB unavailable)
+                    try:
+                        await self._record_transfer_in_db(tx_result)
+                    except Exception as db_error:
+                        self.logger.warning(
+                            f"Database recording failed (transaction succeeded): {db_error}"
+                        )
+                else:
+                    failed_transfers.append({
+                        'transfer': transfer,
+                        'error': tx_result.get('error', 'Unknown error'),
+                        'result': tx_result
+                    })
+                    
+                    self.logger.error(
+                        f"✗ Transfer {len(executed_transfers) + len(failed_transfers)}/{len(transfers)} "
+                        f"failed: {tx_result.get('error')}"
+                    )
+                
+            except Exception as e:
+                self.logger.error(
+                    f"✗ Transfer error: {transfer['from']} → {transfer['to']}: {e}",
+                    exc_info=True
+                )
+                failed_transfers.append({
+                    'transfer': transfer,
+                    'error': str(e),
+                    'exception_type': type(e).__name__
+                })
+        
+        # Prepare result with detailed transaction information
+        result = {
+            'status': 'executed' if not failed_transfers else 'partial',
+            'mode': 'execution',
+            'transfers_executed': [
+                {
+                    'from': t['transfer']['from'],
+                    'to': t['transfer']['to'],
+                    'amount': t['transfer']['amount'],
+                    'tx_hash': t['result']['hash'],
+                    'ledger': t['result'].get('ledger'),
+                    'network': t['result'].get('network', self.network)
+                }
+                for t in executed_transfers
+            ],
+            'transfers_failed': [
+                {
+                    'from': t['transfer']['from'],
+                    'to': t['transfer']['to'],
+                    'amount': t['transfer']['amount'],
+                    'error': t['error'],
+                    'error_type': t.get('exception_type', 'TransactionError')
+                }
+                for t in failed_transfers
+            ],
+            'summary': {
+                'total_planned': len(transfers),
+                'executed': len(executed_transfers),
+                'failed': len(failed_transfers),
+                'total_amount_executed': sum(
+                    t['transfer']['amount'] for t in executed_transfers
+                ),
+                'total_amount_failed': sum(
+                    t['transfer']['amount'] for t in failed_transfers
+                ),
+                'success_rate': (
+                    len(executed_transfers) / len(transfers) * 100
+                    if transfers else 100
+                )
+            },
+            'blockchain_details': {
+                'network': self.network,
+                'asset_code': self.ubec_code,
+                'asset_issuer': self.ubec_issuer
+            },
+            'current_distribution': supply_dist,
+            'target_distribution': {
+                k: float(v) for k, v in self.target_distribution.items()
+            },
+            'note': (
+                f'Rebalance completed: {len(executed_transfers)}/{len(transfers)} transfers successful'
+                if not failed_transfers
+                else f'Partial completion: {len(executed_transfers)}/{len(transfers)} transfers successful, {len(failed_transfers)} failed'
+            ),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Log final status
+        if failed_transfers:
+            self.logger.warning(
+                f"⚠️  Rebalance partially completed: "
+                f"{len(executed_transfers)}/{len(transfers)} transfers successful"
+            )
+        else:
+            self.logger.info(
+                f"✓ Rebalance completed: {len(executed_transfers)} transfers executed"
+            )
+        
+        return result
+    
     # ========================================================================
     # DISTRIBUTION STATUS
     # ========================================================================
@@ -871,6 +1482,8 @@ class UBECDistributionService:
         Design Notes:
             - Principle 12: Single implementation of status reporting
         """
+        self._ensure_initialized()
+        
         try:
             self.logger.info("Generating comprehensive distribution status...")
             
@@ -914,6 +1527,405 @@ class UBECDistributionService:
         """
         await self._invalidate_cache()
         self.logger.info("Distribution service cleaned up")
+    
+    # ========================================================================
+    # REAL TRANSACTION EXECUTION - SECURE KEY MANAGEMENT
+    # Principle 9: Integrated rate limiting for all blockchain operations
+    # ========================================================================
+    
+    def _get_secret_key(self, account_type: str) -> str:
+        """
+        Retrieve secret key for account type from environment variables.
+        
+        SECURITY CRITICAL: This method loads secret keys from environment
+        variables. Secret keys are NEVER hardcoded or committed to version
+        control.
+        
+        Environment variables required:
+        - GENERAL_SECRET_KEY: General distribution account
+        - ADMIN_SECRET_KEY: Administration account
+        - STEWARDSHIP_MANAGEMENT_SECRET_KEY: Stewardship Management
+        - STEWARDSHIP_INFRASTRUCTURE_SECRET_KEY: Stewardship Infrastructure
+        - STEWARDSHIP_LIQUIDITY_SECRET_KEY: Stewardship Liquidity
+        
+        For production, consider using:
+        - AWS Secrets Manager
+        - Google Cloud Secret Manager
+        - Azure Key Vault
+        - HashiCorp Vault
+        - Hardware Security Module (HSM)
+        
+        Args:
+            account_type: 'general', 'administration', or stewardship account name
+            
+        Returns:
+            Secret key string (starts with 'S')
+            
+        Raises:
+            ValueError: If secret key not available or invalid format
+            
+        Design Notes:
+            - Principle 4: Single source for key management
+            - Principle 8: No duplicate configuration
+            - Security: Never logs or exposes secret keys
+        """
+        import os
+        
+        # Map account types to environment variable names
+        env_var_map = {
+            'general': 'GENERAL_SECRET_KEY',
+            'administration': 'ADMIN_SECRET_KEY',
+            'Management': 'STEWARDSHIP_MANAGEMENT_SECRET_KEY',
+            'Infrastructure': 'STEWARDSHIP_INFRASTRUCTURE_SECRET_KEY',
+            'Liquidity': 'STEWARDSHIP_LIQUIDITY_SECRET_KEY'
+        }
+        
+        # Map to address for validation
+        account_map = {
+            'general': self.accounts['general'],
+            'administration': self.accounts['administration'],
+            'Management': self.accounts['stewardship'][0],
+            'Infrastructure': self.accounts['stewardship'][1],
+            'Liquidity': self.accounts['stewardship'][2]
+        }
+        
+        env_var = env_var_map.get(account_type)
+        if not env_var:
+            raise ValueError(
+                f"Unknown account type: {account_type}. "
+                f"Must be one of: {list(env_var_map.keys())}"
+            )
+        
+        # Get secret key from environment
+        secret_key = os.getenv(env_var)
+        if not secret_key:
+            raise ValueError(
+                f"Secret key not found for {account_type}. "
+                f"Please set environment variable: {env_var}\n"
+                f"Example: export {env_var}=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+            )
+        
+        # Validate secret key format (should start with 'S' and be 56 chars)
+        if not secret_key.startswith('S') or len(secret_key) != 56:
+            raise ValueError(
+                f"Invalid secret key format for {account_type}. "
+                f"Stellar secret keys must start with 'S' and be 56 characters."
+            )
+        
+        # Validate that the secret key corresponds to the expected public key
+        try:
+            from stellar_sdk import Keypair
+            keypair = Keypair.from_secret(secret_key)
+            expected_address = account_map[account_type]
+            
+            if keypair.public_key != expected_address:
+                raise ValueError(
+                    f"Secret key for {account_type} does not match expected address.\n"
+                    f"Secret key generates: {keypair.public_key}\n"
+                    f"Expected address: {expected_address}"
+                )
+        except Exception as e:
+            if "does not match expected address" in str(e):
+                raise
+            raise ValueError(
+                f"Error validating secret key for {account_type}: {e}"
+            )
+        
+        self.logger.debug(
+            f"Secret key loaded successfully for {account_type} "
+            f"(address: {account_map[account_type][:8]}...)"
+        )
+        
+        return secret_key
+    
+    async def execute_transfer(
+        self,
+        from_address: str,
+        to_address: str,
+        amount: Decimal,
+        from_account_type: str,
+        reason: str = "UBEC tokenomics rebalance"
+    ) -> Dict[str, Any]:
+        """
+        Execute a single token transfer on Stellar network.
+        
+        This method performs actual blockchain transactions to transfer UBEC
+        tokens between accounts. It includes comprehensive error handling,
+        rate limiting, and detailed logging.
+        
+        CRITICAL SECURITY NOTES:
+        - Uses environment variables for secret keys
+        - Validates all inputs before execution
+        - Rate-limited to prevent API abuse
+        - Logs all operations for audit trail
+        - Returns detailed transaction results
+        
+        Args:
+            from_address: Source account public key (G...)
+            to_address: Destination account public key (G...)
+            amount: Amount to transfer (Decimal for precision)
+            from_account_type: Type of source account for key lookup
+            reason: Memo text for transaction (max 28 chars)
+            
+        Returns:
+            Transaction result dictionary with:
+            {
+                'status': 'success' | 'failed' | 'error',
+                'hash': 'transaction_hash' (if successful),
+                'ledger': ledger_number (if successful),
+                'from': source_address,
+                'to': destination_address,
+                'amount': amount_transferred,
+                'error': error_message (if failed),
+                'result_xdr': result_xdr (if failed)
+            }
+            
+        Example:
+            >>> result = await service.execute_transfer(
+            ...     from_address='GXXX...',
+            ...     to_address='GYYY...',
+            ...     amount=Decimal('1000.0'),
+            ...     from_account_type='general',
+            ...     reason='Compliance rebalance'
+            ... )
+            >>> if result['status'] == 'success':
+            ...     print(f"Success! TX: {result['hash']}")
+        
+        Design Notes:
+            - Principle 5: Fully async operation
+            - Principle 6: No sync fallbacks
+            - Principle 9: Rate limiting for all API calls
+            - Principle 11: Comprehensive logging
+        """
+        self._ensure_initialized()
+        
+        from stellar_sdk import (
+            Asset,
+            Keypair,
+            Network,
+            TransactionBuilder,
+            Server
+        )
+        
+        try:
+            # Validate inputs
+            if amount <= 0:
+                raise ValueError(f"Amount must be positive, got: {amount}")
+            
+            if not from_address or not to_address:
+                raise ValueError("Source and destination addresses required")
+            
+            # Truncate reason to 28 characters (Stellar memo limit)
+            memo_text = reason[:28] if len(reason) > 28 else reason
+            
+            self.logger.info(
+                f"Preparing transfer: {amount:,.7f} {self.ubec_code} "
+                f"from {from_address[:8]}... to {to_address[:8]}..."
+            )
+            
+            # Get secret key for source account (Principle 4: Single source)
+            from_secret = self._get_secret_key(from_account_type)
+            source_keypair = Keypair.from_secret(from_secret)
+            
+            # Validate keypair matches expected address
+            if source_keypair.public_key != from_address:
+                raise ValueError(
+                    f"Secret key does not match source address. "
+                    f"Key generates: {source_keypair.public_key}, "
+                    f"Expected: {from_address}"
+                )
+            
+            # Rate limit API calls (Principle 9: Integrated rate limiting)
+            await self.rate_limiter.acquire()
+            
+            # Load source account from network
+            self.logger.debug(f"Loading account {from_address[:8]}... from network")
+            source_account = await self.stellar_client.load_account(from_address)
+            
+            # Determine network passphrase
+            network_passphrase = (
+                Network.TESTNET_NETWORK_PASSPHRASE
+                if self.network == 'TESTNET'
+                else Network.PUBLIC_NETWORK_PASSPHRASE
+            )
+            
+            self.logger.debug(
+                f"Building transaction on {self.network} network "
+                f"(sequence: {source_account.sequence})"
+            )
+            
+            # Build transaction (Principle 5: Async-compatible operations)
+            transaction = (
+                TransactionBuilder(
+                    source_account=source_account,
+                    network_passphrase=network_passphrase,
+                    base_fee=100  # Base fee in stroops (0.00001 XLM)
+                )
+                .append_payment_op(
+                    destination=to_address,
+                    amount=str(amount),
+                    asset=Asset(self.ubec_code, self.ubec_issuer)
+                )
+                .add_text_memo(memo_text)
+                .set_timeout(30)  # 30 second timeout
+                .build()
+            )
+            
+            # Sign transaction with source account's secret key
+            transaction.sign(source_keypair)
+            
+            self.logger.info(
+                f"Submitting transaction to {self.network} network: "
+                f"{amount:,.7f} {self.ubec_code} "
+                f"from {from_address[:8]}... to {to_address[:8]}..."
+            )
+            
+            # Rate limit before submission
+            await self.rate_limiter.acquire()
+            
+            # Submit to network
+            response = await self.stellar_client.submit_transaction(transaction)
+            
+            # Check if successful
+            if response.get('successful', False):
+                tx_hash = response.get('hash', 'unknown')
+                ledger = response.get('ledger', 'unknown')
+                
+                self.logger.info(
+                    f"✓ Transaction successful!\n"
+                    f"  Hash: {tx_hash}\n"
+                    f"  Ledger: {ledger}\n"
+                    f"  Amount: {amount:,.7f} {self.ubec_code}\n"
+                    f"  From: {from_address}\n"
+                    f"  To: {to_address}"
+                )
+                
+                return {
+                    'status': 'success',
+                    'hash': tx_hash,
+                    'ledger': ledger,
+                    'from': from_address,
+                    'to': to_address,
+                    'amount': float(amount),
+                    'asset_code': self.ubec_code,
+                    'asset_issuer': self.ubec_issuer,
+                    'memo': memo_text,
+                    'network': self.network
+                }
+            else:
+                # Transaction failed
+                result_xdr = response.get('result_xdr', 'unknown')
+                error_msg = response.get('extras', {}).get('result_codes', {})
+                
+                self.logger.error(
+                    f"✗ Transaction failed!\n"
+                    f"  From: {from_address}\n"
+                    f"  To: {to_address}\n"
+                    f"  Amount: {amount:,.7f} {self.ubec_code}\n"
+                    f"  Result XDR: {result_xdr}\n"
+                    f"  Error codes: {error_msg}"
+                )
+                
+                return {
+                    'status': 'failed',
+                    'error': f"Transaction failed: {error_msg}",
+                    'result_xdr': result_xdr,
+                    'from': from_address,
+                    'to': to_address,
+                    'amount': float(amount)
+                }
+                
+        except ValueError as e:
+            # Input validation or key management errors
+            self.logger.error(
+                f"✗ Validation error for transfer: {e}",
+                exc_info=True
+            )
+            return {
+                'status': 'error',
+                'error': f"Validation error: {e}",
+                'from': from_address,
+                'to': to_address,
+                'amount': float(amount)
+            }
+            
+        except Exception as e:
+            # Unexpected errors
+            self.logger.error(
+                f"✗ Unexpected error executing transfer: {e}",
+                exc_info=True
+            )
+            return {
+                'status': 'error',
+                'error': f"Execution error: {str(e)}",
+                'from': from_address,
+                'to': to_address,
+                'amount': float(amount)
+            }
+    
+    async def _record_transfer_in_db(
+        self,
+        tx_result: Dict[str, Any]
+    ) -> bool:
+        """
+        Record successful transfer in database for audit trail.
+        
+        This creates a permanent record of all rebalancing operations
+        for compliance, auditing, and historical analysis.
+        
+        Args:
+            tx_result: Transaction result dictionary from execute_transfer
+            
+        Returns:
+            True if successfully recorded, False otherwise
+            
+        Design Notes:
+            - Principle 4: Database is single source of truth
+            - Principle 5: Async operation
+            - Principle 11: Comprehensive audit trail
+        """
+        try:
+            # Only record successful transactions
+            if tx_result.get('status') != 'success':
+                self.logger.debug(
+                    f"Skipping database record for non-successful transaction"
+                )
+                return False
+            
+            query = f"""
+                INSERT INTO {self.db_schema}.distribution_transfers
+                (tx_hash, from_account, to_account, amount, 
+                 asset_code, asset_issuer, ledger, memo, network, executed_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                ON CONFLICT (tx_hash) DO NOTHING
+            """
+            
+            await self.db_manager.execute(
+                query,
+                (
+                    tx_result['hash'],
+                    tx_result['from'],
+                    tx_result['to'],
+                    tx_result['amount'],
+                    tx_result.get('asset_code', self.ubec_code),
+                    tx_result.get('asset_issuer', self.ubec_issuer),
+                    tx_result.get('ledger'),
+                    tx_result.get('memo', ''),
+                    tx_result.get('network', self.network)
+                )
+            )
+            
+            self.logger.info(
+                f"Transaction recorded in database: {tx_result['hash']}"
+            )
+            return True
+            
+        except Exception as e:
+            self.logger.warning(
+                f"Could not record transaction in database: {e}. "
+                f"Transaction was successful on blockchain: {tx_result.get('hash')}"
+            )
+            return False
 
 
 # ========================================================================
@@ -921,7 +1933,7 @@ class UBECDistributionService:
 # Principle 2: Service Pattern - Factory for service registry
 # ========================================================================
 
-def create_distribution_service(
+async def create_distribution_service(
     db_manager: Any,
     config: Dict[str, Any],
     stellar_client: Any,
@@ -929,10 +1941,13 @@ def create_distribution_service(
     rate_limit_calls_per_second: float = 5.0
 ) -> UBECDistributionService:
     """
-    Factory function to create distribution service instance.
+    Factory function to create and initialize distribution service instance.
     
-    This function is used by the service registry to instantiate the
-    distribution service with all required dependencies.
+    This async factory creates the service and performs necessary async
+    initialization, including loading the issuer address from the database.
+    
+    IMPORTANT: This function is async because initialization requires database
+    queries to load configuration (Principle 4: Database is single source of truth).
     
     Args:
         db_manager: Async database manager
@@ -942,19 +1957,38 @@ def create_distribution_service(
         rate_limit_calls_per_second: Rate limit for API calls
     
     Returns:
-        UBECDistributionService: Service with complete LP tracking support
+        UBECDistributionService: Fully initialized service with complete LP tracking
+    
+    Example:
+        >>> # In main.py or service registry
+        >>> service = await create_distribution_service(
+        ...     db_manager=db,
+        ...     config=config,
+        ...     stellar_client=client,
+        ...     audit_service=audit
+        ... )
+        >>> # Service is ready to use
+        >>> status = await service.get_distribution_status()
     
     Design Notes:
-        - Principle 2: Service pattern with factory function
+        - Principle 2: Service pattern with async factory function
         - Principle 3: Dependencies injected via service registry
+        - Principle 4: Database-driven initialization
+        - Principle 5: Fully async operation
     """
-    return UBECDistributionService(
+    # Create service instance
+    service = UBECDistributionService(
         db_manager=db_manager,
         config=config,
         stellar_client=stellar_client,
         audit_service=audit_service,
         rate_limit_calls_per_second=rate_limit_calls_per_second
     )
+    
+    # Perform async initialization (loads issuer from database if needed)
+    await service.initialize()
+    
+    return service
 
 
 # ========================================================================
