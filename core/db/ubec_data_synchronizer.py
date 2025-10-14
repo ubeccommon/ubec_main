@@ -36,13 +36,13 @@ Schema Mapping:
 - stellar_operations: Operation details
 - ubec_sync_status: Synchronization tracking
 - liquidity_pools: Pool data with reserves and fees
-- liquidity_pool_participants: Individual LP positions
+- liquidity_pool_owners: Individual LP positions (renamed from participants)
 
 Four-Element Architecture:
-- 🜁 Air (UBEC) - Gateway & Universal Access
-- 🜄 Water (UBECrc) - Flow & Exchange  
-- 🜃 Earth (UBECgpi) - Stability & Value
-- 🜂 Fire (UBECtt) - Transformation & Action
+- 🌬️ Air (UBEC) - Gateway & Universal Access
+- 💧 Water (UBECrc) - Flow & Exchange  
+- 🌍 Earth (UBECgpi) - Stability & Value
+- 🔥 Fire (UBECtt) - Transformation & Action
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
@@ -50,8 +50,8 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 5.0 (Final Schema Alignment - Production Ready)
-Date: October 12, 2025
+Version: 5.2 (Fixed database schema - removed non-existent columns)
+Date: October 13, 2025
 """
 
 import os
@@ -372,39 +372,41 @@ class UBECDataSynchronizer:
         """
         Store or update account in database.
         
+        FIXED v4.5: Updated to match actual database schema.
+        The stellar_accounts table has: account_id, sequence, subentry_count,
+        home_domain, last_modified_at, sync_status
+        
+        Removed non-existent columns:
+        - inflation_destination (deprecated in Stellar Protocol 15)
+        - last_modified_ledger (not in schema)
+        - last_activity_at (not in schema)
+        
         Args:
             account_data: Account data from Stellar API
         """
         try:
             account_id = account_data['id']
             
+            # FIXED: Use only columns that exist in database
             query = """
                 INSERT INTO stellar_accounts (
-                    account_id, sequence, subentry_count,
-                    home_domain, inflation_destination,
-                    last_modified_ledger, last_activity_at,
-                    sync_status
+                    account_id, sequence, subentry_count, home_domain,
+                    last_modified_at, sync_status
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, NOW(), $5)
                 ON CONFLICT (account_id) DO UPDATE SET
                     sequence = EXCLUDED.sequence,
                     subentry_count = EXCLUDED.subentry_count,
                     home_domain = EXCLUDED.home_domain,
-                    inflation_destination = EXCLUDED.inflation_destination,
-                    last_modified_ledger = EXCLUDED.last_modified_ledger,
-                    last_activity_at = EXCLUDED.last_activity_at,
-                    sync_status = EXCLUDED.sync_status,
-                    last_synced_at = CURRENT_TIMESTAMP
+                    last_modified_at = NOW(),
+                    sync_status = EXCLUDED.sync_status
             """
             
             params = (
                 account_id,
-                int(account_data.get('sequence', 0)),
-                account_data.get('subentry_count', 0),
+                int(account_data.get('sequence', '0')),
+                int(account_data.get('subentry_count', 0)),
                 account_data.get('home_domain'),
-                account_data.get('inflation_destination'),
-                account_data.get('last_modified_ledger', 0),
-                account_data.get('last_modified_time'),
                 'synced'
             )
             
@@ -973,6 +975,48 @@ class UBECDataSynchronizer:
     # ========================================================================
     # ACCOUNT DISCOVERY
     # ========================================================================
+    
+    async def discover_accounts(
+        self,
+        max_accounts: int = 1000,
+        asset_code: str = 'UBEC'
+    ) -> int:
+        """
+        Discover account holders (compatibility wrapper for main.py).
+        
+        This method provides compatibility with main.py's discover mode.
+        It wraps the discover_asset_holders() method which does the actual work.
+        
+        Design Note:
+            This is a thin wrapper that maintains compatibility with main.py
+            while delegating to the actual implementation in discover_asset_holders().
+            Follows Principle #12: Method Singularity - this wrapper exists once,
+            the actual discovery logic exists once in discover_asset_holders().
+        
+        Args:
+            max_accounts: Maximum number of accounts to discover (default: 1000)
+            asset_code: Asset code to discover holders for (default: 'UBEC')
+            
+        Returns:
+            int: Number of accounts discovered
+            
+        Example:
+            >>> # From main.py
+            >>> count = await synchronizer.discover_accounts(max_accounts=500)
+            >>> print(f"Discovered {count} accounts")
+        """
+        logger.info(f"Discovering {asset_code} holders (max: {max_accounts})...")
+        
+        # Call the actual implementation
+        count = await self.discover_asset_holders(
+            asset_code=asset_code,
+            limit=200,  # Page size for API calls
+            max_accounts=max_accounts
+        )
+        
+        logger.info(f"✓ Discovery complete: {count} {asset_code} holders found")
+        
+        return count
     
     async def discover_asset_holders(
         self,

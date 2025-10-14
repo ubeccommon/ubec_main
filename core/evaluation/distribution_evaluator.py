@@ -405,8 +405,7 @@ class UBECDistributionEvaluator:
             
             transfers = await self.db_manager.fetch_all(
                 query,
-                self.distribution_service.ubec_code,
-                self.distribution_service.ubec_issuer
+                (self.distribution_service.ubec_code, self.distribution_service.ubec_issuer)
             )
             
             return [
@@ -610,7 +609,7 @@ class UBECDistributionEvaluator:
                 LIMIT $2
             """
             
-            transactions = await self.db_manager.fetch_all(query, account_id, limit)
+            transactions = await self.db_manager.fetch_all((query, account_id, limit))
             
             return [
                 {

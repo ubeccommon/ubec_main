@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-12T17:10:31.210347  
+**Generated:** 2025-10-14T01:56:01.376071  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 62 MB  
@@ -13,7 +13,7 @@
 
 **Total Schemas:** 4  
 **Total Tables:** 62  
-**Total Rows:** 66,572  
+**Total Rows:** 66,582  
 **Total Columns:** 771  
 **Total Views:** 26  
 **Total Functions:** 1127  
@@ -24,7 +24,7 @@
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 41 | 58,072 | 17 | 74 |
+| ubec_main | Main schema for UBEC four-element protoc... | 41 | 58,082 | 17 | 74 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -102,11 +102,11 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('phenomenal.account... | - |
+| id | integer | ✗ | nextval('accounts_id_seq'::... | - |
 | account_address | varchar(56) | ✗ | - | - |
 | dasein_type | varchar(50) | ✗ | 'participant'::character va... | - |
 | comportment_pattern | varchar(50) | ✓ | - | - |
-| holonic_category | enum | ✗ | 'network_node'::phenomenal.... | - |
+| holonic_category | enum | ✗ | 'network_node'::holonic_cat... | - |
 | thrown_at | timestamp with time zone | ✗ | - | - |
 | facticity | jsonb | ✓ | - | - |
 | network_position | enum | ✓ | - | - |
@@ -132,11 +132,11 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('phenomenal.assets_... | - |
+| id | integer | ✗ | nextval('assets_id_seq'::re... | - |
 | asset_code | varchar(12) | ✗ | - | - |
 | issuer_address | varchar(56) | ✗ | - | - |
 | phenomenal_mode | enum | ✗ | 'fully_present'::phenomenal... | - |
-| existence_mode | enum | ✗ | 'present_at_hand'::phenomen... | - |
+| existence_mode | enum | ✗ | 'present_at_hand'::existenc... | - |
 | ubuntu_principle | enum | ✓ | - | - |
 | internal_horizon | jsonb | ✗ | '{}'::jsonb | - |
 | external_horizon | jsonb | ✗ | '{}'::jsonb | - |
@@ -144,7 +144,7 @@
 | retained_history | jsonb | ✓ | - | - |
 | present_state | jsonb | ✗ | - | - |
 | protended_futures | jsonb | ✓ | - | - |
-| temporal_horizon | enum | ✗ | 'intermediate'::phenomenal.... | - |
+| temporal_horizon | enum | ✗ | 'intermediate'::temporal_ho... | - |
 | network_position | enum | ✓ | - | - |
 | topology_metadata | jsonb | ✓ | - | - |
 | created_at | timestamp with time zone | ✗ | now() | - |
@@ -160,7 +160,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.geodesi... | - |
+| id | bigint | ✗ | nextval('geodesics_id_seq':... | - |
 | from_account_id | integer | ✗ | - | - |
 | to_account_id | integer | ✗ | - | - |
 | path_length | integer | ✗ | - | - |
@@ -183,7 +183,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.gravita... | - |
+| id | bigint | ✗ | nextval('gravitational_fiel... | - |
 | source_mass_id | bigint | ✗ | - | - |
 | field_profile | jsonb | ✗ | - | - |
 | influence_radius | numeric(20,10) | ✗ | - | - |
@@ -207,7 +207,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.gravita... | - |
+| id | bigint | ✗ | nextval('gravitational_inte... | - |
 | entity1_mass_id | bigint | ✗ | - | - |
 | entity2_mass_id | bigint | ✗ | - | - |
 | force_magnitude | numeric(20,10) | ✗ | - | - |
@@ -238,7 +238,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.gravita... | - |
+| id | bigint | ✗ | nextval('gravitational_mass... | - |
 | entity_type | varchar(50) | ✗ | - | - |
 | entity_id | bigint | ✗ | - | - |
 | gravitational_mass | numeric(20,10) | ✗ | - | - |
@@ -289,7 +289,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.intenti... | - |
+| id | bigint | ✗ | nextval('intentional_relati... | - |
 | from_account_id | integer | ✗ | - | - |
 | to_account_id | integer | ✓ | - | - |
 | asset_id | integer | ✓ | - | - |
@@ -307,7 +307,7 @@
 | retained_history | jsonb | ✓ | - | - |
 | present_manifestation | jsonb | ✗ | - | - |
 | protended_evolution | jsonb | ✓ | - | - |
-| temporal_horizon | enum | ✗ | 'proximal'::phenomenal.temp... | - |
+| temporal_horizon | enum | ✗ | 'proximal'::temporal_horizon | - |
 | active | boolean | ✗ | true | - |
 | last_activity_at | timestamp with time zone | ✓ | - | - |
 | created_at | timestamp with time zone | ✗ | now() | - |
@@ -326,7 +326,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.lorentz... | - |
+| id | bigint | ✗ | nextval('lorentz_violation_... | - |
 | region_geometry | enum | ✗ | - | - |
 | preferred_direction | enum | ✓ | - | - |
 | anisotropy_vector | jsonb | ✗ | - | - |
@@ -350,7 +350,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.network... | - |
+| id | bigint | ✗ | nextval('network_embeddings... | - |
 | computed_at | timestamp with time zone | ✗ | now() | - |
 | embedding_method | varchar(100) | ✗ | - | - |
 | dimensions | integer | ✗ | 2 | - |
@@ -368,7 +368,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.protent... | - |
+| id | bigint | ✗ | nextval('protentions_id_seq... | - |
 | entity_type | varchar(50) | ✗ | - | - |
 | entity_id | integer | ✗ | - | - |
 | protended_from | timestamp with time zone | ✗ | - | - |
@@ -392,7 +392,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.quantum... | - |
+| id | bigint | ✗ | nextval('quantum_entangleme... | - |
 | entity1_state_id | bigint | ✗ | - | - |
 | entity2_state_id | bigint | ✗ | - | - |
 | entanglement_entropy | numeric(15,10) | ✗ | - | - |
@@ -423,7 +423,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.quantum... | - |
+| id | bigint | ✗ | nextval('quantum_gravity_si... | - |
 | signature_type | varchar(100) | ✗ | - | - |
 | measured_value | numeric(20,10) | ✗ | - | - |
 | theoretical_prediction | numeric(20,10) | ✓ | - | - |
@@ -450,7 +450,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.quantum... | - |
+| id | bigint | ✗ | nextval('quantum_states_id_... | - |
 | entity_type | varchar(50) | ✗ | - | - |
 | entity_id | bigint | ✗ | - | - |
 | state_vector | jsonb | ✗ | - | - |
@@ -480,7 +480,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.retenti... | - |
+| id | bigint | ✗ | nextval('retentions_id_seq'... | - |
 | entity_type | varchar(50) | ✗ | - | - |
 | entity_id | integer | ✗ | - | - |
 | original_present | timestamp with time zone | ✗ | - | - |
@@ -501,7 +501,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.spaceti... | - |
+| id | bigint | ✗ | nextval('spacetime_curvatur... | - |
 | source_mass_id | bigint | ✗ | - | - |
 | ricci_scalar | numeric(20,10) | ✓ | - | - |
 | curvature_tensor | jsonb | ✓ | - | - |
@@ -524,7 +524,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.spatial... | - |
+| id | bigint | ✗ | nextval('spatial_positions_... | - |
 | embedding_id | integer | ✗ | - | - |
 | entity_type | varchar(50) | ✗ | - | - |
 | entity_id | integer | ✗ | - | - |
@@ -547,7 +547,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | bigint | ✗ | nextval('phenomenal.transac... | - |
+| id | bigint | ✗ | nextval('transactions_id_se... | - |
 | transaction_hash | varchar(64) | ✗ | - | - |
 | ledger_sequence | bigint | ✗ | - | - |
 | event_type | varchar(50) | ✗ | - | - |
@@ -6379,7 +6379,7 @@
 ### Schema Statistics
 
 - **Tables:** 41
-- **Total Rows:** 58,072
+- **Total Rows:** 58,082
 - **Columns:** 497
 - **Views:** 17
 - **Relationships:** 7
@@ -6435,6 +6435,7 @@
 | holonic_metrics | 15 | 14 | 160 kB |
 | distribution_state | 12 | 9 | 104 kB |
 | distribution_history | 10 | 15 | 152 kB |
+| liquidity_pools | 10 | 20 | 176 kB |
 | system_configuration | 5 | 8 | 96 kB |
 | account_balances | 0 | 6 | 56 kB |
 | agent_activity_history | 0 | 7 | 56 kB |
@@ -6445,7 +6446,6 @@
 | api_rate_limits | 0 | 6 | 8192 bytes |
 | asset_holders | 0 | 7 | 56 kB |
 | constraint_violations | 0 | 6 | 32 kB |
-| flow_transactions | 0 | 7 | 56 kB |
 
 #### ubec_main.account_balances
 
@@ -6453,7 +6453,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.account_... | - |
+| id | integer | ✗ | nextval('account_balances_i... | - |
 | account_id | varchar(56) | ✗ | - | Stellar public key (G... format) |
 | asset_code | varchar(12) | ✗ | - | Token code: UBEC, UBECrc, UBECgpi, or... |
 | balance | numeric(20,7) | ✓ | 0.0 | Current token balance for this account |
@@ -6471,7 +6471,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.agent_ac... | - |
+| id | integer | ✗ | nextval('agent_activity_his... | - |
 | agent_id | integer | ✗ | - | - |
 | activity_type | varchar(100) | ✗ | - | - |
 | score_impact | numeric(10,4) | ✓ | 0 | - |
@@ -6490,7 +6490,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.agent_be... | - |
+| id | integer | ✗ | nextval('agent_benefit_hist... | - |
 | agent_id | integer | ✗ | - | - |
 | benefit_type | varchar(100) | ✗ | - | - |
 | amount | numeric(20,7) | ✓ | 0 | - |
@@ -6509,7 +6509,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.agent_co... | - |
+| id | integer | ✗ | nextval('agent_contribution... | - |
 | agent_id | integer | ✗ | - | - |
 | contribution_type | varchar(100) | ✗ | - | - |
 | amount | numeric(20,7) | ✓ | 0 | - |
@@ -6528,7 +6528,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.agent_ho... | - |
+| id | integer | ✗ | nextval('agent_holon_member... | - |
 | agent_id | integer | ✗ | - | - |
 | holon_id | integer | ✗ | - | - |
 | role_in_holon | varchar(100) | ✓ | - | - |
@@ -6551,7 +6551,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.agents_i... | - |
+| id | integer | ✗ | nextval('agents_id_seq'::re... | - |
 | agent_id | varchar(56) | ✗ | - | - |
 | participant_id | integer | ✓ | - | - |
 | reputation_score | numeric(10,4) | ✓ | 0 | - |
@@ -6571,7 +6571,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.api_rate... | - |
+| id | integer | ✗ | nextval('api_rate_limits_id... | - |
 | api_name | varchar(50) | ✗ | - | - |
 | rate_limit_remaining | integer | ✓ | - | - |
 | rate_limit_limit | integer | ✓ | - | - |
@@ -6587,7 +6587,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.asset_ho... | - |
+| id | integer | ✗ | nextval('asset_holder_analy... | - |
 | analysis_date | timestamp without time zone | ✗ | now() | - |
 | asset_code | varchar(12) | ✗ | - | - |
 | asset_issuer | varchar(56) | ✗ | - | - |
@@ -6618,7 +6618,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.asset_ho... | - |
+| id | integer | ✗ | nextval('asset_holders_id_s... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | asset_code | varchar(12) | ✗ | - | - |
 | asset_issuer | varchar(56) | ✗ | - | - |
@@ -6637,7 +6637,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.constrai... | - |
+| id | integer | ✗ | nextval('constraint_violati... | - |
 | table_name | varchar(100) | ✗ | - | - |
 | constraint_name | varchar(100) | ✗ | - | - |
 | violation_data | jsonb | ✓ | - | - |
@@ -6653,7 +6653,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.distribu... | - |
+| id | integer | ✗ | nextval('distribution_histo... | - |
 | check_date | timestamp without time zone | ✗ | now() | - |
 | asset_code | varchar(12) | ✗ | - | - |
 | asset_issuer | varchar(56) | ✗ | - | - |
@@ -6679,7 +6679,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.distribu... | - |
+| id | integer | ✗ | nextval('distribution_state... | - |
 | asset_code | varchar(12) | ✗ | - | Token code being tracked |
 | category | varchar(50) | ✗ | - | Distribution category: general_circul... |
 | current_amount | numeric(20,7) | ✓ | 0.0 | - |
@@ -6736,7 +6736,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.holder_d... | - |
+| id | integer | ✗ | nextval('holder_discovery_h... | - |
 | discovery_date | timestamp without time zone | ✗ | now() | - |
 | account_id | varchar(56) | ✗ | - | - |
 | discovery_source | varchar(50) | ✗ | - | - |
@@ -6755,7 +6755,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.holonic_... | - |
+| id | integer | ✗ | nextval('holonic_metrics_id... | - |
 | evaluation_date | timestamp with time zone | ✗ | now() | Date and time when the evaluation was... |
 | autonomy_integration_score | numeric(5,4) | ✗ | 0 | Score for balance of autonomy and int... |
 | multi_scale_score | numeric(5,4) | ✗ | 0 | Score for multi-scale participation (... |
@@ -6786,7 +6786,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.holons_i... | - |
+| id | integer | ✗ | nextval('holons_id_seq'::re... | - |
 | holon_id | varchar(100) | ✗ | - | - |
 | holon_name | varchar(255) | ✗ | - | - |
 | holon_type | varchar(100) | ✗ | - | - |
@@ -6807,13 +6807,13 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.liquidit... | - |
+| id | integer | ✗ | nextval('liquidity_pool_own... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | liquidity_pool_id | varchar(64) | ✗ | - | - |
 | shares | numeric(20,7) | ✗ | 0 | Number of pool shares owned (like LP ... |
 | ownership_percentage | numeric(10,6) | ✗ | 0 | Percentage of total pool owned (0-100) |
 | ubec_balance | numeric(20,7) | ✗ | 0 | Calculated UBEC balance from this LP ... |
-| element | enum | ✓ | 'air'::ubec_main.element_type | Element classification (always air fo... |
+| element | enum | ✓ | 'air'::element_type | Element classification (always air fo... |
 | token_code | enum | ✓ | - | Which UBEC token this position repres... |
 | metadata | jsonb | ✓ | - | - |
 | last_modified_at | timestamp with time zone | ✓ | CURRENT_TIMESTAMP | - |
@@ -6842,7 +6842,7 @@
 | asset_b_code | varchar(12) | ✗ | - | - |
 | asset_b_issuer | varchar(56) | ✓ | - | - |
 | pair | varchar(50) | ✗ | - | Human-readable pair name (e.g., UBEC/... |
-| primary_element | enum | ✓ | 'air'::ubec_main.element_type | Element classification (always air fo... |
+| primary_element | enum | ✓ | 'air'::element_type | Element classification (always air fo... |
 | token_code | enum | ✓ | - | Which UBEC token is in this pool (UBE... |
 | reserve_a | numeric(20,7) | ✗ | 0 | - |
 | reserve_b | numeric(20,7) | ✗ | 0 | - |
@@ -6872,7 +6872,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.mutualis... | - |
+| id | integer | ✗ | nextval('mutualism_relation... | - |
 | asset_code | varchar(12) | ✗ | - | Token code for the relationship (prim... |
 | account_a | varchar(56) | ✗ | - | First account in the relationship (St... |
 | account_b | varchar(56) | ✗ | - | Second account in the relationship (S... |
@@ -6897,7 +6897,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.particip... | - |
+| id | integer | ✗ | nextval('participants_id_se... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | account_type | varchar(50) | ✗ | - | - |
 | account_label | varchar(100) | ✓ | - | - |
@@ -6917,7 +6917,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.reciproc... | - |
+| id | integer | ✗ | nextval('reciprocity_transa... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | transaction_type | varchar(20) | ✗ | - | - |
 | amount | numeric(18,8) | ✗ | - | - |
@@ -6936,7 +6936,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.regenera... | - |
+| id | integer | ✗ | nextval('regenerative_proje... | - |
 | agent_id | integer | ✗ | - | - |
 | project_name | varchar(255) | ✗ | - | - |
 | description | text | ✓ | - | - |
@@ -6959,7 +6959,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.schedule... | - |
+| id | integer | ✗ | nextval('scheduler_jobs_id_... | - |
 | job_name | varchar(100) | ✗ | - | - |
 | schedule_interval | varchar(50) | ✗ | - | - |
 | next_run | timestamp without time zone | ✗ | - | - |
@@ -6981,7 +6981,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.stellar_... | - |
+| id | integer | ✗ | nextval('stellar_accounts_i... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | primary_element | enum | ✓ | - | - |
 | token_holdings | ARRAY | ✓ | - | - |
@@ -7010,7 +7010,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.stellar_... | - |
+| id | integer | ✗ | nextval('stellar_effects_id... | - |
 | effect_id | varchar(100) | ✗ | - | - |
 | operation_id | varchar(100) | ✗ | - | - |
 | effect_element | enum | ✓ | - | - |
@@ -7034,7 +7034,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.stellar_... | - |
+| id | integer | ✗ | nextval('stellar_operations... | - |
 | operation_id | varchar(100) | ✗ | - | - |
 | transaction_hash | varchar(64) | ✗ | - | - |
 | operation_element | enum | ✓ | - | - |
@@ -7066,7 +7066,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.stellar_... | - |
+| id | integer | ✗ | nextval('stellar_transactio... | - |
 | transaction_hash | varchar(64) | ✗ | - | - |
 | ledger_sequence | bigint | ✗ | - | - |
 | primary_element | enum | ✓ | - | - |
@@ -7096,7 +7096,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.sync_job... | - |
+| id | integer | ✗ | nextval('sync_jobs_id_seq':... | - |
 | job_type | varchar(50) | ✗ | - | - |
 | schedule_interval | interval | ✗ | - | - |
 | last_run | timestamp without time zone | ✓ | - | - |
@@ -7135,7 +7135,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.system_c... | - |
+| id | integer | ✗ | nextval('system_configurati... | - |
 | parameter_name | varchar(100) | ✗ | - | - |
 | parameter_value | text | ✗ | - | - |
 | parameter_type | varchar(20) | ✓ | 'string'::character varying | - |
@@ -7155,7 +7155,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| setting_id | integer | ✗ | nextval('ubec_main.system_s... | - |
+| setting_id | integer | ✗ | nextval('system_settings_se... | - |
 | setting_key | varchar(100) | ✗ | - | Unique setting identifier |
 | setting_value | text | ✗ | - | Setting value (stored as text, conver... |
 | setting_type | varchar(20) | ✓ | 'string'::character varying | Data type of the setting (string, int... |
@@ -7179,7 +7179,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.transfer... | - |
+| id | integer | ✗ | nextval('transfer_recommend... | - |
 | recommendation_date | timestamp without time zone | ✗ | now() | - |
 | asset_code | varchar(12) | ✗ | - | - |
 | asset_issuer | varchar(56) | ✗ | - | - |
@@ -7206,7 +7206,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.transfor... | - |
+| id | integer | ✗ | nextval('transformation_pha... | - |
 | phase_id | varchar(255) | ✗ | - | Unique identifier for the transformat... |
 | name | varchar(255) | ✗ | - | Name of the transformation phase |
 | description | text | ✗ | - | Detailed description of the phase |
@@ -7238,7 +7238,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.transfor... | - |
+| id | integer | ✗ | nextval('transformative_act... | - |
 | action_id | varchar(255) | ✗ | - | Unique identifier for the transformat... |
 | agent_id | varchar(56) | ✗ | - | Stellar account ID of the agent perfo... |
 | action_type | enum | ✗ | - | Type of transformative action performed |
@@ -7279,7 +7279,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_aud... | - |
+| id | integer | ✗ | nextval('ubec_audit_log_id_... | - |
 | element | enum | ✓ | - | - |
 | token_code | enum | ✓ | - | - |
 | entity_type | varchar(50) | ✗ | - | - |
@@ -7306,7 +7306,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_bal... | - |
+| id | integer | ✗ | nextval('ubec_balances_id_s... | - |
 | account_id | varchar(56) | ✗ | - | - |
 | token_code | enum | ✗ | - | - |
 | element | enum | ✗ | - | - |
@@ -7334,7 +7334,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_dis... | - |
+| id | integer | ✗ | nextval('ubec_distributions... | - |
 | token_code | enum | ✗ | - | - |
 | element | enum | ✗ | - | - |
 | category | enum | ✗ | - | - |
@@ -7360,7 +7360,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_hol... | - |
+| id | integer | ✗ | nextval('ubec_holonic_metri... | - |
 | account_id | varchar(56) | ✓ | - | - |
 | element | enum | ✓ | - | - |
 | principle | enum | ✗ | - | - |
@@ -7388,7 +7388,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_rep... | - |
+| id | integer | ✗ | nextval('ubec_reports_id_se... | - |
 | element | enum | ✓ | - | - |
 | token_code | enum | ✓ | - | - |
 | report_type | varchar(50) | ✗ | - | - |
@@ -7414,7 +7414,7 @@
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| id | integer | ✗ | nextval('ubec_main.ubec_syn... | - |
+| id | integer | ✗ | nextval('ubec_sync_status_i... | - |
 | element | enum | ✓ | - | - |
 | token_code | enum | ✓ | - | - |
 | sync_type | varchar(50) | ✗ | - | - |
@@ -7557,13 +7557,13 @@
 - **Language:** plpgsql
 - **Description:** Calculates the transformation momentum for a phase based on recent actions
 
-#### calculate_transformation_score(p_impact_scale ubec_main.impact_scale, p_regeneration_score numeric, p_catalytic_multiplier numeric, p_verified boolean)
+#### calculate_transformation_score(p_impact_scale impact_scale, p_regeneration_score numeric, p_catalytic_multiplier numeric, p_verified boolean)
 
 - **Returns:** numeric
 - **Language:** plpgsql
 - **Description:** Calculates the transformation score for a transformative action based on multiple factors
 
-#### check_distribution_compliance(p_token_code ubec_main.token_code, p_tolerance numeric DEFAULT 5.0)
+#### check_distribution_compliance(p_token_code token_code, p_tolerance numeric DEFAULT 5.0)
 
 - **Returns:** boolean
 - **Language:** plpgsql
@@ -7651,19 +7651,19 @@
 - **Language:** plpgsql
 - **Description:** Calculate current distribution percentages and compliance
 
-#### get_element_for_principle(principle ubec_main.ubuntu_principle)
+#### get_element_for_principle(principle ubuntu_principle)
 
-- **Returns:** ubec_main.element_type
+- **Returns:** element_type
 - **Language:** plpgsql
 - **Description:** Maps Ubuntu principle to corresponding element type
 
-#### get_element_for_token(token ubec_main.token_code)
+#### get_element_for_token(token token_code)
 
-- **Returns:** ubec_main.element_type
+- **Returns:** element_type
 - **Language:** plpgsql
 - **Description:** Maps token code to corresponding element type
 
-#### get_latest_holonic_score(p_element ubec_main.element_type, p_principle ubec_main.ubuntu_principle)
+#### get_latest_holonic_score(p_element element_type, p_principle ubuntu_principle)
 
 - **Returns:** numeric
 - **Language:** plpgsql
@@ -7689,7 +7689,7 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### insert_account_if_not_exists(p_account_id character varying, p_primary_element ubec_main.element_type DEFAULT NULL::ubec_main.element_type, p_token_holdings ubec_main.token_code[] DEFAULT NULL::ubec_main.token_code[])
+#### insert_account_if_not_exists(p_account_id character varying, p_primary_element element_type DEFAULT NULL::element_type, p_token_holdings token_code[] DEFAULT NULL::token_code[])
 
 - **Returns:** integer
 - **Language:** plpgsql
