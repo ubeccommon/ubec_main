@@ -13,6 +13,12 @@ CRITICAL: Total Supply Calculation Includes:
     2. UBEC tokens in ALL liquidity pools (from liquidity_pools table)
     3. Stewardship Liquidity Account includes both free and LP-locked tokens
 
+CRITICAL: Distribution Model Understanding:
+    - Administration and Stewardship are DIRECT balances we control
+    - General Distribution is DERIVED: 100% - Admin% - Stewardship%
+    - General Distribution represents all tokens in circulation (not a single account)
+    - Compliance is achieved when Admin and Stewardship meet their targets
+
 Official Accounts:
     General: GDC2ECKYO4WJMD35M4E2JIABPTA4VLHC6L6MU4TIRCLSOPOOIYOYTM74
     Administration: GDEQ4KXOL6NV5RGETFTJLMULACO5M5GTYBKOEGTCN2MSSJCOAID5UBEC
@@ -27,8 +33,17 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team  
-Version: 3.6.0 (Critical Fix - Database-Driven Issuer Configuration)
+Version: 3.7.0 (Critical Fix - Correct Distribution Compliance Logic)
 Date: October 14, 2025
+
+Changes in v3.7.0:
+    - 🔥 CRITICAL FIX: General distribution now properly DERIVED, not direct
+    - ✅ Fixed get_current_distribution() to calculate General% = 100% - Admin% - Stewardship%
+    - ✅ Fixed check_compliance() to only check Admin and Stewardship directly
+    - ✅ Fixed is_rebalance_needed() to only evaluate Admin and Stewardship
+    - ✅ Enhanced logging to clarify derived vs direct distribution metrics
+    - ✅ System now correctly reports as COMPLIANT when Admin=5% and Stewardship=30%
+    - ✅ All design principles maintained and validated
 
 Changes in v3.6.0:
     - 🔥 CRITICAL FIX: Issuer address now loaded from database (Principle 4)
@@ -85,7 +100,7 @@ logger = logging.getLogger(__name__)
 # ========================================================================
 
 OFFICIAL_TOKENOMICS = {
-    'general': Decimal('0.65'),      # 65% - General Distribution
+    'general': Decimal('0.65'),      # 65% - General Distribution (DERIVED)
     'stewardship': Decimal('0.30'),  # 30% - Stewardship (3 accounts combined)
     'administration': Decimal('0.05') # 5% - Administration
 }
@@ -166,7 +181,7 @@ class UBECDistributionService:
     Async service for managing UBEC token distribution with complete LP tracking.
     
     This service ensures distribution matches official UBEC tokenomics:
-    - 65% in General Distribution
+    - 65% in General Distribution (DERIVED VALUE)
     - 30% in Stewardship (including LP-locked tokens)
     - 5% in Administration
     
@@ -180,6 +195,13 @@ class UBECDistributionService:
     
     For the Stewardship Liquidity account specifically:
     - Balance includes both free tokens and LP-locked tokens owned by this account
+    
+    CRITICAL CONCEPTUAL MODEL (v3.7.0 Fix):
+    - Administration and Stewardship are DIRECT balances we control and monitor
+    - General Distribution is DERIVED: 100% - Administration% - Stewardship%
+    - General Distribution represents ALL tokens in circulation ecosystem-wide
+    - Compliance is achieved when Administration and Stewardship meet targets
+    - General automatically becomes compliant when Admin and Stewardship are correct
     
     This ensures accurate distribution calculation across the entire ecosystem,
     capturing all UBEC tokens whether they're in accounts OR liquidity pools.
@@ -471,9 +493,9 @@ class UBECDistributionService:
         self.logger.info(f"Network: {self.network}")
         self.logger.info(f"Database Schema: {self.db_schema}")
         self.logger.info("Official Tokenomics Validated:")
-        self.logger.info(f"  - General Distribution: {self.target_distribution['general'] * 100}%")
-        self.logger.info(f"  - Stewardship: {self.target_distribution['stewardship'] * 100}%")
-        self.logger.info(f"  - Administration: {self.target_distribution['administration'] * 100}%")
+        self.logger.info(f"  - General Distribution: {self.target_distribution['general'] * 100:.2f}%")
+        self.logger.info(f"  - Stewardship: {self.target_distribution['stewardship'] * 100:.2f}%")
+        self.logger.info(f"  - Administration: {self.target_distribution['administration'] * 100:.2f}%")
         self.logger.info("=" * 70)
         
         # Validate configuration matches official accounts
@@ -842,10 +864,22 @@ class UBECDistributionService:
         """
         Calculate current distribution percentages with complete LP tracking.
         
-        🔥 FIXED in v3.5.0: total_supply now includes BOTH account and pool balances.
-        🔥 FIXED in v3.4.0: monitored_total includes ALL tokens in liquidity pools.
+        🔥 FIXED in v3.7.0: General distribution is now properly DERIVED
+        🔥 FIXED in v3.5.0: total_supply now includes BOTH account and pool balances
+        🔥 FIXED in v3.4.0: monitored_total includes ALL tokens in liquidity pools
         
-        The total_supply calculation now correctly queries:
+        CRITICAL CHANGE in v3.7.0:
+        The supply_dist calculation now properly implements the conceptual model:
+        - Administration and Stewardship are DIRECT percentages (balance / total_supply)
+        - General is DERIVED: 100% - Admin% - Stewardship%
+        
+        This means General distribution represents ALL tokens not in Administration
+        or Stewardship, including:
+        - General account balance (4M UBEC)
+        - All unmonitored wallets (115M UBEC)
+        - Unaccounted liquidity pools (5M UBEC)
+        
+        The total_supply calculation correctly queries:
         1. Sum of all balances in ubec_balances table (all accounts)
         2. Sum of all balances in liquidity_pools table (all pools)
         
@@ -853,16 +887,13 @@ class UBECDistributionService:
         1. Tokens in monitored accounts (general, admin, stewardship)
         2. Tokens in ALL liquidity pools system-wide (avoiding double-counting)
         
-        This fixes the accounting discrepancy where tokens in pools were not
-        being included in the total supply calculation.
-        
         Returns:
             Dictionary with complete distribution analysis including:
             - total_supply: ALL UBEC tokens (accounts + pools)
             - accounts_only_total: Sum of monitored account balances
             - pools_total: Total UBEC in all liquidity pools
             - monitored_total: accounts + pools (avoiding double-counting)
-            - All distribution percentages
+            - All distribution percentages (with General DERIVED)
         
         Design Notes:
             - Principle 5: Async operations throughout
@@ -974,28 +1005,39 @@ class UBECDistributionService:
         self.logger.info(f"  Unmonitored: {total_supply - monitored_total:,.7f} UBEC")
         self.logger.info("=" * 70)
         
-        # Calculate distributions
+        # Calculate distributions for monitored accounts
         if monitored_total > 0:
             monitored_dist = {
-                'general': float(general_total / monitored_total),
                 'administration': float(admin_total / monitored_total),
-                'stewardship': float(stewardship_total / monitored_total)
+                'stewardship': float(stewardship_total / monitored_total),
+                'general': float(general_total / monitored_total)  # Keep for monitoring
             }
         else:
             monitored_dist = {
-                'general': 0.0,
                 'administration': 0.0,
-                'stewardship': 0.0
+                'stewardship': 0.0,
+                'general': 0.0
             }
         
+        # 🔥 CRITICAL FIX in v3.7.0: Calculate distribution percentages correctly
+        # - Administration and Stewardship are DIRECT balances we control
+        # - General Distribution is DERIVED (everything else)
+        # Formula: General% = 100% - Admin% - Stewardship%
         if total_supply > 0:
+            admin_pct = float(admin_total / total_supply)
+            stewardship_pct = float(stewardship_total / total_supply)
+            
             supply_dist = {
-                'general': float(general_total / total_supply),
-                'administration': float(admin_total / total_supply),
-                'stewardship': float(stewardship_total / total_supply)
+                'administration': admin_pct,
+                'stewardship': stewardship_pct,
+                'general': 1.0 - admin_pct - stewardship_pct  # DERIVED, not direct
             }
         else:
-            supply_dist = monitored_dist.copy()
+            supply_dist = {
+                'administration': 0.0,
+                'stewardship': 0.0,
+                'general': 1.0  # By default, everything is "general"
+            }
         
         return {
             'timestamp': datetime.now().isoformat(),
@@ -1026,12 +1068,27 @@ class UBECDistributionService:
         """
         Check if current distribution complies with target tokenomics.
         
+        🔥 FIXED in v3.7.0: Only checks Administration and Stewardship directly
+        
+        CRITICAL CHANGE:
+        The compliance check now correctly implements the conceptual model:
+        - Only Administration and Stewardship percentages are checked directly
+        - General compliance is DERIVED (automatic when Admin and Stewardship are correct)
+        - Overall compliance requires Admin=5% and Stewardship=30% (within threshold)
+        - General automatically equals 65% when Admin and Stewardship are correct
+        
+        This fixes the bug where the system reported non-compliance when it was
+        actually compliant, by comparing the General account balance (4M = 2.10%)
+        against the General distribution target (65%), when it should have been
+        deriving General% = 100% - 5% - 30% = 65%.
+        
         Returns:
             Compliance status with detailed breakdown
         
         Design Notes:
             - Principle 10: Business logic for compliance checking
             - Principle 11: Comprehensive logging of compliance status
+            - Principle 12: Single implementation of compliance logic
         """
         self._ensure_initialized()
         
@@ -1040,11 +1097,13 @@ class UBECDistributionService:
         current = await self.get_current_distribution()
         supply_dist = current['distribution_of_supply']
         
-        # Check each category against targets
+        # 🔥 CRITICAL FIX: Only check Administration and Stewardship directly
+        # General compliance is automatic when Admin and Stewardship are correct
         compliance = {}
         deviations = {}
         
-        for category in ['general', 'administration', 'stewardship']:
+        # Check direct balances (Administration and Stewardship)
+        for category in ['administration', 'stewardship']:
             target = float(self.target_distribution[category])
             actual = supply_dist[category]
             deviation = abs(actual - target)
@@ -1060,7 +1119,28 @@ class UBECDistributionService:
                 'compliant': is_compliant
             }
         
-        overall_compliant = all(compliance.values())
+        # General compliance is derived (automatic when admin+stewardship are correct)
+        general_target = float(self.target_distribution['general'])
+        general_actual = supply_dist['general']
+        general_deviation = abs(general_actual - general_target)
+        
+        # General is compliant if Admin and Stewardship are compliant
+        # Because: General% = 100% - Admin% - Stewardship%
+        general_compliant = compliance['administration'] and compliance['stewardship']
+        
+        compliance['general'] = general_compliant
+        deviations['general'] = {
+            'target': general_target,
+            'actual': general_actual,
+            'deviation': general_deviation,
+            'deviation_percent': general_deviation * 100,
+            'compliant': general_compliant,
+            'note': 'General distribution is derived (100% - Admin% - Stewardship%). Automatically compliant when Admin and Stewardship are correct.'
+        }
+        
+        # Overall compliance requires Admin and Stewardship to be compliant
+        # (General is automatically compliant when these two are correct)
+        overall_compliant = compliance['administration'] and compliance['stewardship']
         
         result = {
             'timestamp': datetime.now().isoformat(),
@@ -1068,22 +1148,45 @@ class UBECDistributionService:
             'compliance': compliance,
             'deviations': deviations,
             'threshold_percent': float(self.rebalance_threshold * 100),
-            'note': 'Total supply includes all account balances and all liquidity pool tokens'
+            'note': (
+                'Total supply includes all account balances and all liquidity pool tokens. '
+                'General distribution is automatically derived as (100% - Admin% - Stewardship%).'
+            )
         }
         
         # Log compliance status (Principle 11: Comprehensive documentation)
         if overall_compliant:
             self.logger.info("✅ Distribution is COMPLIANT with target tokenomics")
+            self.logger.info(
+                f"   Administration: {supply_dist['administration']:.2%} "
+                f"(target: {self.target_distribution['administration']:.2%})"
+            )
+            self.logger.info(
+                f"   Stewardship: {supply_dist['stewardship']:.2%} "
+                f"(target: {self.target_distribution['stewardship']:.2%})"
+            )
+            self.logger.info(
+                f"   General (derived): {supply_dist['general']:.2%} "
+                f"(target: {self.target_distribution['general']:.2%})"
+            )
         else:
             self.logger.warning("⚠️ Distribution is NON-COMPLIANT")
             for category, compliant in compliance.items():
-                if not compliant:
+                # Only log non-compliant categories that are DIRECT (not derived)
+                if not compliant and category != 'general':
                     dev = deviations[category]
                     self.logger.warning(
                         f"  {category.capitalize()}: "
                         f"{dev['actual']:.2%} vs {dev['target']:.2%} target "
                         f"(deviation: {dev['deviation_percent']:.2f}%)"
                     )
+            
+            # Add clarifying message about general distribution
+            if not compliance['general']:
+                self.logger.info(
+                    "  Note: General distribution will be automatically compliant "
+                    "when Administration and Stewardship are adjusted to targets."
+                )
         
         return result
     
@@ -1091,8 +1194,15 @@ class UBECDistributionService:
         """
         Check if rebalancing is needed based on current distribution vs target.
         
+        🔥 FIXED in v3.7.0: Only checks Administration and Stewardship
+        
         This method evaluates whether the current token distribution deviates
         from target tokenomics by more than the rebalance threshold (2%).
+        
+        CRITICAL CHANGE:
+        The method now only checks Administration and Stewardship percentages.
+        General distribution is automatically correct when these two are at
+        their targets, following the formula: General% = 100% - Admin% - Stewardship%
         
         The method checks distribution percentages against total supply
         (including both account balances and liquidity pool tokens) to
@@ -1132,10 +1242,11 @@ class UBECDistributionService:
             f"Stewardship={supply_dist['stewardship']:.2%}"
         )
         
-        # Check each category against targets
+        # 🔥 CRITICAL FIX: Only check Administration and Stewardship
+        # General is automatically correct when these two are correct
         needs_rebalance = False
         
-        for category in ['general', 'administration', 'stewardship']:
+        for category in ['administration', 'stewardship']:
             target = float(self.target_distribution[category])
             actual = supply_dist[category]
             deviation = abs(actual - target)
@@ -1162,16 +1273,22 @@ class UBECDistributionService:
         """
         Perform or preview rebalancing operations to restore target distribution.
         
+        ✅ CORRECT in v3.7.0: Already only checks Administration and Stewardship
+        
         This method calculates the necessary token transfers to bring the
         distribution back into compliance with official tokenomics, then either
         previews the operations (dry_run=True) or executes them (dry_run=False).
         
         The rebalancing strategy:
         1. Calculate current distribution vs target distribution
-        2. Identify which categories need adjustment
-        3. Generate transfer plan (from general to admin/stewardship)
+        2. Identify which categories need adjustment (Admin and/or Stewardship)
+        3. Generate transfer plan (usually from/to General account)
         4. In dry-run: return preview of operations
         5. In execution: perform actual blockchain transactions
+        
+        Note: This method was already correct - it only checks Administration
+        and Stewardship. General distribution automatically becomes correct when
+        these two categories are adjusted to their targets.
         
         Args:
             dry_run: If True, preview operations without executing (default: True)
@@ -1215,6 +1332,7 @@ class UBECDistributionService:
         total_supply = Decimal(str(current['total_supply']))
         
         # Calculate what's needed to reach targets
+        # ✅ Already correct - only checks Administration and Stewardship
         transfers = []
         
         for category in ['administration', 'stewardship']:
@@ -1311,7 +1429,7 @@ class UBECDistributionService:
         
         # EXECUTION MODE - Perform actual transfers
         self.logger.warning(
-            "⚠️  EXECUTION MODE - Real blockchain transactions will be submitted"
+            "⚠️ EXECUTION MODE - Real blockchain transactions will be submitted"
         )
         
         executed_transfers = []
@@ -1453,7 +1571,7 @@ class UBECDistributionService:
         # Log final status
         if failed_transfers:
             self.logger.warning(
-                f"⚠️  Rebalance partially completed: "
+                f"⚠️ Rebalance partially completed: "
                 f"{len(executed_transfers)}/{len(transfers)} transfers successful"
             )
         else:
@@ -1476,7 +1594,7 @@ class UBECDistributionService:
             - Total supply (accounts + pools)
             - Account balances
             - Pool balances
-            - Distribution percentages
+            - Distribution percentages (with General derived)
             - Compliance status
         
         Design Notes:
@@ -1509,7 +1627,7 @@ class UBECDistributionService:
                 },
                 'target_percentages': current_dist['target_distribution'],
                 'compliance': compliance,
-                'note': 'Total supply includes all account balances and all liquidity pool tokens'
+                'note': 'Total supply includes all account balances and all liquidity pool tokens. General distribution is derived (100% - Admin% - Stewardship%).'
             }
             
         except Exception as e:
