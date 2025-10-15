@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-14T07:04:22.011604  
+**Generated:** 2025-10-15T02:02:04.886630  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 62 MB  
@@ -13,7 +13,7 @@
 
 **Total Schemas:** 4  
 **Total Tables:** 63  
-**Total Rows:** 66,605  
+**Total Rows:** 66,610  
 **Total Columns:** 786  
 **Total Views:** 26  
 **Total Functions:** 1128  
@@ -24,7 +24,7 @@
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 42 | 58,105 | 17 | 75 |
+| ubec_main | Main schema for UBEC four-element protoc... | 42 | 58,110 | 17 | 75 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6379,7 +6379,7 @@
 ### Schema Statistics
 
 - **Tables:** 42
-- **Total Rows:** 58,105
+- **Total Rows:** 58,110
 - **Columns:** 512
 - **Views:** 17
 - **Relationships:** 7
@@ -6430,7 +6430,7 @@
 | stellar_accounts | 1,263 | 17 | 608 kB |
 | ubec_balances | 651 | 15 | 552 kB |
 | asset_holder_analysis | 63 | 19 | 184 kB |
-| system_settings | 37 | 12 | 80 kB |
+| system_settings | 42 | 12 | 80 kB |
 | ubec_distributions | 24 | 14 | 112 kB |
 | liquidity_pool_owners | 23 | 13 | 240 kB |
 | holonic_metrics | 15 | 14 | 160 kB |

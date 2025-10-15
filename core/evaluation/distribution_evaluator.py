@@ -19,6 +19,8 @@ Design Compliance:
     ✅ Service registry integration
     ✅ Database as single source of truth
     ✅ Comprehensive documentation
+    ✅ No method redundancy
+    ✅ Clear separation of concerns
 
 Usage:
     from core.evaluation.distribution_evaluator import create_evaluator_service
@@ -44,8 +46,12 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 2.0 (Async Service Architecture)
-Date: October 12, 2025
+Version: 2.1 (Operations Table Integration)
+Date: October 14, 2025
+
+Changelog:
+    v2.1 - Updated to use stellar_operations table with correct schema
+    v2.0 - Async Service Architecture
 """
 
 import asyncio
@@ -191,8 +197,11 @@ class UBECDistributionEvaluator:
             # Calculate percentage of total
             percent_of_total = (balance / total_supply * 100) if total_supply > 0 else 0
             
-            # Get transaction history
-            tx_history = await self._get_account_transaction_history(account_id, limit=10)
+            # Get operation history
+            operation_history = await self._get_account_operation_history(
+                account_id, 
+                limit=10
+            )
             
             # Determine expected range for account type
             expected_range = self._get_expected_range_for_type(account_type)
@@ -210,7 +219,7 @@ class UBECDistributionEvaluator:
                 'percent_of_total_supply': float(percent_of_total),
                 'expected_range': expected_range,
                 'within_expected_range': in_range,
-                'recent_transactions': tx_history,
+                'recent_operations': operation_history,
                 'status': 'COMPLIANT' if in_range else 'OUT_OF_RANGE',
                 'recommendations': []
             }
@@ -221,13 +230,19 @@ class UBECDistributionEvaluator:
                     evaluation['recommendations'].append({
                         'action': 'REDUCE_BALANCE',
                         'priority': 'HIGH',
-                        'description': f"Account balance ({percent_of_total:.2f}%) exceeds maximum expected ({expected_range['max']:.2f}%)"
+                        'description': (
+                            f"Account balance ({percent_of_total:.2f}%) exceeds "
+                            f"maximum expected ({expected_range['max']:.2f}%)"
+                        )
                     })
                 else:
                     evaluation['recommendations'].append({
                         'action': 'INCREASE_BALANCE',
                         'priority': 'MEDIUM',
-                        'description': f"Account balance ({percent_of_total:.2f}%) below minimum expected ({expected_range['min']:.2f}%)"
+                        'description': (
+                            f"Account balance ({percent_of_total:.2f}%) below "
+                            f"minimum expected ({expected_range['min']:.2f}%)"
+                        )
                     })
             
             return evaluation
@@ -291,8 +306,12 @@ class UBECDistributionEvaluator:
                 total = Decimal(str(snapshot['total_supply']))
                 
                 if total > 0:
-                    admin_pct = (Decimal(str(snapshot['administration_balance'])) / total * 100)
-                    steward_pct = (Decimal(str(snapshot['stewardship_balance'])) / total * 100)
+                    admin_pct = (
+                        Decimal(str(snapshot['administration_balance'])) / total * 100
+                    )
+                    steward_pct = (
+                        Decimal(str(snapshot['stewardship_balance'])) / total * 100
+                    )
                     
                     compliance_over_time.append({
                         'timestamp': snapshot['check_time'].isoformat(),
@@ -320,9 +339,17 @@ class UBECDistributionEvaluator:
                 'rebalance_events': rebalance_events,
                 'trend_data': compliance_over_time,
                 'summary': {
-                    'overall_status': 'GOOD' if compliance_percentage >= 80 else 'NEEDS_ATTENTION',
-                    'avg_admin_pct': sum(s['administration_pct'] for s in compliance_over_time) / len(compliance_over_time) if compliance_over_time else 0,
-                    'avg_steward_pct': sum(s['stewardship_pct'] for s in compliance_over_time) / len(compliance_over_time) if compliance_over_time else 0
+                    'overall_status': (
+                        'GOOD' if compliance_percentage >= 80 else 'NEEDS_ATTENTION'
+                    ),
+                    'avg_admin_pct': (
+                        sum(s['administration_pct'] for s in compliance_over_time) / 
+                        len(compliance_over_time) if compliance_over_time else 0
+                    ),
+                    'avg_steward_pct': (
+                        sum(s['stewardship_pct'] for s in compliance_over_time) / 
+                        len(compliance_over_time) if compliance_over_time else 0
+                    )
                 }
             }
             
@@ -363,12 +390,15 @@ class UBECDistributionEvaluator:
                 deviation = current - target
                 deviation_pct = (deviation / target * 100) if target > 0 else 0
                 
+                threshold = self.distribution_service.rebalance_threshold
+                is_out_of_range = abs(deviation) > threshold
+                
                 deviations[category] = {
                     'target': float(target),
                     'current': float(current),
                     'deviation': float(deviation),
                     'deviation_percent': float(deviation_pct),
-                    'status': 'OK' if abs(deviation) <= self.distribution_service.rebalance_threshold else 'OUT_OF_RANGE'
+                    'status': 'OUT_OF_RANGE' if is_out_of_range else 'OK'
                 }
             
             return deviations
@@ -398,14 +428,15 @@ class UBECDistributionEvaluator:
                     status_message
                 FROM {schema}.transfer_recommendations
                 WHERE status = 'pending'
-                AND asset_code = $1
-                AND asset_issuer = $2
+                    AND asset_code = $1
+                    AND asset_issuer = $2
                 ORDER BY priority DESC, created_at ASC
             """
             
             transfers = await self.db_manager.fetch_all(
                 query,
-                (self.distribution_service.ubec_code, self.distribution_service.ubec_issuer)
+                self.distribution_service.ubec_code,
+                self.distribution_service.ubec_issuer
             )
             
             return [
@@ -450,7 +481,9 @@ class UBECDistributionEvaluator:
                 'priority': 'HIGH',
                 'category': 'COMPLIANCE',
                 'action': 'REBALANCE_DISTRIBUTION',
-                'description': 'Token distribution is out of compliance with target ratios',
+                'description': (
+                    'Token distribution is out of compliance with target ratios'
+                ),
                 'estimated_impact': 'Will restore compliance with tokenomics'
             })
         
@@ -461,8 +494,13 @@ class UBECDistributionEvaluator:
                     'priority': 'MEDIUM',
                     'category': 'DEVIATION',
                     'action': f'ADJUST_{category.upper()}',
-                    'description': f"{category.title()} account is {abs(dev_info['deviation_percent']):.1f}% off target",
-                    'estimated_impact': f"Move {abs(dev_info['deviation']):.2f}% of supply"
+                    'description': (
+                        f"{category.title()} account is "
+                        f"{abs(dev_info['deviation_percent']):.1f}% off target"
+                    ),
+                    'estimated_impact': (
+                        f"Move {abs(dev_info['deviation']):.2f}% of supply"
+                    )
                 })
         
         # Check pending transfers
@@ -571,59 +609,86 @@ class UBECDistributionEvaluator:
                 out_of_compliance.append('Stewardship')
             
             if out_of_compliance:
-                parts.append(f"{', '.join(out_of_compliance)} accounts out of compliance.")
+                parts.append(
+                    f"{', '.join(out_of_compliance)} accounts out of compliance."
+                )
         
         if pending_transfers:
-            parts.append(f"{len(pending_transfers)} pending transfer(s) require execution.")
+            count = len(pending_transfers)
+            parts.append(
+                f"{count} pending transfer{'s' if count != 1 else ''} "
+                f"require{'s' if count == 1 else ''} execution."
+            )
         
         return " ".join(parts)
     
-    async def _get_account_transaction_history(
+    async def _get_account_operation_history(
         self,
         account_id: str,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        Get recent transaction history for an account.
+        Get recent operation history for an account.
+        
+        Uses the stellar_operations table with correct schema:
+        - operation_id (unique identifier)
+        - transaction_hash (transaction reference)
+        - type (operation type, not operation_type)
+        - source_account
+        - amount
+        - asset_code
+        - created_at
         
         Args:
             account_id: Account ID
-            limit: Number of transactions
+            limit: Number of operations to retrieve
             
         Returns:
-            list: Recent transactions
+            list: Recent operations
         """
         try:
             schema = self.distribution_service.db_schema
             
             query = f"""
                 SELECT 
+                    operation_id,
                     transaction_hash,
                     created_at,
-                    operation_type,
+                    type,
                     asset_code,
-                    amount
-                FROM {schema}.stellar_transactions
+                    amount,
+                    from_account,
+                    to_account,
+                    details
+                FROM {schema}.stellar_operations
                 WHERE source_account = $1
+                    OR from_account = $1
+                    OR to_account = $1
                 ORDER BY created_at DESC
                 LIMIT $2
             """
             
-            transactions = await self.db_manager.fetch_all((query, account_id, limit))
+            operations = await self.db_manager.fetch_all(query, account_id, limit)
             
             return [
                 {
-                    'hash': t['transaction_hash'],
-                    'timestamp': t['created_at'].isoformat(),
-                    'type': t['operation_type'],
-                    'asset': t['asset_code'],
-                    'amount': float(t['amount']) if t['amount'] else 0
+                    'operation_id': op['operation_id'],
+                    'transaction_hash': op['transaction_hash'],
+                    'timestamp': op['created_at'].isoformat(),
+                    'type': op['type'],
+                    'asset': op['asset_code'],
+                    'amount': float(op['amount']) if op['amount'] else 0.0,
+                    'from_account': op['from_account'],
+                    'to_account': op['to_account'],
+                    'details': op['details']
                 }
-                for t in transactions
+                for op in operations
             ]
             
         except Exception as e:
-            self.logger.error(f"Error getting transaction history: {e}")
+            self.logger.error(
+                f"Error getting operation history for {account_id}: {e}"
+            )
             return []
     
     def _get_expected_range_for_type(
@@ -668,7 +733,7 @@ class UBECDistributionEvaluator:
         return None
     
     async def cleanup(self):
-        """Cleanup resources on shutdown"""
+        """Cleanup resources on shutdown."""
         self.logger.info("Distribution evaluator cleaned up")
 
 
