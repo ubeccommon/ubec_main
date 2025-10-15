@@ -332,7 +332,7 @@ class UBECHolonicEvaluator:
             query = f"""
                 INSERT INTO {self.db_schema}.holonic_metrics ({columns_str})
                 VALUES ({placeholders})
-                ON CONFLICT (account_id, evaluation_date) 
+                ON CONFLICT (account_id, extract_date_immutable(evaluation_date)) 
                 DO UPDATE SET {update_clause}, updated_at = NOW()
             """
             

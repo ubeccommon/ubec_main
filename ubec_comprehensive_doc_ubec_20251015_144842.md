@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-15T12:05:45.338414  
+**Generated:** 2025-10-15T14:48:42.386101  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 63 MB  
@@ -6429,7 +6429,7 @@
 | stellar_transactions | 55,992 | 20 | 38 MB |
 | stellar_accounts | 1,263 | 17 | 608 kB |
 | ubec_balances | 651 | 15 | 552 kB |
-| holonic_metrics | 643 | 16 | 1320 kB |
+| holonic_metrics | 643 | 16 | 1480 kB |
 | asset_holder_analysis | 63 | 19 | 184 kB |
 | system_settings | 42 | 12 | 80 kB |
 | ubec_distributions | 24 | 14 | 112 kB |
