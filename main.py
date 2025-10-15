@@ -68,7 +68,8 @@ CLI Usage:
     python main.py --mode visualize --action chart --chart-type line --days 30
     python main.py --mode visualize --action chart --chart-type pie --category distribution
     python main.py --mode visualize --action chart --chart-type network --min-connections 5
-    python main.py --mode visualize --action report --format html --output report.html
+    python main.py --mode visualize --action report --format html --output-dir ./reports
+    python main.py --mode visualize --action report --format html --include-advanced
     python main.py --mode visualize --action report --format json --output report.json
     python main.py --mode visualize --action all --output-dir visualizations/
 
@@ -1853,7 +1854,8 @@ async def generate_chart(visualizer: Any,
 async def generate_report(visualizer: Any,
                          output_format: str,
                          output: Optional[str],
-                         output_dir: str) -> Dict[str, Any]:
+                         output_dir: str,
+                         include_advanced: bool = False) -> Dict[str, Any]:
     """
     Generate visualization report.
     
@@ -1862,17 +1864,19 @@ async def generate_report(visualizer: Any,
         output_format: Format (html or json)
         output: Optional output file path
         output_dir: Output directory
+        include_advanced: Include advanced visualizations (time-series, correlations, etc.)
         
     Returns:
         dict: Report generation results
     """
     if output_format == 'html':
-        logger.info("Generating HTML report...")
+        logger.info(f"Generating HTML report (include_advanced={include_advanced})...")
         
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         report_path = await visualizer.generate_html_report(
-            output_dir=output_dir
+            output_dir=output_dir,
+            include_advanced=include_advanced
         )
         
         return create_success_response({
@@ -2039,8 +2043,9 @@ async def run_visualize(services: Dict[str, Any],
             output_format = kwargs.get('format', 'html')
             output = kwargs.get('output')
             output_dir = kwargs.get('output_dir', 'visualizations')
+            include_advanced = kwargs.get('include_advanced', False)
             
-            return await generate_report(visualizer, output_format, output, output_dir)
+            return await generate_report(visualizer, output_format, output, output_dir, include_advanced)
         
         elif action == 'all':
             output_dir = kwargs.get('output_dir', 'visualizations')
@@ -2085,6 +2090,8 @@ Examples:
   %(prog)s --mode distribution --action rebalance
   
   # Visualization
+  %(prog)s --mode visualize --action report --format html --output-dir ./reports
+  %(prog)s --mode visualize --action report --format html --include-advanced
   %(prog)s --mode visualize --action chart --chart-type radar --top-n 10
   %(prog)s --mode visualize --action all --output-dir visualizations/
         """
@@ -2229,6 +2236,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--include-advanced',
+        action='store_true',
+        help='Include advanced visualizations in HTML reports'
+    )
+    
+    parser.add_argument(
         '--output-format',
         type=str,
         choices=['json', 'pretty', 'summary'],
@@ -2360,7 +2373,8 @@ async def main_async(args: argparse.Namespace) -> int:
                     min_connections=args.min_connections,
                     format=args.format,
                     output=args.output,
-                    output_dir=args.output_dir
+                    output_dir=args.output_dir,
+                    include_advanced=args.include_advanced
                 )
         
         else:
