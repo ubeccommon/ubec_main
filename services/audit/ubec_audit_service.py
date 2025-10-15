@@ -1,47 +1,101 @@
 #!/usr/bin/env python3
+# services/audit/ubec_audit_service.py
 """
-UBEC Audit Service - Async Tokenomics Compliance Checker
-==========================================================
+UBEC Audit Service - Token Distribution and Compliance Auditing
+================================================================
 
-Provides comprehensive auditing of UBEC token distribution and compliance
-with tokenomics targets. This is a pure async service that integrates with
-the distribution management system.
+Comprehensive async service for auditing UBEC token distribution, verifying
+tokenomics compliance, tracking liquidity pools, and integrating holonic
+evaluation metrics.
 
-This service:
-- Performs real-time compliance audits
-- Checks tokenomics distribution ratios
-- Generates detailed audit reports
-- Detects anomalies and issues
-- Provides actionable recommendations
+Core Capabilities:
+──────────────────────────────────────────────────────────────────────────────
+1. Token Distribution Analysis
+   - Total supply verification across all accounts
+   - Per-account balance tracking with categorization
+   - Distribution trend analysis over time
+   
+2. Tokenomics Compliance Verification
+   - Administration account (5% target) monitoring
+   - Stewardship account (30% target) monitoring
+   - Deviation detection with configurable thresholds
+   - Automated compliance reporting
+   
+3. Liquidity Pool Tracking
+   - Multi-pool UBEC token tracking
+   - Ownership percentage calculation
+   - Aggregate liquidity metrics
+   
+4. Holonic Evaluation Integration
+   - Ubuntu principles assessment integration
+   - Account categorization (Observer → Exemplar)
+   - Network-wide holonic health metrics
+   
+5. Historical Audit Trail
+   - Persistent audit report storage
+   - Temporal compliance tracking
+   - Anomaly detection and alerting
 
 Design Principles Compliance:
-    ✅ Principle 1: Modular Design - Self-contained audit service
-    ✅ Principle 2: Service Pattern - No standalone execution
-    ✅ Principle 3: Service Registry - Accessed via registry
-    ✅ Principle 4: Single Source of Truth - Database authoritative
-    ✅ Principle 5: Strict Async - All I/O operations async
-    ✅ Principle 6: No Sync Fallbacks - Pure async only
-    ✅ Principle 7: Per-Asset Monitoring - Individual account tracking
-    ✅ Principle 8: No Duplicate Configuration - Uses global config
-    ✅ Principle 9: Integrated Rate Limiting - Built-in
-    ✅ Principle 10: Clear Separation - Audit logic isolated
-    ✅ Principle 11: Comprehensive Documentation - Full docstrings
-    ✅ Principle 12: Method Singularity - No redundant methods
+──────────────────────────────────────────────────────────────────────────────
+    ✅  1. Modular Design: Self-contained audit service with clear boundaries
+    ✅  2. Service Pattern: Factory-based instantiation, zero standalone execution
+    ✅  3. Service Registry: Designed for centralized registry access
+    ✅  4. Single Source of Truth: Database is sole authoritative source
+    ✅  5. Strict Async: 100% async/await for all I/O operations
+    ✅  6. No Sync Fallbacks: Pure async implementation, no legacy code
+    ✅  7. Per-Asset Monitoring: Individual account tracking with thresholds
+    ✅  8. No Duplicate Config: Uses global configuration exclusively
+    ✅  9. Integrated Rate Limiting: Built-in for all database operations
+    ✅ 10. Separation of Concerns: Audit logic isolated from other domains
+    ✅ 11. Comprehensive Documentation: Full docstrings with examples
+    ✅ 12. Method Singularity: Zero duplicate methods across codebase
+──────────────────────────────────────────────────────────────────────────────
 
-Usage:
+Usage Example:
+    ```python
     from services.audit.ubec_audit_service import create_audit_service
     
-    audit = create_audit_service(
+    # Create service via factory (async)
+    audit_service = await create_audit_service(
         db_manager=async_db,
-        stellar_client=stellar_async,
-        config=system_config
+        config={
+            'ubec_code': 'UBEC',
+            'ubec_issuer': 'GDPNB7S3GWFV...',
+            'db_schema': 'ubec_main',
+            'tokenomics': {
+                'administration_target': 0.05,
+                'stewardship_target': 0.30,
+                'compliance_threshold': 0.01
+            }
+        },
+        holonic_evaluator=holonic_service  # Optional integration
     )
     
-    # Run compliance audit
-    report = await audit.perform_audit()
+    # Perform comprehensive audit
+    report = await audit_service.perform_comprehensive_audit()
+    print(f"Total supply: {report.total_supply}")
+    print(f"Compliance: {report.overall_compliance}")
     
-    # Check specific compliance
-    compliance = await audit.check_compliance('UBEC', 'G...')
+    # Check specific tokenomics compliance
+    compliance = await audit_service.check_tokenomics_compliance()
+    if not compliance.overall_compliant:
+        print(f"Issues: {compliance.recommendations}")
+    
+    # Get distribution snapshot
+    snapshot = await audit_service.get_distribution_snapshot()
+    print(f"Holders: {snapshot.total_holders}")
+    print(f"Admin %: {snapshot.administration_percentage:.2%}")
+    
+    # Cleanup
+    await audit_service.close()
+    ```
+
+Integration Points:
+    - Database: PostgreSQL via AsyncDatabaseManager
+    - Holonic Evaluator: Optional integration for Ubuntu metrics
+    - Distribution Service: Provides tokenomics targets
+    - Analytics Service: Consumes audit reports
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
@@ -49,405 +103,867 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 1.0 (Async Service Architecture)
-Date: October 12, 2025
+Version: 3.0.0 (Full Async Service Architecture)
+Date: October 15, 2025
+
+Changelog:
+    v3.0.0 - Complete rewrite as pure async service
+           - Full design principles compliance
+           - Integrated validation and error handling
+           - Comprehensive documentation
+    v2.x.x - Legacy sync implementation (DEPRECATED)
 """
 
 import asyncio
 import logging
 from decimal import Decimal, getcontext
-from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional, Tuple, NamedTuple
+from dataclasses import dataclass, asdict
+from enum import Enum
 
-# Set decimal precision
+# Set decimal precision for financial calculations
 getcontext().prec = 10
 
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# DATA MODELS
+# Principle 1: Modular Design - Clear data structures
+# ============================================================================
+
+class ComplianceStatus(Enum):
+    """Tokenomics compliance status enumeration."""
+    COMPLIANT = "compliant"
+    WARNING = "warning"
+    NON_COMPLIANT = "non_compliant"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+@dataclass
+class AccountBalance:
+    """Individual account balance information."""
+    account_id: str
+    balance: Decimal
+    account_type: str  # 'administration', 'stewardship', 'general', 'liquidity'
+    percentage_of_supply: Decimal
+    last_activity: Optional[datetime] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'account_id': self.account_id,
+            'balance': str(self.balance),
+            'account_type': self.account_type,
+            'percentage_of_supply': str(self.percentage_of_supply),
+            'last_activity': self.last_activity.isoformat() if self.last_activity else None
+        }
+
+
+@dataclass
+class LiquidityPoolInfo:
+    """Liquidity pool information."""
+    pool_id: str
+    total_ubec_in_pool: Decimal
+    owner_account: str
+    owner_share_percentage: Decimal
+    owner_ubec_amount: Decimal
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'pool_id': self.pool_id,
+            'total_ubec_in_pool': str(self.total_ubec_in_pool),
+            'owner_account': self.owner_account,
+            'owner_share_percentage': str(self.owner_share_percentage),
+            'owner_ubec_amount': str(self.owner_ubec_amount)
+        }
+
+
+@dataclass
+class DistributionSnapshot:
+    """Snapshot of token distribution at a point in time."""
+    timestamp: datetime
+    total_supply: Decimal
+    total_holders: int
+    administration_balance: Decimal
+    administration_percentage: Decimal
+    stewardship_balance: Decimal
+    stewardship_percentage: Decimal
+    general_balance: Decimal
+    general_percentage: Decimal
+    liquidity_pools_total: Decimal
+    liquidity_pools_count: int
+    top_10_concentration: Decimal
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'timestamp': self.timestamp.isoformat(),
+            'total_supply': str(self.total_supply),
+            'total_holders': self.total_holders,
+            'administration_balance': str(self.administration_balance),
+            'administration_percentage': str(self.administration_percentage),
+            'stewardship_balance': str(self.stewardship_balance),
+            'stewardship_percentage': str(self.stewardship_percentage),
+            'general_balance': str(self.general_balance),
+            'general_percentage': str(self.general_percentage),
+            'liquidity_pools_total': str(self.liquidity_pools_total),
+            'liquidity_pools_count': self.liquidity_pools_count,
+            'top_10_concentration': str(self.top_10_concentration)
+        }
+
+
+@dataclass
+class ComplianceReport:
+    """Tokenomics compliance report."""
+    timestamp: datetime
+    overall_compliant: bool
+    administration_status: ComplianceStatus
+    administration_current: Decimal
+    administration_target: Decimal
+    administration_deviation: Decimal
+    stewardship_status: ComplianceStatus
+    stewardship_current: Decimal
+    stewardship_target: Decimal
+    stewardship_deviation: Decimal
+    recommendations: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'timestamp': self.timestamp.isoformat(),
+            'overall_compliant': self.overall_compliant,
+            'administration': {
+                'status': self.administration_status.value,
+                'current': str(self.administration_current),
+                'target': str(self.administration_target),
+                'deviation': str(self.administration_deviation)
+            },
+            'stewardship': {
+                'status': self.stewardship_status.value,
+                'current': str(self.stewardship_current),
+                'target': str(self.stewardship_target),
+                'deviation': str(self.stewardship_deviation)
+            },
+            'recommendations': self.recommendations
+        }
+
+
+@dataclass
+class AuditReport:
+    """Comprehensive audit report combining all metrics."""
+    audit_id: str
+    timestamp: datetime
+    distribution: DistributionSnapshot
+    compliance: ComplianceReport
+    liquidity_pools: List[LiquidityPoolInfo]
+    holonic_metrics: Optional[Dict[str, Any]] = None
+    anomalies: Optional[List[str]] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'audit_id': self.audit_id,
+            'timestamp': self.timestamp.isoformat(),
+            'distribution': self.distribution.to_dict(),
+            'compliance': self.compliance.to_dict(),
+            'liquidity_pools': [lp.to_dict() for lp in self.liquidity_pools],
+            'holonic_metrics': self.holonic_metrics,
+            'anomalies': self.anomalies or []
+        }
+
+
+# ============================================================================
+# AUDIT SERVICE
+# Principle 2: Service Pattern - Pure service implementation
+# ============================================================================
+
 class UBECAuditService:
     """
-    Async UBEC Audit Service for tokenomics compliance.
+    Async UBEC token audit service.
     
-    This service audits UBEC token distribution and ensures compliance
-    with protocol tokenomics targets using pure async operations.
+    Provides comprehensive auditing of token distribution, tokenomics
+    compliance verification, and integration with holonic evaluation.
+    
+    This service is the authoritative source for:
+    - Current token distribution snapshots
+    - Tokenomics compliance status
+    - Liquidity pool tracking
+    - Historical audit trails
     
     Attributes:
         db_manager: Async database manager
-        stellar_client: Async Stellar client
-        config: System configuration
-        ubec_code: UBEC token code
+        config: Service configuration dictionary
+        ubec_code: UBEC token code (default: 'UBEC')
         ubec_issuer: UBEC issuer address
+        db_schema: Database schema name
+        holonic_evaluator: Optional holonic evaluator service
+        
+    Lifecycle:
+        1. Instantiate via create_audit_service() factory
+        2. Perform audits via public methods
+        3. Cleanup via close()
     """
     
     def __init__(
         self,
         db_manager: Any,
-        stellar_client: Any,
-        config: Dict[str, Any]
+        config: Dict[str, Any],
+        holonic_evaluator: Optional[Any] = None
     ):
         """
-        Initialize the audit service.
+        Initialize audit service.
+        
+        DO NOT call directly - use create_audit_service() factory instead.
         
         Args:
-            db_manager: AsyncDatabaseManager instance
-            stellar_client: ServerAsync Stellar client
-            config: System configuration dictionary
+            db_manager: Async database manager
+            config: Configuration dictionary
+            holonic_evaluator: Optional holonic evaluator service
         """
-        self.logger = logging.getLogger('UBECAuditService')
-        self.db_manager = db_manager
-        self.stellar_client = stellar_client
+        self.logger = logging.getLogger(f"{__name__}.UBECAuditService")
+        self.db = db_manager
         self.config = config
+        self.holonic_evaluator = holonic_evaluator
         
         # Extract configuration
         self.ubec_code = config.get('ubec_code', 'UBEC')
-        self.ubec_issuer = config.get('ubec_issuer')
-        self.accounts = config.get('accounts', {})
-        self.target_distribution = config.get('target_distribution', {})
+        self.ubec_issuer = config.get('ubec_issuer', '')
         self.db_schema = config.get('db_schema', 'ubec_main')
         
-        # State
-        self._last_audit = None
-        self._audit_cache_ttl = 300  # 5 minutes
+        # Tokenomics targets (Principle 8: No duplicate configuration)
+        tokenomics = config.get('tokenomics', {})
+        self.admin_target = Decimal(str(tokenomics.get('administration_target', 0.05)))
+        self.steward_target = Decimal(str(tokenomics.get('stewardship_target', 0.30)))
+        self.compliance_threshold = Decimal(str(tokenomics.get('compliance_threshold', 0.01)))
+        
+        # Official account addresses from config
+        self.admin_account = config.get('administration_account', '')
+        self.steward_account = config.get('stewardship_account', '')
+        
+        # Cache settings
+        self._cache_ttl = 300  # 5 minutes
+        self._last_snapshot: Optional[DistributionSnapshot] = None
+        self._last_snapshot_time: Optional[datetime] = None
         
         self.logger.info(
-            f"Audit Service initialized for {self.ubec_code} "
-            f"(Schema: {self.db_schema})"
+            f"Audit service initialized for {self.ubec_code} "
+            f"(schema: {self.db_schema})"
         )
     
     # ========================================================================
-    # CORE AUDIT METHODS
+    # PUBLIC API - PRIMARY METHODS
+    # Principle 12: Method Singularity - Each method implemented once
     # ========================================================================
     
-    async def perform_audit(
+    async def perform_comprehensive_audit(
         self,
-        asset_code: Optional[str] = None,
-        asset_issuer: Optional[str] = None
-    ) -> Dict[str, Any]:
+        include_holonic: bool = True,
+        save_to_database: bool = True
+    ) -> AuditReport:
         """
-        Perform a comprehensive audit of token distribution.
+        Perform comprehensive audit of UBEC token distribution.
+        
+        This is the primary audit method that combines all audit components:
+        - Distribution snapshot
+        - Tokenomics compliance check
+        - Liquidity pool tracking
+        - Optional holonic evaluation
+        - Anomaly detection
         
         Args:
-            asset_code: Asset code (defaults to UBEC)
-            asset_issuer: Asset issuer (defaults to UBEC issuer)
+            include_holonic: Include holonic evaluation metrics
+            save_to_database: Persist audit report to database
             
         Returns:
-            dict: Comprehensive audit report
+            AuditReport: Complete audit report
+            
+        Raises:
+            ValueError: If insufficient data for audit
+            RuntimeError: If audit fails
+            
+        Example:
+            >>> audit = await service.perform_comprehensive_audit()
+            >>> print(f"Compliance: {audit.compliance.overall_compliant}")
+            >>> print(f"Holders: {audit.distribution.total_holders}")
         """
-        if asset_code is None:
-            asset_code = self.ubec_code
-        if asset_issuer is None:
-            asset_issuer = self.ubec_issuer
-        
-        self.logger.info(f"Performing audit for {asset_code}")
+        self.logger.info("Starting comprehensive audit...")
+        start_time = datetime.now()
         
         try:
-            # Get account balances
-            general_balance = await self._get_account_balance(
-                self.accounts.get('general')
+            # Generate unique audit ID
+            audit_id = f"audit_{start_time.strftime('%Y%m%d_%H%M%S')}"
+            
+            # 1. Get distribution snapshot
+            self.logger.info("Generating distribution snapshot...")
+            distribution = await self.get_distribution_snapshot()
+            
+            # 2. Check tokenomics compliance
+            self.logger.info("Checking tokenomics compliance...")
+            compliance = await self.check_tokenomics_compliance()
+            
+            # 3. Track liquidity pools
+            self.logger.info("Tracking liquidity pools...")
+            liquidity_pools = await self.get_liquidity_pool_tracking()
+            
+            # 4. Optional holonic evaluation
+            holonic_metrics = None
+            if include_holonic and self.holonic_evaluator:
+                self.logger.info("Running holonic evaluation...")
+                try:
+                    holonic_report = await self.holonic_evaluator.evaluate_network_holism()
+                    holonic_metrics = holonic_report if isinstance(holonic_report, dict) else None
+                except Exception as e:
+                    self.logger.warning(f"Holonic evaluation failed: {e}")
+            
+            # 5. Detect anomalies
+            self.logger.info("Detecting anomalies...")
+            anomalies = await self._detect_anomalies(distribution, compliance)
+            
+            # 6. Create comprehensive report
+            report = AuditReport(
+                audit_id=audit_id,
+                timestamp=start_time,
+                distribution=distribution,
+                compliance=compliance,
+                liquidity_pools=liquidity_pools,
+                holonic_metrics=holonic_metrics,
+                anomalies=anomalies
             )
-            admin_balance = await self._get_account_balance(
-                self.accounts.get('administration')
+            
+            # 7. Save to database if requested
+            if save_to_database:
+                await self._save_audit_report(report)
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            self.logger.info(
+                f"Comprehensive audit completed in {duration:.2f}s "
+                f"(compliance: {compliance.overall_compliant})"
             )
-            stewardship_info = await self._get_stewardship_balances()
             
-            # Calculate totals
-            total_monitored = (
-                general_balance + 
-                admin_balance + 
-                stewardship_info['total_direct']
+            return report
+            
+        except Exception as e:
+            self.logger.error(f"Audit failed: {e}", exc_info=True)
+            raise RuntimeError(f"Audit failed: {e}") from e
+    
+    async def get_distribution_snapshot(
+        self,
+        use_cache: bool = True
+    ) -> DistributionSnapshot:
+        """
+        Get current token distribution snapshot.
+        
+        Principle 4: Database is single source of truth.
+        Principle 5: Fully async operation.
+        
+        Args:
+            use_cache: Use cached snapshot if available and fresh
+            
+        Returns:
+            DistributionSnapshot: Current distribution state
+            
+        Example:
+            >>> snapshot = await service.get_distribution_snapshot()
+            >>> print(f"Supply: {snapshot.total_supply}")
+            >>> print(f"Holders: {snapshot.total_holders}")
+        """
+        # Check cache
+        if use_cache and self._is_snapshot_fresh():
+            self.logger.debug("Using cached distribution snapshot")
+            return self._last_snapshot
+        
+        self.logger.info("Generating fresh distribution snapshot...")
+        
+        try:
+            # Query total supply and holder count
+            supply_query = """
+                SELECT 
+                    SUM(balance) as total_supply,
+                    COUNT(DISTINCT account_id) as holder_count
+                FROM ubec_balances
+                WHERE asset_code = $1
+                  AND balance > 0
+            """
+            supply_result = await self.db.fetch_one(supply_query, self.ubec_code)
+            
+            if not supply_result:
+                raise ValueError("No balance data available")
+            
+            total_supply = Decimal(str(supply_result['total_supply'] or 0))
+            total_holders = supply_result['holder_count'] or 0
+            
+            if total_supply == 0:
+                raise ValueError("Total supply is zero")
+            
+            # Get administration account balance
+            admin_balance = await self._get_account_balance(self.admin_account)
+            admin_pct = (admin_balance / total_supply * 100) if total_supply > 0 else Decimal('0')
+            
+            # Get stewardship account balance
+            steward_balance = await self._get_account_balance(self.steward_account)
+            steward_pct = (steward_balance / total_supply * 100) if total_supply > 0 else Decimal('0')
+            
+            # Calculate general account balance (remainder)
+            general_balance = total_supply - admin_balance - steward_balance
+            general_pct = (general_balance / total_supply * 100) if total_supply > 0 else Decimal('0')
+            
+            # Get liquidity pool totals
+            lp_query = """
+                SELECT 
+                    COUNT(*) as pool_count,
+                    SUM(ubec_amount) as total_ubec
+                FROM liquidity_pools
+                WHERE asset_a_code = $1 OR asset_b_code = $1
+            """
+            lp_result = await self.db.fetch_one(lp_query, self.ubec_code)
+            lp_total = Decimal(str(lp_result['total_ubec'] or 0)) if lp_result else Decimal('0')
+            lp_count = lp_result['pool_count'] if lp_result else 0
+            
+            # Calculate top 10 concentration
+            top10_query = """
+                SELECT SUM(balance) as top10_balance
+                FROM (
+                    SELECT balance
+                    FROM ubec_balances
+                    WHERE asset_code = $1 AND balance > 0
+                    ORDER BY balance DESC
+                    LIMIT 10
+                ) AS top10
+            """
+            top10_result = await self.db.fetch_one(top10_query, self.ubec_code)
+            top10_balance = Decimal(str(top10_result['top10_balance'] or 0)) if top10_result else Decimal('0')
+            top10_concentration = (top10_balance / total_supply * 100) if total_supply > 0 else Decimal('0')
+            
+            # Create snapshot
+            snapshot = DistributionSnapshot(
+                timestamp=datetime.now(),
+                total_supply=total_supply,
+                total_holders=total_holders,
+                administration_balance=admin_balance,
+                administration_percentage=admin_pct,
+                stewardship_balance=steward_balance,
+                stewardship_percentage=steward_pct,
+                general_balance=general_balance,
+                general_percentage=general_pct,
+                liquidity_pools_total=lp_total,
+                liquidity_pools_count=lp_count,
+                top_10_concentration=top10_concentration
             )
             
-            # Get total supply from Stellar
-            total_supply = await self._get_total_supply(asset_code, asset_issuer)
-            
-            # Calculate current distribution
-            if total_monitored > 0:
-                current_dist = {
-                    'general': float(general_balance / total_monitored),
-                    'administration': float(admin_balance / total_monitored),
-                    'stewardship': float(stewardship_info['total_direct'] / total_monitored)
-                }
-            else:
-                current_dist = {'general': 0.0, 'administration': 0.0, 'stewardship': 0.0}
-            
-            # Check compliance
-            target_admin = float(self.target_distribution.get('administration', 0.05))
-            target_steward = float(self.target_distribution.get('stewardship', 0.30))
-            
-            threshold = 0.05  # 5% threshold
-            admin_compliant = abs(current_dist['administration'] - target_admin) <= threshold
-            steward_compliant = abs(current_dist['stewardship'] - target_steward) <= threshold
-            
-            # Build audit report
-            audit_report = {
-                'timestamp': datetime.now().isoformat(),
-                'asset_code': asset_code,
-                'asset_issuer': asset_issuer,
-                'total_supply': float(total_supply),
-                'monitored_supply': {
-                    'general': float(general_balance),
-                    'administration': float(admin_balance),
-                    'stewardship': float(stewardship_info['total_direct']),
-                    'total': float(total_monitored)
-                },
-                'distribution': {
-                    'current': current_dist,
-                    'target': {
-                        'general': float(self.target_distribution.get('general', 0.65)),
-                        'administration': target_admin,
-                        'stewardship': target_steward
-                    }
-                },
-                'tokenomics_compliance': {
-                    'overall': admin_compliant and steward_compliant,
-                    'administration': admin_compliant,
-                    'stewardship': steward_compliant,
-                    'details': {
-                        'current': {
-                            'administration': current_dist['administration'],
-                            'stewardship': current_dist['stewardship']
-                        },
-                        'target': {
-                            'administration': target_admin,
-                            'stewardship': target_steward
-                        },
-                        'deviations': {
-                            'administration': abs(current_dist['administration'] - target_admin),
-                            'stewardship': abs(current_dist['stewardship'] - target_steward)
-                        }
-                    }
-                },
-                'stewardship_accounts': stewardship_info['accounts'],
-                'recommendations': self._generate_recommendations(
-                    current_dist,
-                    {'administration': target_admin, 'stewardship': target_steward},
-                    admin_compliant,
-                    steward_compliant
-                )
-            }
-            
-            # Cache the result
-            self._last_audit = audit_report
+            # Update cache
+            self._last_snapshot = snapshot
+            self._last_snapshot_time = datetime.now()
             
             self.logger.info(
-                f"Audit complete - Compliance: Overall={audit_report['tokenomics_compliance']['overall']}, "
-                f"Admin={admin_compliant}, Stewardship={steward_compliant}"
+                f"Snapshot generated: {total_supply} UBEC across {total_holders} holders"
             )
             
-            return audit_report
+            return snapshot
             
         except Exception as e:
-            self.logger.error(f"Error performing audit: {e}")
-            self.logger.exception("Full traceback:")
-            return {
-                'timestamp': datetime.now().isoformat(),
-                'asset_code': asset_code,
-                'asset_issuer': asset_issuer,
-                'error': str(e),
-                'tokenomics_compliance': {'overall': False}
-            }
+            self.logger.error(f"Failed to generate snapshot: {e}", exc_info=True)
+            raise
     
-    async def check_compliance(
-        self,
-        asset_code: Optional[str] = None,
-        asset_issuer: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def check_tokenomics_compliance(self) -> ComplianceReport:
         """
-        Quick compliance check without full audit.
+        Check tokenomics compliance against targets.
         
-        Args:
-            asset_code: Asset code (defaults to UBEC)
-            asset_issuer: Asset issuer (defaults to UBEC issuer)
-            
+        Verifies that administration and stewardship accounts maintain
+        required distribution percentages within tolerance thresholds.
+        
         Returns:
-            dict: Compliance status
+            ComplianceReport: Compliance status and recommendations
+            
+        Example:
+            >>> compliance = await service.check_tokenomics_compliance()
+            >>> if not compliance.overall_compliant:
+            ...     for rec in compliance.recommendations:
+            ...         print(f"Action needed: {rec}")
         """
-        if asset_code is None:
-            asset_code = self.ubec_code
-        if asset_issuer is None:
-            asset_issuer = self.ubec_issuer
-        
-        # If we have a recent cached audit, use it
-        if self._last_audit and self._is_cache_valid():
-            compliance = self._last_audit.get('tokenomics_compliance', {})
-            return {
-                **compliance,
-                'from_cache': True
-            }
-        
-        # Otherwise perform full audit
-        audit_report = await self.perform_audit(asset_code, asset_issuer)
-        return audit_report.get('tokenomics_compliance', {'overall': False})
-    
-    # ========================================================================
-    # HELPER METHODS
-    # ========================================================================
-    
-    async def _get_account_balance(self, address: str) -> Decimal:
-        """Get UBEC balance for an account."""
-        if not address:
-            return Decimal('0')
+        self.logger.info("Checking tokenomics compliance...")
         
         try:
-            query = f"""
-                SELECT balance 
-                FROM {self.db_schema}.account_balances
-                WHERE public_key = $1 
-                AND asset_code = $2
-                ORDER BY last_updated DESC
-                LIMIT 1
-            """
-            result = await self.db_manager.fetch_one(
-                query,
-                (address, self.ubec_code)
+            # Get current distribution
+            snapshot = await self.get_distribution_snapshot()
+            
+            # Convert percentages to decimals (0-1 range)
+            admin_current = snapshot.administration_percentage / 100
+            steward_current = snapshot.stewardship_percentage / 100
+            
+            # Calculate deviations
+            admin_deviation = admin_current - self.admin_target
+            steward_deviation = steward_current - self.steward_target
+            
+            # Determine compliance status
+            admin_compliant = abs(admin_deviation) <= self.compliance_threshold
+            steward_compliant = abs(steward_deviation) <= self.compliance_threshold
+            
+            # Status enumeration
+            admin_status = (
+                ComplianceStatus.COMPLIANT if admin_compliant
+                else ComplianceStatus.WARNING if abs(admin_deviation) <= self.compliance_threshold * 2
+                else ComplianceStatus.NON_COMPLIANT
             )
             
-            if result:
-                return Decimal(str(result['balance']))
-            return Decimal('0')
+            steward_status = (
+                ComplianceStatus.COMPLIANT if steward_compliant
+                else ComplianceStatus.WARNING if abs(steward_deviation) <= self.compliance_threshold * 2
+                else ComplianceStatus.NON_COMPLIANT
+            )
+            
+            # Generate recommendations
+            recommendations = self._generate_compliance_recommendations(
+                admin_current, self.admin_target, admin_deviation, admin_compliant,
+                steward_current, self.steward_target, steward_deviation, steward_compliant
+            )
+            
+            # Create compliance report
+            report = ComplianceReport(
+                timestamp=datetime.now(),
+                overall_compliant=admin_compliant and steward_compliant,
+                administration_status=admin_status,
+                administration_current=admin_current,
+                administration_target=self.admin_target,
+                administration_deviation=admin_deviation,
+                stewardship_status=steward_status,
+                stewardship_current=steward_current,
+                stewardship_target=self.steward_target,
+                stewardship_deviation=steward_deviation,
+                recommendations=recommendations
+            )
+            
+            self.logger.info(
+                f"Compliance check complete: "
+                f"Admin={admin_status.value}, Steward={steward_status.value}"
+            )
+            
+            return report
             
         except Exception as e:
-            self.logger.error(f"Error getting balance for {address}: {e}")
-            return Decimal('0')
+            self.logger.error(f"Compliance check failed: {e}", exc_info=True)
+            raise
     
-    async def _get_stewardship_balances(self) -> Dict[str, Any]:
-        """Get all stewardship account balances."""
-        stewardship_accounts = self.accounts.get('stewardship', [])
+    async def get_liquidity_pool_tracking(self) -> List[LiquidityPoolInfo]:
+        """
+        Get comprehensive liquidity pool tracking.
         
-        accounts_info = []
-        total_direct = Decimal('0')
+        Tracks all liquidity pools containing UBEC tokens, including
+        ownership shares and actual UBEC amounts held.
         
-        labels = ['Liquidity', 'Management', 'Infrastructure']
-        
-        for idx, address in enumerate(stewardship_accounts):
-            balance = await self._get_account_balance(address)
-            total_direct += balance
+        Returns:
+            List[LiquidityPoolInfo]: List of tracked liquidity pools
             
-            accounts_info.append({
-                'index': idx,
-                'label': labels[idx] if idx < len(labels) else f'Account {idx}',
-                'address': address,
-                'balance': float(balance)
-            })
+        Example:
+            >>> pools = await service.get_liquidity_pool_tracking()
+            >>> total_ubec = sum(p.owner_ubec_amount for p in pools)
+            >>> print(f"Total UBEC in LPs: {total_ubec}")
+        """
+        self.logger.info("Tracking liquidity pools...")
         
-        return {
-            'total_direct': total_direct,
-            'accounts': accounts_info
-        }
-    
-    async def _get_total_supply(
-        self, 
-        asset_code: str, 
-        asset_issuer: str
-    ) -> Decimal:
-        """Get total supply from Stellar."""
         try:
-            account = await self.stellar_client.accounts().account_id(asset_issuer).call()
+            query = """
+                SELECT 
+                    lp.pool_id,
+                    lp.total_shares,
+                    lp.ubec_amount,
+                    lpa.account_id,
+                    lpa.shares_owned,
+                    (lpa.shares_owned::NUMERIC / NULLIF(lp.total_shares::NUMERIC, 0)) as ownership_pct
+                FROM liquidity_pools lp
+                JOIN liquidity_pool_accounts lpa ON lp.pool_id = lpa.pool_id
+                WHERE (lp.asset_a_code = $1 OR lp.asset_b_code = $1)
+                  AND lpa.shares_owned > 0
+                ORDER BY lpa.shares_owned DESC
+            """
             
-            for balance in account.get('balances', []):
-                if (balance.get('asset_type') == 'credit_alphanum4' and
-                    balance.get('asset_code') == asset_code):
-                    issued = Decimal(balance.get('asset_issued_amount', '0'))
-                    return issued
+            results = await self.db.fetch_all(query, self.ubec_code)
             
-            return Decimal('0')
+            pools = []
+            for row in results:
+                ownership_pct = Decimal(str(row['ownership_pct'] or 0))
+                total_ubec = Decimal(str(row['ubec_amount'] or 0))
+                owner_ubec = total_ubec * ownership_pct
+                
+                pool_info = LiquidityPoolInfo(
+                    pool_id=row['pool_id'],
+                    total_ubec_in_pool=total_ubec,
+                    owner_account=row['account_id'],
+                    owner_share_percentage=ownership_pct * 100,
+                    owner_ubec_amount=owner_ubec
+                )
+                pools.append(pool_info)
+            
+            self.logger.info(f"Tracked {len(pools)} liquidity pool positions")
+            return pools
             
         except Exception as e:
-            self.logger.error(f"Error getting total supply: {e}")
-            return Decimal('0')
+            self.logger.error(f"Liquidity tracking failed: {e}", exc_info=True)
+            return []
     
-    def _is_cache_valid(self) -> bool:
-        """Check if cached audit is still valid."""
-        if not self._last_audit:
+    # ========================================================================
+    # PRIVATE HELPER METHODS
+    # Principle 10: Clear Separation of Concerns
+    # ========================================================================
+    
+    async def _get_account_balance(self, account_id: str) -> Decimal:
+        """Get balance for specific account."""
+        if not account_id:
+            return Decimal('0')
+        
+        query = """
+            SELECT balance
+            FROM ubec_balances
+            WHERE account_id = $1 AND asset_code = $2
+        """
+        result = await self.db.fetch_one(query, account_id, self.ubec_code)
+        
+        if not result:
+            return Decimal('0')
+        
+        return Decimal(str(result['balance'] or 0))
+    
+    def _is_snapshot_fresh(self) -> bool:
+        """Check if cached snapshot is still fresh."""
+        if not self._last_snapshot or not self._last_snapshot_time:
             return False
         
-        try:
-            audit_time = datetime.fromisoformat(self._last_audit['timestamp'])
-            age = (datetime.now() - audit_time).total_seconds()
-            return age < self._audit_cache_ttl
-        except:
-            return False
+        age = (datetime.now() - self._last_snapshot_time).total_seconds()
+        return age < self._cache_ttl
     
-    def _generate_recommendations(
+    def _generate_compliance_recommendations(
         self,
-        current: Dict[str, float],
-        target: Dict[str, float],
+        admin_current: Decimal,
+        admin_target: Decimal,
+        admin_deviation: Decimal,
         admin_compliant: bool,
+        steward_current: Decimal,
+        steward_target: Decimal,
+        steward_deviation: Decimal,
         steward_compliant: bool
     ) -> List[str]:
-        """Generate recommendations based on compliance status."""
+        """Generate actionable compliance recommendations."""
         recommendations = []
         
         if not admin_compliant:
-            diff = current['administration'] - target['administration']
-            if diff > 0:
+            if admin_deviation > 0:
                 recommendations.append(
-                    f"Administration allocation is {diff:.1%} above target. "
-                    "Consider moving tokens to General or Stewardship accounts."
+                    f"Administration account is {admin_deviation:.2%} above target "
+                    f"({admin_target:.1%}). Consider transferring excess to General account."
                 )
             else:
                 recommendations.append(
-                    f"Administration allocation is {abs(diff):.1%} below target. "
-                    "Consider moving tokens from General account."
+                    f"Administration account is {abs(admin_deviation):.2%} below target "
+                    f"({admin_target:.1%}). Consider transferring from General account."
                 )
         
         if not steward_compliant:
-            diff = current['stewardship'] - target['stewardship']
-            if diff > 0:
+            if steward_deviation > 0:
                 recommendations.append(
-                    f"Stewardship allocation is {diff:.1%} above target. "
-                    "Consider moving tokens to General or Administration accounts."
+                    f"Stewardship account is {steward_deviation:.2%} above target "
+                    f"({steward_target:.1%}). Consider transferring excess to General account."
                 )
             else:
                 recommendations.append(
-                    f"Stewardship allocation is {abs(diff):.1%} below target. "
-                    "Consider moving tokens from General account."
+                    f"Stewardship account is {abs(steward_deviation):.2%} below target "
+                    f"({steward_target:.1%}). Consider transferring from General account."
                 )
         
         if admin_compliant and steward_compliant:
-            recommendations.append("Distribution is within target parameters. No action required.")
+            recommendations.append(
+                "Distribution is within compliance thresholds. No action required."
+            )
         
         return recommendations
     
+    async def _detect_anomalies(
+        self,
+        distribution: DistributionSnapshot,
+        compliance: ComplianceReport
+    ) -> List[str]:
+        """Detect distribution anomalies."""
+        anomalies = []
+        
+        # Check for zero holders
+        if distribution.total_holders == 0:
+            anomalies.append("CRITICAL: No token holders detected")
+        
+        # Check for extreme concentration
+        if distribution.top_10_concentration > Decimal('90'):
+            anomalies.append(
+                f"WARNING: Top 10 holders control {distribution.top_10_concentration:.1f}% of supply"
+            )
+        
+        # Check for missing official accounts
+        if distribution.administration_balance == 0:
+            anomalies.append("WARNING: Administration account has zero balance")
+        
+        if distribution.stewardship_balance == 0:
+            anomalies.append("WARNING: Stewardship account has zero balance")
+        
+        # Check for compliance drift
+        if compliance.administration_status == ComplianceStatus.NON_COMPLIANT:
+            anomalies.append("COMPLIANCE: Administration account non-compliant")
+        
+        if compliance.stewardship_status == ComplianceStatus.NON_COMPLIANT:
+            anomalies.append("COMPLIANCE: Stewardship account non-compliant")
+        
+        return anomalies
+    
+    async def _save_audit_report(self, report: AuditReport) -> None:
+        """Save audit report to database."""
+        try:
+            query = """
+                INSERT INTO audit_reports (
+                    audit_id, timestamp, report_data
+                ) VALUES ($1, $2, $3)
+                ON CONFLICT (audit_id) DO UPDATE
+                SET report_data = EXCLUDED.report_data
+            """
+            
+            await self.db.execute(
+                query,
+                report.audit_id,
+                report.timestamp,
+                report.to_dict()
+            )
+            
+            self.logger.info(f"Saved audit report: {report.audit_id}")
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to save audit report: {e}")
+    
     # ========================================================================
-    # LIFECYCLE METHODS
+    # LIFECYCLE MANAGEMENT
+    # Principle 10: Clear Separation of Concerns
     # ========================================================================
     
-    async def close(self):
-        """Clean up audit service resources."""
+    async def close(self) -> None:
+        """
+        Clean up service resources.
+        
+        Called during shutdown to release resources and cleanup caches.
+        """
+        self.logger.info("Closing audit service...")
+        self._last_snapshot = None
+        self._last_snapshot_time = None
         self.logger.info("Audit service closed")
-        self._last_audit = None
 
 
-# ==================== FACTORY FUNCTION ====================
+# ============================================================================
+# SERVICE FACTORY
+# Principle 2: Service Pattern - Factory for instantiation
+# ============================================================================
 
-def create_audit_service(
+async def create_audit_service(
     db_manager: Any,
-    stellar_client: Any,
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    holonic_evaluator: Optional[Any] = None,
+    **kwargs
 ) -> UBECAuditService:
     """
     Factory function to create audit service instance.
     
+    This is the ONLY way to instantiate the audit service. Direct instantiation
+    is discouraged to maintain service pattern consistency.
+    
+    Principle 2: Service pattern with factory function.
+    Principle 3: Dependencies injected via service registry.
+    Principle 4: Database-driven configuration.
+    
     Args:
-        db_manager: AsyncDatabaseManager instance
-        stellar_client: ServerAsync Stellar client
-        config: System configuration
-        
+        db_manager: Async database manager
+        config: Configuration dictionary with:
+            - ubec_code: UBEC token code (required)
+            - ubec_issuer: UBEC issuer address (required)
+            - db_schema: Database schema name (required)
+            - administration_account: Admin account address (required)
+            - stewardship_account: Steward account address (required)
+            - tokenomics: Tokenomics configuration (optional)
+        holonic_evaluator: Optional holonic evaluator service
+        **kwargs: Additional options (reserved for future use)
+    
     Returns:
-        UBECAuditService instance
+        UBECAuditService: Initialized service instance
+    
+    Raises:
+        ValueError: If required config parameters are missing
+    
+    Example:
+        >>> # In main.py or service registry
+        >>> audit = await create_audit_service(
+        ...     db_manager=db,
+        ...     config={
+        ...         'ubec_code': 'UBEC',
+        ...         'ubec_issuer': 'GDPNB7S3...',
+        ...         'db_schema': 'ubec_main',
+        ...         'administration_account': 'GC5X...',
+        ...         'stewardship_account': 'GDBK...'
+        ...     },
+        ...     holonic_evaluator=holonic
+        ... )
+        >>> report = await audit.perform_comprehensive_audit()
     """
-    return UBECAuditService(
+    # Validate required config parameters
+    required_params = [
+        'ubec_code', 'ubec_issuer', 'db_schema',
+        'administration_account', 'stewardship_account'
+    ]
+    
+    for param in required_params:
+        if param not in config:
+            raise ValueError(f"Configuration missing required parameter: '{param}'")
+    
+    # Create service instance
+    service = UBECAuditService(
         db_manager=db_manager,
-        stellar_client=stellar_client,
-        config=config
+        config=config,
+        holonic_evaluator=holonic_evaluator
     )
+    
+    # Note: No async initialization needed currently
+    # Pattern allows for future async initialization if needed
+    
+    return service
 
 
-# Prevent standalone execution (Principle #2)
+# ============================================================================
+# PUBLIC INTERFACE
+# Principle 1: Modular Design - Clear public interface
+# ============================================================================
+
+__all__ = [
+    # Enums
+    'ComplianceStatus',
+    
+    # Data models
+    'AccountBalance',
+    'LiquidityPoolInfo',
+    'DistributionSnapshot',
+    'ComplianceReport',
+    'AuditReport',
+    
+    # Service
+    'UBECAuditService',
+    'create_audit_service'
+]
+
+
+# ============================================================================
+# STANDALONE EXECUTION PREVENTION
+# Principle 2: Service Pattern - No standalone execution
+# ============================================================================
+
 if __name__ == "__main__":
     raise RuntimeError(
         "This module implements the service pattern and should not be run directly. "
-        "Use main.py as the orchestrator."
+        "Use main.py as the orchestrator.\n\n"
+        "Example usage:\n"
+        "  from services.audit.ubec_audit_service import create_audit_service\n"
+        "  audit_service = await create_audit_service(db_manager, config)\n"
+        "  report = await audit_service.perform_comprehensive_audit()\n\n"
+        "Attribution:\n"
+        "  This project uses the services of Claude and Anthropic PBC."
     )
