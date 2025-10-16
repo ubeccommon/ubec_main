@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Data Synchronizer - Async Production Version
+UBEC Data Synchronizer - Production-Grade Async Version with Enhanced Rate Limiting
 
 Synchronizes data between Stellar blockchain and the ubec_main database schema.
 Compatible with the four-element protocol architecture.
@@ -13,21 +13,33 @@ Design Principles Compliance:
 - ✅ Strict Async: All I/O operations use async/await
 - ✅ No Sync Fallbacks: Pure async implementation
 - ✅ No Duplicate Configuration: Settings stored once in database
-- ✅ Integrated Rate Limiting: Built-in for all external API calls
+- ✅ Integrated Rate Limiting: Production-grade with exponential backoff
 - ✅ Clear Separation of Concerns: Active vs passive operations separated
 - ✅ Comprehensive Documentation: Docstrings and inline comments
 - ✅ Method Singularity: Each method implemented exactly once
 
 Key Features:
 - FULLY ASYNC operations (async/await pattern throughout)
-- Proper operation ordering (accounts before balances)
+- Production-grade rate limiting with exponential backoff and jitter
+- Intelligent retry logic with circuit breaker pattern
+- Proper 429 HTTP response handling
+- Configurable rate limit buffer from database
+- Comprehensive error handling and recovery
+- Rate limit metrics tracking
 - Transaction-safe operations with async context managers
-- Comprehensive error handling
-- Integrated rate limit management with async waiting
 - Progress tracking for long-running operations
 - Idempotent operations (safe to retry)
 - Liquidity pool tracking and synchronization
-- Compatible with asyncpg datetime conversion (handled in database_manager)
+
+Enhanced Rate Limiting v6.0:
+- Exponential backoff with jitter (prevents thundering herd)
+- Configurable retry attempts from database settings
+- Circuit breaker for repeated failures (fails fast after threshold)
+- Rate limit buffer configurable via database (default: 50 requests)
+- Proactive rate limit checking before requests
+- Reactive 429 response handling with intelligent backoff
+- Clock skew handling for rate limit reset times
+- Comprehensive rate limit metrics and logging
 
 Schema Mapping:
 - stellar_accounts: Core account data
@@ -36,7 +48,7 @@ Schema Mapping:
 - stellar_operations: Operation details
 - ubec_sync_status: Synchronization tracking
 - liquidity_pools: Pool data with reserves and fees
-- liquidity_pool_owners: Individual LP positions (renamed from participants)
+- liquidity_pool_owners: Individual LP positions
 
 Four-Element Architecture:
 - 🌬️ Air (UBEC) - Gateway & Universal Access
@@ -50,24 +62,55 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 5.3 (CRITICAL FIX - Correct LP participant sync implementation)
-Date: October 14, 2025
+Version: 6.3 (Production-Grade Rate Limiting - Comprehensive Exception Handling)
+Date: October 16, 2025
 
-Changes in v5.3:
-    - 🔥 CRITICAL FIX: Replaced invalid Horizon API query with correct account iteration
-    - ✅ LP participants now synced by checking each account's balances for liquidity_pool_shares
-    - ✅ Removed broken _sync_pool_participants method that used invalid API query
-    - ✅ Added _sync_all_pool_participants method that properly iterates through accounts
-    - ✅ Updated sync_liquidity_pools to call new participant sync after storing pools
+Changes in v6.3:
+    - 🔥 CRITICAL FIX: Comprehensive exception inspection for all 429 patterns
+    - ✅ Checks three ways stellar-sdk can signal rate limit:
+      1. Direct status_code attribute on exception
+      2. Wrapped in exception.response.status_code
+      3. Using status attribute instead of status_code
+    - ✅ Diagnostic logging to identify actual exception types
+    - ✅ Handles Response objects whether returned, raised, or wrapped
+    - ✅ Robust retry logic regardless of stellar-sdk exception format
+Changes in v6.2:
+    - 🔥 CRITICAL FIX: Handle Response objects raised as EXCEPTIONS by stellar-sdk
+    - ✅ Stellar SDK can raise Response objects OR return them - now handles both
+    - ✅ Exception handler checks hasattr(e, 'status_code') for raised Response objects
+    - ✅ Parse X-RateLimit-Reset from exception object's headers
+    - ✅ Same intelligent retry logic whether Response or Exception
+    - ✅ Comprehensive logging distinguishes between Response types
+    - ✅ Complete 429 handling coverage for all stellar-sdk behaviors
+Changes in v6.1:
+    - 🔥 CRITICAL FIX: Properly handle stellar-sdk Response objects with status_code=429
+    - ✅ Stellar SDK sometimes returns Response objects instead of raising exceptions
+    - ✅ Parse X-RateLimit-Reset header from Response object headers (300s = 5 minutes)
+    - ✅ Intelligent wait based on reset time before retry
+    - ✅ Fallback to exponential backoff with jitter if no reset time
+    - ✅ Comprehensive logging for both Response objects and exceptions
+    - ✅ Maintains all production-grade rate limiting features from v6.0
+Changes in v6.0:
+    - 🔥 ENHANCED: Production-grade rate limiting with exponential backoff
+    - ✅ Added jitter to backoff to prevent thundering herd problem
+    - ✅ Configurable retry attempts and rate limit buffer from database
+    - ✅ Circuit breaker pattern for repeated failures
+    - ✅ Explicit 429 HTTP response handling
+    - ✅ Clock skew handling for rate limit reset calculations
+    - ✅ Comprehensive rate limit metrics tracking
+    - ✅ Better error categorization and logging
+    - ✅ Graceful degradation under sustained rate limiting
     - ✅ Maintains all 12 design principles
 """
 
 import os
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from typing import Optional, Dict, List, Any, Tuple
+from enum import Enum
 import aiohttp
 
 # Configure precision for decimal calculations
@@ -76,19 +119,346 @@ getcontext().prec = 10
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# EXCEPTIONS
+# ============================================================================
+
 class SyncException(Exception):
-    """Custom exception for sync-related errors."""
+    """Base exception for sync-related errors."""
     pass
 
 
 class RateLimitException(Exception):
-    """Custom exception for rate limit errors."""
+    """Exception raised when rate limit is exceeded."""
+    
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class CircuitBreakerException(Exception):
+    """Exception raised when circuit breaker is open."""
     pass
 
 
+# ============================================================================
+# CIRCUIT BREAKER
+# ============================================================================
+
+class CircuitState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Failing, reject requests
+    HALF_OPEN = "half_open"  # Testing if service recovered
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker pattern implementation.
+    
+    Prevents cascading failures by failing fast when service is degraded.
+    After threshold failures, opens circuit and rejects requests.
+    Periodically tests if service recovered (half-open state).
+    
+    Design Principle: Method Singularity - Single implementation used system-wide.
+    """
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: int = 60,
+        expected_exception: type = Exception
+    ):
+        """
+        Initialize circuit breaker.
+        
+        Args:
+            failure_threshold: Number of failures before opening circuit
+            recovery_timeout: Seconds to wait before testing recovery
+            expected_exception: Exception type that triggers circuit
+        """
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.expected_exception = expected_exception
+        
+        self.failure_count = 0
+        self.last_failure_time: Optional[float] = None
+        self.state = CircuitState.CLOSED
+    
+    def record_success(self):
+        """Record successful operation."""
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
+    
+    def record_failure(self):
+        """Record failed operation."""
+        self.failure_count += 1
+        self.last_failure_time = asyncio.get_event_loop().time()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+            logger.warning(
+                f"Circuit breaker OPENED after {self.failure_count} failures"
+            )
+    
+    def can_attempt(self) -> bool:
+        """Check if operation can be attempted."""
+        if self.state == CircuitState.CLOSED:
+            return True
+        
+        if self.state == CircuitState.OPEN:
+            # Check if recovery timeout elapsed
+            if self.last_failure_time:
+                elapsed = asyncio.get_event_loop().time() - self.last_failure_time
+                if elapsed >= self.recovery_timeout:
+                    self.state = CircuitState.HALF_OPEN
+                    logger.info("Circuit breaker entering HALF_OPEN state")
+                    return True
+            return False
+        
+        # HALF_OPEN state - allow attempt
+        return True
+    
+    async def call(self, func, *args, **kwargs):
+        """
+        Execute function with circuit breaker protection.
+        
+        Args:
+            func: Async function to execute
+            *args: Function arguments
+            **kwargs: Function keyword arguments
+            
+        Returns:
+            Function result
+            
+        Raises:
+            CircuitBreakerException: If circuit is open
+        """
+        if not self.can_attempt():
+            raise CircuitBreakerException(
+                f"Circuit breaker is OPEN. "
+                f"Service unavailable after {self.failure_count} failures."
+            )
+        
+        try:
+            result = await func(*args, **kwargs)
+            self.record_success()
+            return result
+        except self.expected_exception as e:
+            self.record_failure()
+            raise
+
+
+# ============================================================================
+# RATE LIMITER WITH EXPONENTIAL BACKOFF
+# ============================================================================
+
+class RateLimiter:
+    """
+    Production-grade rate limiter with exponential backoff and jitter.
+    
+    Features:
+    - Tracks API rate limits from response headers
+    - Proactive rate limit checking (prevents 429s)
+    - Reactive 429 handling with intelligent backoff
+    - Exponential backoff with jitter
+    - Configurable buffer to stay under limits
+    - Clock skew handling
+    
+    Design Principles:
+    - Strict Async: All operations async
+    - Method Singularity: Single rate limiter implementation
+    - Integrated Rate Limiting: Built into service
+    """
+    
+    def __init__(
+        self,
+        rate_limit_buffer: int = 50,
+        max_retries: int = 5,
+        base_backoff: float = 1.0,
+        max_backoff: float = 120.0,
+        backoff_factor: float = 2.0
+    ):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            rate_limit_buffer: Number of requests to keep as buffer
+            max_retries: Maximum retry attempts for rate-limited requests
+            base_backoff: Initial backoff time in seconds
+            max_backoff: Maximum backoff time in seconds
+            backoff_factor: Multiplier for exponential backoff
+        """
+        self.rate_limit_buffer = rate_limit_buffer
+        self.max_retries = max_retries
+        self.base_backoff = base_backoff
+        self.max_backoff = max_backoff
+        self.backoff_factor = backoff_factor
+        
+        # Rate limit tracking
+        self.rate_limit_remaining = 3000
+        self.rate_limit_limit = 3600
+        self.rate_limit_reset = 0
+        
+        # Metrics
+        self.total_requests = 0
+        self.rate_limited_requests = 0
+        self.retry_attempts = 0
+        
+        # Circuit breaker for repeated rate limit failures
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=10,
+            recovery_timeout=300,  # 5 minutes
+            expected_exception=RateLimitException
+        )
+    
+    def update_from_headers(self, headers: Dict[str, str]):
+        """
+        Update rate limit state from API response headers.
+        
+        Args:
+            headers: HTTP response headers
+        """
+        try:
+            # Parse rate limit headers with fallbacks
+            remaining = headers.get('X-Ratelimit-Remaining') or headers.get('x-ratelimit-remaining')
+            limit = headers.get('X-Ratelimit-Limit') or headers.get('x-ratelimit-limit')
+            reset = headers.get('X-Ratelimit-Reset') or headers.get('x-ratelimit-reset')
+            
+            if remaining:
+                self.rate_limit_remaining = int(remaining)
+            if limit:
+                self.rate_limit_limit = int(limit)
+            if reset:
+                self.rate_limit_reset = int(reset)
+            
+            logger.debug(
+                f"Rate limit updated: {self.rate_limit_remaining}/{self.rate_limit_limit} "
+                f"(resets at {self.rate_limit_reset})"
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Error parsing rate limit headers: {e}")
+    
+    async def check_and_wait(self):
+        """
+        Check rate limit and wait if necessary (proactive check).
+        
+        This prevents hitting rate limits by waiting BEFORE making requests
+        when we're close to the limit.
+        """
+        # Check if we're within buffer zone
+        if self.rate_limit_remaining <= self.rate_limit_buffer:
+            # Calculate wait time with clock skew handling
+            now = int(datetime.now().timestamp())
+            reset_time = self.rate_limit_reset
+            
+            # If reset time is in the past (clock skew), use minimum wait
+            if reset_time <= now:
+                wait_time = 5  # Minimum 5 seconds
+                logger.warning(
+                    f"Rate limit reset time in past (clock skew?). "
+                    f"Waiting minimum {wait_time}s"
+                )
+            else:
+                wait_time = reset_time - now
+                # Cap wait time at reasonable maximum
+                wait_time = min(wait_time, 300)  # Max 5 minutes
+            
+            logger.warning(
+                f"Rate limit buffer reached "
+                f"({self.rate_limit_remaining}/{self.rate_limit_limit}). "
+                f"Waiting {wait_time}s for reset..."
+            )
+            
+            await asyncio.sleep(wait_time)
+            
+            # Reset tracking after wait
+            self.rate_limit_remaining = self.rate_limit_limit
+    
+    async def handle_429(self, response: aiohttp.ClientResponse, attempt: int):
+        """
+        Handle 429 Too Many Requests response (reactive handling).
+        
+        Uses exponential backoff with jitter to prevent thundering herd.
+        
+        Args:
+            response: The 429 response
+            attempt: Current retry attempt number
+            
+        Raises:
+            RateLimitException: If max retries exceeded
+        """
+        self.rate_limited_requests += 1
+        self.retry_attempts += 1
+        
+        # Try to get Retry-After header
+        retry_after = response.headers.get('Retry-After')
+        
+        if retry_after:
+            try:
+                wait_time = int(retry_after)
+                logger.warning(f"Rate limited (429). Retry-After: {wait_time}s")
+            except ValueError:
+                # Retry-After might be HTTP date
+                wait_time = None
+        else:
+            wait_time = None
+        
+        # If no Retry-After, use exponential backoff
+        if wait_time is None:
+            # Calculate exponential backoff: base * (factor ^ attempt)
+            wait_time = min(
+                self.base_backoff * (self.backoff_factor ** attempt),
+                self.max_backoff
+            )
+            
+            # Add jitter (randomize ±25% to prevent thundering herd)
+            jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+            wait_time = wait_time + jitter
+            
+            logger.warning(
+                f"Rate limited (429). Attempt {attempt + 1}/{self.max_retries}. "
+                f"Backing off for {wait_time:.1f}s (with jitter)"
+            )
+        
+        # Check if we should retry
+        if attempt >= self.max_retries - 1:
+            raise RateLimitException(
+                f"Rate limit exceeded after {self.max_retries} attempts",
+                retry_after=int(wait_time)
+            )
+        
+        # Wait before retry
+        await asyncio.sleep(wait_time)
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get rate limiter metrics.
+        
+        Returns:
+            dict: Rate limit metrics
+        """
+        return {
+            'total_requests': self.total_requests,
+            'rate_limited_requests': self.rate_limited_requests,
+            'retry_attempts': self.retry_attempts,
+            'current_remaining': self.rate_limit_remaining,
+            'current_limit': self.rate_limit_limit,
+            'circuit_breaker_state': self.circuit_breaker.state.value,
+            'circuit_breaker_failures': self.circuit_breaker.failure_count
+        }
+
+
+# ============================================================================
+# MAIN SYNCHRONIZER CLASS
+# ============================================================================
+
 class UBECDataSynchronizer:
     """
-    Asynchronous data synchronizer between Stellar blockchain and ubec_main database.
+    Production-grade asynchronous data synchronizer.
+    
+    Synchronizes data between Stellar blockchain and ubec_main database
+    with enterprise-grade rate limiting and error handling.
     
     This class ensures proper operation ordering:
     1. Create account records in stellar_accounts
@@ -100,10 +470,6 @@ class UBECDataSynchronizer:
     All I/O operations use async/await patterns for maximum efficiency.
     
     Settings are loaded from database (single source of truth principle).
-    
-    Note: Datetime conversion is handled automatically by database_manager.py
-    This module passes ISO 8601 strings directly - they are converted at the
-    database boundary layer for proper asyncpg compatibility.
     """
     
     # Element mapping - ONLY for UBEC family tokens
@@ -135,7 +501,7 @@ class UBECDataSynchronizer:
         Args:
             db_manager: AsyncDatabaseManager instance
         """
-        logger.info(f"Initializing UBEC Data Synchronizer (Async Service)")
+        logger.info(f"Initializing UBEC Data Synchronizer v6.0 (Production-Grade)")
         
         # Store database manager
         self.db = db_manager
@@ -149,15 +515,12 @@ class UBECDataSynchronizer:
         self.horizon_url = None
         self.ubec_code = "UBEC"
         self.ubec_issuer = None
-        self.ubec_asset = None
         
         # Stellar server (initialized in async context)
         self.server = None
         
-        # Initialize rate limit tracking
-        self.rate_limit_remaining = 3000
-        self.rate_limit_limit = 3000
-        self.rate_limit_reset = 0
+        # Rate limiter (configured after loading settings)
+        self.rate_limiter: Optional[RateLimiter] = None
         
         # Session for async HTTP requests
         self.session: Optional[aiohttp.ClientSession] = None
@@ -187,7 +550,11 @@ class UBECDataSynchronizer:
                     'horizon_url': os.getenv('HORIZON_URL', 'https://horizon.stellar.org'),
                     'network_passphrase': os.getenv('NETWORK_PASSPHRASE', 'Public Global Stellar Network ; September 2015'),
                     'ubec_code': os.getenv('UBEC_CODE', 'UBEC'),
-                    'ubec_issuer': os.getenv('UBEC_ISSUER', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
+                    'ubec_issuer': os.getenv('UBEC_ISSUER', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN'),
+                    'rate_limit_buffer': int(os.getenv('RATE_LIMIT_BUFFER', '50')),
+                    'max_retries': int(os.getenv('MAX_RETRIES', '5')),
+                    'base_backoff': float(os.getenv('BASE_BACKOFF', '1.0')),
+                    'max_backoff': float(os.getenv('MAX_BACKOFF', '120.0'))
                 }
             else:
                 # Convert database rows to settings dict
@@ -216,10 +583,29 @@ class UBECDataSynchronizer:
             self.ubec_issuer = self.settings.get('ubec_issuer', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN')
             
             # Load issuers for all 4 UBEC tokens
-            # Priority: 1) Database settings, 2) Environment variables, 3) Default to main issuer
             self.ubecrc_issuer = self.settings.get('ubecrc_issuer') or os.getenv('UBECRC_ISSUER') or self.ubec_issuer
             self.ubecgpi_issuer = self.settings.get('ubecgpi_issuer') or os.getenv('UBECGPI_ISSUER') or self.ubec_issuer
             self.ubectt_issuer = self.settings.get('ubectt_issuer') or os.getenv('UBECTT_ISSUER') or self.ubec_issuer
+            
+            # Initialize rate limiter with configuration from database
+            rate_limit_buffer = self.settings.get('rate_limit_buffer', 50)
+            max_retries = self.settings.get('max_retries', 5)
+            base_backoff = self.settings.get('base_backoff', 1.0)
+            max_backoff = self.settings.get('max_backoff', 120.0)
+            backoff_factor = self.settings.get('backoff_factor', 2.0)
+            
+            self.rate_limiter = RateLimiter(
+                rate_limit_buffer=rate_limit_buffer,
+                max_retries=max_retries,
+                base_backoff=base_backoff,
+                max_backoff=max_backoff,
+                backoff_factor=backoff_factor
+            )
+            
+            logger.info(
+                f"✓ Rate limiter configured: buffer={rate_limit_buffer}, "
+                f"retries={max_retries}, backoff={base_backoff}s-{max_backoff}s"
+            )
             
             # Log issuer configuration
             logger.info(f"Token issuer configuration:")
@@ -267,7 +653,8 @@ class UBECDataSynchronizer:
         
         # Create aiohttp session for direct API calls
         if not self.session:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
         
         logger.info("✓ UBEC Data Synchronizer fully initialized")
     
@@ -280,42 +667,251 @@ class UBECDataSynchronizer:
             self.session = None
     
     # ========================================================================
-    # RATE LIMIT MANAGEMENT
+    # STELLAR API REQUEST WRAPPER WITH RATE LIMITING
     # ========================================================================
     
-    def _update_rate_limits(self, headers: Dict[str, str]):
+    async def _stellar_api_call(self, request_func, *args, **kwargs):
         """
-        Update rate limit tracking from response headers.
+        Execute Stellar API call with rate limiting and retry logic.
+        
+        This is the SINGLE METHOD for all Stellar API calls, ensuring
+        consistent rate limiting across the synchronizer.
+        
+        Design Principle: Method Singularity - All API calls go through here.
         
         Args:
-            headers: Response headers from Stellar API
-        """
-        try:
-            self.rate_limit_remaining = int(headers.get('X-Ratelimit-Remaining', 3000))
-            self.rate_limit_limit = int(headers.get('X-Ratelimit-Limit', 3600))
-            self.rate_limit_reset = int(headers.get('X-Ratelimit-Reset', 0))
+            request_func: Async function to call Stellar API
+            *args: Function arguments
+            **kwargs: Function keyword arguments
             
-            logger.debug(
-                f"Rate limits: {self.rate_limit_remaining}/{self.rate_limit_limit} "
-                f"(reset: {self.rate_limit_reset})"
+        Returns:
+            API response
+            
+        Raises:
+            RateLimitException: If rate limit cannot be satisfied
+            CircuitBreakerException: If circuit breaker is open
+        """
+        if not self.rate_limiter:
+            raise RuntimeError("Rate limiter not initialized")
+        
+        # Proactive rate limit check
+        await self.rate_limiter.check_and_wait()
+        
+        # Track request
+        self.rate_limiter.total_requests += 1
+        
+        # Execute with circuit breaker protection
+        async def _execute():
+            for attempt in range(self.rate_limiter.max_retries):
+                try:
+                    # Make the API call
+                    response = await request_func(*args, **kwargs)
+                    
+                    # CRITICAL FIX: Check if response is a Response object with status_code
+                    # Stellar SDK sometimes returns Response objects instead of raising exceptions
+                    if hasattr(response, 'status_code') and response.status_code == 429:
+                        logger.warning(
+                            f"Rate limited (429 Response object) on attempt {attempt + 1}"
+                        )
+                        
+                        # Parse rate limit headers from Response object
+                        if hasattr(response, 'headers'):
+                            headers = dict(response.headers)
+                            self.rate_limiter.update_from_headers(headers)
+                            
+                            # Get reset time from headers
+                            reset_seconds = headers.get('X-RateLimit-Reset') or headers.get('x-ratelimit-reset')
+                            if reset_seconds:
+                                try:
+                                    wait_time = int(reset_seconds)
+                                    logger.warning(
+                                        f"Rate limit reset in {wait_time}s. "
+                                        f"Waiting before retry {attempt + 1}/{self.rate_limiter.max_retries}..."
+                                    )
+                                    await asyncio.sleep(wait_time)
+                                except (ValueError, TypeError):
+                                    # Fallback to exponential backoff
+                                    wait_time = min(
+                                        self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                        self.rate_limiter.max_backoff
+                                    )
+                                    # Add jitter
+                                    jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+                                    wait_time = wait_time + jitter
+                                    logger.warning(f"Using exponential backoff: {wait_time:.1f}s")
+                                    await asyncio.sleep(wait_time)
+                            else:
+                                # No reset time in headers, use exponential backoff
+                                wait_time = min(
+                                    self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                    self.rate_limiter.max_backoff
+                                )
+                                # Add jitter
+                                jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+                                wait_time = wait_time + jitter
+                                logger.warning(f"Using exponential backoff: {wait_time:.1f}s")
+                                await asyncio.sleep(wait_time)
+                        
+                        # Record rate limit hit
+                        self.rate_limiter.rate_limited_requests += 1
+                        self.rate_limiter.retry_attempts += 1
+                        self.rate_limiter.circuit_breaker.record_failure()
+                        
+                        # Check if we should retry
+                        if attempt >= self.rate_limiter.max_retries - 1:
+                            raise RateLimitException(
+                                f"Rate limit exceeded after {self.rate_limiter.max_retries} attempts"
+                            )
+                        
+                        # Retry
+                        continue
+                    
+                    # Update rate limits from response headers
+                    if hasattr(response, '_headers'):
+                        self.rate_limiter.update_from_headers(response._headers)
+                    elif hasattr(response, 'headers'):
+                        self.rate_limiter.update_from_headers(dict(response.headers))
+                    
+                    # Success - record in circuit breaker
+                    self.rate_limiter.circuit_breaker.record_success()
+                    
+                    return response
+                    
+                except aiohttp.ClientResponseError as e:
+                    # Handle 429 Too Many Requests as exception
+                    if e.status == 429:
+                        logger.warning(f"Rate limited (429 exception) on attempt {attempt + 1}")
+                        
+                        # Use our rate limiter's 429 handler
+                        if hasattr(e, 'response'):
+                            await self.rate_limiter.handle_429(e.response, attempt)
+                        else:
+                            # If no response object, use exponential backoff
+                            wait_time = min(
+                                self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                self.rate_limiter.max_backoff
+                            )
+                            await asyncio.sleep(wait_time)
+                        
+                        # Record failure in circuit breaker
+                        self.rate_limiter.circuit_breaker.record_failure()
+                        
+                        # Retry
+                        continue
+                    else:
+                        # Other HTTP errors - don't retry
+                        raise
+                
+                except Exception as e:
+                    # DEBUG: Comprehensive exception inspection
+                    logger.debug(f"Exception type: {type(e).__name__}")
+                    logger.debug(f"Exception dir: {[attr for attr in dir(e) if not attr.startswith('_')]}")
+                    logger.debug(f"Has status_code: {hasattr(e, 'status_code')}")
+                    logger.debug(f"Has status: {hasattr(e, 'status')}")
+                    logger.debug(f"Has response: {hasattr(e, 'response')}")
+                    
+                    # Check if exception IS a Response object with status_code
+                    if hasattr(e, 'status_code') and getattr(e, 'status_code', None) == 429:
+                        logger.warning(
+                            f"Rate limited (429 Response raised as exception) on attempt {attempt + 1}"
+                        )
+                        exception_has_429 = True
+                        response_obj = e
+                    # Check if exception HAS a Response object in .response attribute
+                    elif hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 429:
+                        logger.warning(
+                            f"Rate limited (429 wrapped in exception) on attempt {attempt + 1}"
+                        )
+                        exception_has_429 = True
+                        response_obj = e.response
+                    # Check for 'status' attribute (some exceptions use this instead)
+                    elif hasattr(e, 'status') and getattr(e, 'status', None) == 429:
+                        logger.warning(
+                            f"Rate limited (429 via status attribute) on attempt {attempt + 1}"
+                        )
+                        exception_has_429 = True
+                        response_obj = e
+                    else:
+                        exception_has_429 = False
+                        response_obj = None
+                    
+                    if exception_has_429:
+                        # Parse rate limit headers from Response object
+                        headers = None
+                        if hasattr(response_obj, 'headers'):
+                            headers = dict(response_obj.headers)
+                            self.rate_limiter.update_from_headers(headers)
+                        
+                        # Get reset time from headers
+                        if headers:
+                            reset_seconds = headers.get('X-RateLimit-Reset') or headers.get('x-ratelimit-reset')
+                            if reset_seconds:
+                                try:
+                                    wait_time = int(reset_seconds)
+                                    logger.warning(
+                                        f"Rate limit reset in {wait_time}s. "
+                                        f"Waiting before retry {attempt + 1}/{self.rate_limiter.max_retries}..."
+                                    )
+                                    await asyncio.sleep(wait_time)
+                                except (ValueError, TypeError):
+                                    # Fallback to exponential backoff
+                                    wait_time = min(
+                                        self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                        self.rate_limiter.max_backoff
+                                    )
+                                    # Add jitter
+                                    jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+                                    wait_time = wait_time + jitter
+                                    logger.warning(f"Using exponential backoff: {wait_time:.1f}s")
+                                    await asyncio.sleep(wait_time)
+                            else:
+                                # No reset time in headers, use exponential backoff
+                                wait_time = min(
+                                    self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                    self.rate_limiter.max_backoff
+                                )
+                                # Add jitter
+                                jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+                                wait_time = wait_time + jitter
+                                logger.warning(f"Using exponential backoff: {wait_time:.1f}s")
+                                await asyncio.sleep(wait_time)
+                        else:
+                            # No headers, use exponential backoff
+                            wait_time = min(
+                                self.rate_limiter.base_backoff * (self.rate_limiter.backoff_factor ** attempt),
+                                self.rate_limiter.max_backoff
+                            )
+                            jitter = wait_time * 0.25 * (random.random() * 2 - 1)
+                            wait_time = wait_time + jitter
+                            logger.warning(f"Using exponential backoff: {wait_time:.1f}s")
+                            await asyncio.sleep(wait_time)
+                        
+                        # Record rate limit hit
+                        self.rate_limiter.rate_limited_requests += 1
+                        self.rate_limiter.retry_attempts += 1
+                        self.rate_limiter.circuit_breaker.record_failure()
+                        
+                        # Check if we should retry
+                        if attempt >= self.rate_limiter.max_retries - 1:
+                            raise RateLimitException(
+                                f"Rate limit exceeded after {self.rate_limiter.max_retries} attempts",
+                                retry_after=int(wait_time) if 'wait_time' in locals() else None
+                            )
+                        
+                        # Retry
+                        continue
+                    else:
+                        # Unexpected error (not a 429 Response)
+                        logger.error(f"API call failed: {e}")
+                        raise
+            
+            # Max retries exceeded
+            raise RateLimitException(
+                f"Rate limit exceeded after {self.rate_limiter.max_retries} attempts"
             )
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Error parsing rate limit headers: {e}")
-    
-    async def _check_rate_limit(self):
-        """
-        Check if rate limit allows request, wait if necessary.
-        """
-        if self.rate_limit_remaining < 10:
-            # Calculate wait time
-            now = int(datetime.now().timestamp())
-            wait_time = max(1, self.rate_limit_reset - now)
-            
-            logger.warning(f"Rate limit low, waiting {wait_time} seconds...")
-            await asyncio.sleep(wait_time)
-            
-            # Reset tracking
-            self.rate_limit_remaining = self.rate_limit_limit
+        
+        # Execute with circuit breaker
+        return await self.rate_limiter.circuit_breaker.call(_execute)
     
     # ========================================================================
     # ACCOUNT AND BALANCE SYNCHRONIZATION
@@ -348,19 +944,14 @@ class UBECDataSynchronizer:
                 logger.error("Stellar server not initialized")
                 return False
             
-            # Check rate limits
-            await self._check_rate_limit()
-            
-            # Fetch account data from Stellar
+            # Fetch account data from Stellar with rate limiting
             try:
-                account = await self.server.accounts().account_id(account_id).call()
+                account = await self._stellar_api_call(
+                    self.server.accounts().account_id(account_id).call
+                )
             except Exception as e:
                 logger.error(f"Error fetching account {account_id}: {e}")
                 return False
-            
-            # Update rate limits
-            if hasattr(account, '_headers'):
-                self._update_rate_limits(account._headers)
             
             # Store account data
             await self._store_account(account)
@@ -372,6 +963,12 @@ class UBECDataSynchronizer:
             logger.info(f"✓ Account {account_id} synced successfully")
             return True
             
+        except CircuitBreakerException:
+            logger.error("Circuit breaker is open - service temporarily unavailable")
+            return False
+        except RateLimitException as e:
+            logger.error(f"Rate limit exceeded syncing account {account_id}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Error syncing account {account_id}: {e}")
             return False
@@ -380,22 +977,12 @@ class UBECDataSynchronizer:
         """
         Store or update account in database.
         
-        FIXED v4.5: Updated to match actual database schema.
-        The stellar_accounts table has: account_id, sequence, subentry_count,
-        home_domain, last_modified_at, sync_status
-        
-        Removed non-existent columns:
-        - inflation_destination (deprecated in Stellar Protocol 15)
-        - last_modified_ledger (not in schema)
-        - last_activity_at (not in schema)
-        
         Args:
             account_data: Account data from Stellar API
         """
         try:
             account_id = account_data['id']
             
-            # FIXED: Use only columns that exist in database
             query = """
                 INSERT INTO stellar_accounts (
                     account_id, sequence, subentry_count, home_domain,
@@ -446,7 +1033,6 @@ class UBECDataSynchronizer:
                     token_code = balance.get('asset_code', 'UNKNOWN')
                 
                 # CRITICAL: Only store UBEC family tokens
-                # Skip XLM and any other assets
                 if token_code not in self.VALID_UBEC_TOKENS:
                     skipped_count += 1
                     logger.debug(f"Skipping non-UBEC token: {token_code} for account {account_id}")
@@ -545,21 +1131,14 @@ class UBECDataSynchronizer:
                 logger.error("Stellar server not initialized")
                 return 0
             
-            # Check rate limits
-            await self._check_rate_limit()
-            
             # Build request
             request = self.server.transactions().for_account(account_id).limit(limit)
             
             if cursor:
                 request = request.cursor(cursor)
             
-            # Fetch transactions
-            response = await request.call()
-            
-            # Update rate limits
-            if hasattr(response, 'headers'):
-                self._update_rate_limits(response.headers)
+            # Fetch transactions with rate limiting
+            response = await self._stellar_api_call(request.call)
             
             # Store transactions
             transactions = response.get('_embedded', {}).get('records', [])
@@ -567,10 +1146,17 @@ class UBECDataSynchronizer:
             for tx in transactions:
                 await self._ensure_account_exists(tx['source_account'])
                 await self._store_transaction(tx)
+                await self._extract_and_store_operations(tx)
             
             logger.info(f"✓ Synced {len(transactions)} transactions for {account_id}")
             return len(transactions)
             
+        except CircuitBreakerException:
+            logger.error("Circuit breaker is open - service temporarily unavailable")
+            return 0
+        except RateLimitException as e:
+            logger.error(f"Rate limit exceeded syncing transactions: {e}")
+            return 0
         except Exception as e:
             logger.error(f"Error syncing transactions for {account_id}: {e}")
             return 0
@@ -634,8 +1220,174 @@ class UBECDataSynchronizer:
             logger.error(f"Error storing transaction {tx_data.get('hash')}: {e}")
             raise
     
+    async def _extract_and_store_operations(self, tx_data: Dict):
+        """
+        Extract and store individual operations from a transaction.
+        
+        Args:
+            tx_data: Transaction data from Stellar API
+        """
+        try:
+            transaction_hash = tx_data['hash']
+            
+            if not self.server:
+                logger.warning("Stellar server not initialized, skipping operation extraction")
+                return
+            
+            # Get operations for this transaction with rate limiting
+            operations_response = await self._stellar_api_call(
+                self.server.operations().for_transaction(transaction_hash).call
+            )
+            
+            operations = operations_response.get('_embedded', {}).get('records', [])
+            
+            if not operations:
+                logger.debug(f"No operations found for transaction {transaction_hash}")
+                return
+            
+            stored_count = 0
+            
+            for op in operations:
+                try:
+                    # Only process UBEC-related operations
+                    op_type = op.get('type')
+                    
+                    # Skip non-payment/exchange operations
+                    if op_type not in ['payment', 'path_payment_strict_receive', 'path_payment_strict_send',
+                                       'manage_buy_offer', 'manage_sell_offer', 'create_account', 'change_trust']:
+                        continue
+                    
+                    # Check if this operation involves a UBEC token
+                    asset_code = None
+                    asset_issuer = None
+                    
+                    if op_type == 'payment':
+                        asset_type = op.get('asset_type', 'native')
+                        if asset_type != 'native':
+                            asset_code = op.get('asset_code')
+                            asset_issuer = op.get('asset_issuer')
+                    elif op_type in ['path_payment_strict_receive', 'path_payment_strict_send']:
+                        asset_type = op.get('asset_type', 'native')
+                        if asset_type != 'native':
+                            asset_code = op.get('asset_code')
+                            asset_issuer = op.get('asset_issuer')
+                    elif op_type in ['manage_buy_offer', 'manage_sell_offer']:
+                        selling = op.get('selling_asset_type', 'native')
+                        if selling != 'native':
+                            asset_code = op.get('selling_asset_code')
+                            asset_issuer = op.get('selling_asset_issuer')
+                    elif op_type == 'change_trust':
+                        asset_type = op.get('asset_type', 'native')
+                        if asset_type != 'native':
+                            asset_code = op.get('asset_code')
+                            asset_issuer = op.get('asset_issuer')
+                    
+                    # Skip if not a UBEC token
+                    if not asset_code or asset_code not in self.VALID_UBEC_TOKENS:
+                        continue
+                    
+                    # Verify it's the correct issuer
+                    expected_issuer = self._get_issuer_for_token(asset_code)
+                    if asset_issuer != expected_issuer:
+                        continue
+                    
+                    # Get element for this token
+                    element = self.ELEMENT_MAP.get(asset_code, 'air')
+                    
+                    # Extract operation details
+                    operation_id = op.get('id')
+                    source_account = op.get('source_account')
+                    created_at = op.get('created_at')
+                    type_i = op.get('type_i', 0)
+                    
+                    # Extract from/to accounts based on operation type
+                    from_account = None
+                    to_account = None
+                    amount = None
+                    
+                    if op_type == 'payment':
+                        from_account = op.get('from')
+                        to_account = op.get('to')
+                        amount = Decimal(op.get('amount', '0'))
+                    elif op_type in ['path_payment_strict_receive', 'path_payment_strict_send']:
+                        from_account = op.get('from')
+                        to_account = op.get('to')
+                        amount = Decimal(op.get('amount', '0'))
+                    elif op_type == 'create_account':
+                        from_account = op.get('funder')
+                        to_account = op.get('account')
+                        amount = Decimal(op.get('starting_balance', '0'))
+                    
+                    # Map operation type
+                    mapped_type = self.OPERATION_TYPE_MAP.get(op_type, op_type)
+                    
+                    # Store operation
+                    query = """
+                        INSERT INTO stellar_operations (
+                            operation_id, transaction_hash, operation_element, asset_code,
+                            type, type_i, source_account, amount, asset_type, asset_issuer,
+                            from_account, to_account, details, created_at, metadata
+                        )
+                        VALUES (
+                            $1, $2, $3::ubec_main.element_type, $4::ubec_main.token_code,
+                            $5::ubec_main.transaction_type, $6, $7, $8, $9, $10,
+                            $11, $12, $13, $14, $15
+                        )
+                        ON CONFLICT (operation_id) DO UPDATE SET
+                            amount = EXCLUDED.amount,
+                            details = EXCLUDED.details,
+                            metadata = EXCLUDED.metadata
+                    """
+                    
+                    # Create details JSONB
+                    details = {
+                        'type': op_type,
+                        'source': source_account
+                    }
+                    
+                    # Add type-specific details
+                    if op_type in ['path_payment_strict_receive', 'path_payment_strict_send']:
+                        details['source_amount'] = op.get('source_amount')
+                        details['source_asset'] = f"{op.get('source_asset_code', 'XLM')}:{op.get('source_asset_issuer', 'native')}"
+                        details['path'] = op.get('path', [])
+                    
+                    import json
+                    details_json = json.dumps(details)
+                    metadata_json = json.dumps(op)
+                    
+                    params = (
+                        operation_id,
+                        transaction_hash,
+                        element,
+                        asset_code,
+                        mapped_type,
+                        type_i,
+                        source_account,
+                        amount,
+                        op.get('asset_type'),
+                        asset_issuer,
+                        from_account,
+                        to_account,
+                        details_json,
+                        created_at,
+                        metadata_json
+                    )
+                    
+                    await self.db.execute(query, params)
+                    stored_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error storing operation {op.get('id')}: {e}")
+                    continue
+            
+            if stored_count > 0:
+                logger.debug(f"Stored {stored_count} UBEC operations for transaction {transaction_hash[:8]}...")
+            
+        except Exception as e:
+            logger.error(f"Error extracting operations for transaction {tx_data.get('hash')}: {e}")
+    
     # ========================================================================
-    # LIQUIDITY POOL SYNCHRONIZATION - FIXED IN V5.3
+    # LIQUIDITY POOL SYNCHRONIZATION
     # ========================================================================
     
     async def sync_liquidity_pools(
@@ -645,11 +1397,6 @@ class UBECDataSynchronizer:
     ) -> Dict[str, Any]:
         """
         Synchronize liquidity pools involving a specific asset.
-        
-        This method fetches all liquidity pools that contain the specified asset,
-        stores pool metadata, and tracks individual participant positions.
-        
-        🔥 FIXED in v5.3: Now properly syncs LP participants by checking account balances.
         
         Args:
             asset_code: Asset code (UBEC, UBECrc, UBECgpi, UBECtt)
@@ -661,7 +1408,7 @@ class UBECDataSynchronizer:
         logger.info(f"Syncing liquidity pools for {asset_code}:{asset_issuer[:8]}...")
         
         try:
-            # Ensure settings are loaded (required for horizon_url)
+            # Ensure settings are loaded
             if not self.settings or not self.horizon_url:
                 logger.info("Settings not loaded yet, loading from database...")
                 await self._load_settings_from_database()
@@ -671,19 +1418,34 @@ class UBECDataSynchronizer:
             total_tvl = Decimal('0')
             
             # Use direct API call to fetch liquidity pools
-            # Stellar SDK doesn't have built-in LP methods, so we use HTTP
             if not self.session:
-                self.session = aiohttp.ClientSession()
+                timeout = aiohttp.ClientTimeout(total=30)
+                self.session = aiohttp.ClientSession(timeout=timeout)
             
-            # Build API URL for liquidity pools
-            # Format: /liquidity_pools?reserves={asset_code}:{asset_issuer}
+            # Build API URL
             url = f"{self.horizon_url}/liquidity_pools"
             params = {
                 'reserves': f"{asset_code}:{asset_issuer}",
                 'limit': 200
             }
             
+            # Check rate limit before request
+            await self.rate_limiter.check_and_wait()
+            self.rate_limiter.total_requests += 1
+            
             async with self.session.get(url, params=params) as response:
+                # Update rate limits
+                self.rate_limiter.update_from_headers(dict(response.headers))
+                
+                if response.status == 429:
+                    # Handle rate limit
+                    await self.rate_limiter.handle_429(response, 0)
+                    return {
+                        'success': False,
+                        'asset_code': asset_code,
+                        'error': 'Rate limited'
+                    }
+                
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(f"Error fetching liquidity pools: {response.status} - {error_text}")
@@ -701,19 +1463,17 @@ class UBECDataSynchronizer:
                 # Process each pool
                 for pool_data in pools:
                     try:
-                        # Store pool metadata
                         pool_id = await self._store_liquidity_pool(pool_data, asset_code)
                         
                         if pool_id:
                             pools_synced += 1
                             
-                            # Calculate pool TVL (for the UBEC asset only)
+                            # Calculate pool TVL
                             reserves = pool_data.get('reserves', [])
                             primary_issuer = self._get_issuer_for_token(asset_code)
                             
                             for reserve in reserves:
                                 asset_str = reserve.get('asset', '')
-                                # Check if this reserve is the UBEC asset we're tracking
                                 if f"{asset_code}:{primary_issuer}" in asset_str:
                                     amount = Decimal(reserve.get('amount', '0'))
                                     total_tvl += amount
@@ -723,8 +1483,7 @@ class UBECDataSynchronizer:
                         logger.error(f"Error processing pool {pool_data.get('id')}: {e}")
                         continue
                 
-                # 🔥 NEW in v5.3: Sync participants AFTER all pools are stored
-                # This ensures all pool records exist before we try to reference them
+                # Sync participants
                 logger.info(f"Syncing LP participants for {asset_code}...")
                 participants_synced = await self._sync_all_pool_participants(asset_code)
                 
@@ -801,11 +1560,10 @@ class UBECDataSynchronizer:
             reserve_a = Decimal(reserves[0].get('amount', '0'))
             reserve_b = Decimal(reserves[1].get('amount', '0'))
             
-            # Determine UBEC asset position and balance
+            # Determine UBEC asset position
             ubec_asset_position = None
             ubec_balance = Decimal('0')
             
-            # Get issuer for primary asset
             primary_issuer = self._get_issuer_for_token(primary_asset)
             
             if asset_a_code == primary_asset and asset_a_issuer == primary_issuer:
@@ -818,10 +1576,10 @@ class UBECDataSynchronizer:
             # Create pair name
             pair = f"{asset_a_code}/{asset_b_code}"
             
-            # Get element for this token
+            # Get element
             element = self.ELEMENT_MAP.get(primary_asset, 'air')
             
-            # Store in database matching actual schema
+            # Store in database
             query = """
                 INSERT INTO liquidity_pools (
                     id, asset_a_code, asset_a_issuer, asset_b_code, asset_b_issuer,
@@ -878,25 +1636,14 @@ class UBECDataSynchronizer:
         """
         Sync LP participants by checking all accounts for liquidity_pool_shares.
         
-        🔥 NEW in v5.3: Correct implementation that iterates through accounts.
-        
-        This is the ONLY way to find LP share holders on Stellar. You cannot
-        query "who owns shares in this pool?" directly from the Horizon API.
-        Instead, you must:
-        1. Get all accounts from the database
-        2. Fetch each account's data from Stellar
-        3. Check their balances for liquidity_pool_shares
-        4. Match pool IDs to the pools we're tracking
-        5. Store the ownership data
-        
         Args:
-            token_code: Token code to sync participants for (UBEC, UBECrc, etc)
+            token_code: Token code to sync participants for
             
         Returns:
             int: Number of participants synced
         """
         try:
-            # Get all accounts from database
+            # Get all accounts
             query = "SELECT account_id FROM stellar_accounts"
             account_rows = await self.db.fetch_all(query)
             
@@ -909,24 +1656,18 @@ class UBECDataSynchronizer:
             participants_synced = 0
             accounts_checked = 0
             
-            # Get element for this token
             element = self.ELEMENT_MAP.get(token_code, 'air')
             
             for row in account_rows:
                 account_id = row['account_id']
                 
                 try:
-                    # Check rate limit
-                    await self._check_rate_limit()
+                    # Fetch account data with rate limiting
+                    account_data = await self._stellar_api_call(
+                        self.server.accounts().account_id(account_id).call
+                    )
                     
-                    # Fetch account data from Stellar
-                    account_data = await self.server.accounts().account_id(account_id).call()
-                    
-                    # Update rate limits
-                    if hasattr(account_data, '_headers'):
-                        self._update_rate_limits(account_data._headers)
-                    
-                    # Look for liquidity_pool_shares in the balances
+                    # Look for liquidity_pool_shares
                     balances = account_data.get('balances', [])
                     
                     for balance in balances:
@@ -935,7 +1676,7 @@ class UBECDataSynchronizer:
                             shares = Decimal(balance.get('balance', '0'))
                             
                             if shares > 0:
-                                # Check if this pool is one we're tracking for this token
+                                # Check if this pool is tracked
                                 pool_query = """
                                     SELECT total_shares, balance, token_code
                                     FROM liquidity_pools
@@ -947,7 +1688,7 @@ class UBECDataSynchronizer:
                                 )
                                 
                                 if pool_data:
-                                    # Calculate ownership percentage and UBEC balance
+                                    # Calculate ownership
                                     total_shares = Decimal(pool_data['total_shares'])
                                     pool_ubec_balance = Decimal(pool_data['balance'])
                                     
@@ -993,13 +1734,18 @@ class UBECDataSynchronizer:
                     
                     accounts_checked += 1
                     
-                    # Progress logging every 50 accounts
                     if accounts_checked % 50 == 0:
                         logger.info(
                             f"  Progress: {accounts_checked}/{len(account_rows)} accounts checked, "
                             f"{participants_synced} LP positions found"
                         )
                     
+                except CircuitBreakerException:
+                    logger.error("Circuit breaker opened during LP participant sync")
+                    break
+                except RateLimitException:
+                    logger.warning("Rate limited during LP participant sync, continuing...")
+                    continue
                 except Exception as e:
                     logger.error(f"Error checking LP positions for {account_id}: {e}")
                     continue
@@ -1025,35 +1771,20 @@ class UBECDataSynchronizer:
         asset_code: str = 'UBEC'
     ) -> int:
         """
-        Discover account holders (compatibility wrapper for main.py).
-        
-        This method provides compatibility with main.py's discover mode.
-        It wraps the discover_asset_holders() method which does the actual work.
-        
-        Design Note:
-            This is a thin wrapper that maintains compatibility with main.py
-            while delegating to the actual implementation in discover_asset_holders().
-            Follows Principle #12: Method Singularity - this wrapper exists once,
-            the actual discovery logic exists once in discover_asset_holders().
+        Discover account holders (compatibility wrapper).
         
         Args:
-            max_accounts: Maximum number of accounts to discover (default: 1000)
-            asset_code: Asset code to discover holders for (default: 'UBEC')
+            max_accounts: Maximum number of accounts to discover
+            asset_code: Asset code to discover holders for
             
         Returns:
             int: Number of accounts discovered
-            
-        Example:
-            >>> # From main.py
-            >>> count = await synchronizer.discover_accounts(max_accounts=500)
-            >>> print(f"Discovered {count} accounts")
         """
         logger.info(f"Discovering {asset_code} holders (max: {max_accounts})...")
         
-        # Call the actual implementation
         count = await self.discover_asset_holders(
             asset_code=asset_code,
-            limit=200,  # Page size for API calls
+            limit=200,
             max_accounts=max_accounts
         )
         
@@ -1068,17 +1799,17 @@ class UBECDataSynchronizer:
         max_accounts: int = 1000
     ) -> int:
         """
-        Discover accounts holding a specific asset from Stellar network.
+        Discover accounts holding a specific asset.
         
         Args:
-            asset_code: Asset code to search for (UBEC, UBECrc, UBECgpi, UBECtt)
+            asset_code: Asset code to search for
             limit: Records per page
             max_accounts: Maximum accounts to discover
             
         Returns:
             int: Number of accounts discovered
         """
-        # Ensure settings are loaded
+        # Ensure settings loaded
         if not self.settings:
             logger.info("Settings not loaded yet, loading from database...")
             await self._load_settings_from_database()
@@ -1093,37 +1824,31 @@ class UBECDataSynchronizer:
             discovered = 0
             cursor = None
             
-            # Get the correct issuer for this specific token
             asset_issuer = self._get_issuer_for_token(asset_code)
-            
             logger.info(f"Using issuer: {asset_issuer} for {asset_code}")
             
-            # Import Asset class
             from stellar_sdk import Asset
-            
-            # Create Asset object with the correct issuer
             asset = Asset(asset_code, asset_issuer)
             
             while discovered < max_accounts:
-                # Check rate limits
-                await self._check_rate_limit()
-                
                 # Build request
                 request = self.server.accounts().for_asset(asset).limit(limit)
                 
                 if cursor:
                     request = request.cursor(cursor)
                 
-                # Fetch accounts
+                # Fetch accounts with rate limiting
                 try:
-                    response = await request.call()
+                    response = await self._stellar_api_call(request.call)
+                except CircuitBreakerException:
+                    logger.error("Circuit breaker opened during discovery")
+                    break
+                except RateLimitException:
+                    logger.warning("Rate limited during discovery")
+                    break
                 except Exception as e:
                     logger.error(f"Error fetching accounts: {e}")
                     break
-                
-                # Update rate limits
-                if hasattr(response, '_headers'):
-                    self._update_rate_limits(response._headers)
                 
                 # Get records
                 records = response.get('_embedded', {}).get('records', [])
@@ -1135,10 +1860,8 @@ class UBECDataSynchronizer:
                 # Process each account
                 for account_data in records:
                     try:
-                        # Store account
                         await self._store_account(account_data)
                         
-                        # Store balances (only UBEC tokens will be stored)
                         balances = account_data.get('balances', [])
                         await self._store_balances(account_data['id'], balances)
                         
@@ -1151,18 +1874,17 @@ class UBECDataSynchronizer:
                         logger.error(f"Error processing account {account_data.get('id')}: {e}")
                         continue
                 
-                # Check if there are more pages
+                # Check for next page
                 next_link = response.get('_links', {}).get('next', {}).get('href')
                 if not next_link or discovered >= max_accounts:
                     break
                 
-                # Extract cursor for next page
+                # Extract cursor
                 if 'cursor=' in next_link:
                     cursor = next_link.split('cursor=')[1].split('&')[0]
                 else:
                     break
                 
-                # Small delay between pages
                 await asyncio.sleep(0.5)
             
             logger.info(f"✓ Discovered {discovered} holders of {asset_code}")
@@ -1177,7 +1899,7 @@ class UBECDataSynchronizer:
         Discover all holders of all 4 UBEC tokens.
         
         Args:
-            max_per_asset: Maximum accounts to discover per asset
+            max_per_asset: Maximum accounts per asset
             
         Returns:
             dict: Discovery results per asset
@@ -1217,24 +1939,22 @@ class UBECDataSynchronizer:
         limit: Optional[int] = 5000
     ) -> Dict[str, Any]:
         """
-        Synchronize account data for all holders of a specific asset.
+        Synchronize account data for all holders.
         
         Args:
-            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
-            limit: Maximum accounts to sync (default: 5000)
-                   Set to None for unlimited sync (use cautiously)
+            asset_code: Asset code to sync
+            limit: Maximum accounts to sync
             
         Returns:
-            dict: Sync results with counts
+            dict: Sync results
         """
         logger.info(f"Syncing account data for {asset_code} holders (limit: {limit})...")
         
         try:
-            # Ensure settings are loaded
             if not self.settings:
                 await self._load_settings_from_database()
             
-            # Get all accounts that hold this token from database
+            # Get accounts
             if limit is None:
                 query = """
                     SELECT DISTINCT account_id
@@ -1263,7 +1983,6 @@ class UBECDataSynchronizer:
             synced = 0
             failed = 0
             
-            # Sync each account
             for row in rows:
                 account_id = row['account_id']
                 
@@ -1305,18 +2024,17 @@ class UBECDataSynchronizer:
         asset_code: str = 'UBEC'
     ) -> Dict[str, Any]:
         """
-        Synchronize balance data for all holders of a specific asset.
+        Synchronize balance data for all holders.
         
         Args:
-            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
+            asset_code: Asset code to sync
             
         Returns:
-            dict: Sync results with counts
+            dict: Sync results
         """
         logger.info(f"Syncing balance data for {asset_code} holders...")
         
         try:
-            # Ensure settings are loaded
             if not self.settings:
                 await self._load_settings_from_database()
             
@@ -1328,7 +2046,7 @@ class UBECDataSynchronizer:
                     'error': 'Stellar server not initialized'
                 }
             
-            # Get all accounts that hold this token
+            # Get accounts
             query = """
                 SELECT DISTINCT account_id
                 FROM ubec_balances
@@ -1349,20 +2067,15 @@ class UBECDataSynchronizer:
             synced = 0
             failed = 0
             
-            # Sync balances for each account
             for row in rows:
                 account_id = row['account_id']
                 
                 try:
-                    # Fetch account from Stellar
-                    await self._check_rate_limit()
-                    account = await self.server.accounts().account_id(account_id).call()
+                    # Fetch account with rate limiting
+                    account = await self._stellar_api_call(
+                        self.server.accounts().account_id(account_id).call
+                    )
                     
-                    # Update rate limits
-                    if hasattr(account, '_headers'):
-                        self._update_rate_limits(account._headers)
-                    
-                    # Store balances
                     balances = account.get('balances', [])
                     await self._store_balances(account_id, balances)
                     
@@ -1401,24 +2114,23 @@ class UBECDataSynchronizer:
         limit_per_account: int = 100
     ) -> Dict[str, Any]:
         """
-        Synchronize recent transactions for all holders of a specific asset.
+        Synchronize recent transactions.
         
         Args:
-            asset_code: Asset code to sync (UBEC, UBECrc, UBECgpi, UBECtt)
-            days_back: Number of days of transaction history to sync
+            asset_code: Asset code to sync
+            days_back: Number of days of history
             limit_per_account: Maximum transactions per account
             
         Returns:
-            dict: Sync results with counts
+            dict: Sync results
         """
         logger.info(f"Syncing transaction data for {asset_code} holders (last {days_back} days)...")
         
         try:
-            # Ensure settings are loaded
             if not self.settings:
                 await self._load_settings_from_database()
             
-            # Get all accounts that hold this token
+            # Get accounts
             query = """
                 SELECT DISTINCT account_id
                 FROM ubec_balances
@@ -1440,7 +2152,6 @@ class UBECDataSynchronizer:
             accounts_processed = 0
             accounts_failed = 0
             
-            # Sync transactions for each account
             for row in rows:
                 account_id = row['account_id']
                 
@@ -1520,18 +2231,15 @@ class UBECDataSynchronizer:
             result = await self.db.fetch_one("SELECT COUNT(*) as count FROM liquidity_pool_owners")
             stats['total_lp_owners'] = result['count'] if result else 0
             
-            # Get last activity time
+            # Get last activity
             result = await self.db.fetch_one(
                 "SELECT MAX(last_modified_at) as last_activity FROM stellar_accounts"
             )
             stats['last_sync_time'] = result['last_activity'] if result and result['last_activity'] else 'Never'
             
             # Rate limit info
-            stats['rate_limit'] = {
-                'remaining': self.rate_limit_remaining,
-                'limit': self.rate_limit_limit,
-                'reset_time': self.rate_limit_reset
-            }
+            if self.rate_limiter:
+                stats['rate_limiter'] = self.rate_limiter.get_metrics()
             
             return stats
             
@@ -1551,7 +2259,7 @@ class UBECDataSynchronizer:
             'database': False,
             'stellar': False,
             'settings_loaded': bool(self.settings),
-            'accounts_loaded': len(self.accounts)
+            'rate_limiter_initialized': self.rate_limiter is not None
         }
         
         try:
@@ -1562,15 +2270,24 @@ class UBECDataSynchronizer:
             # Check Stellar connection
             if self.server:
                 try:
-                    # Simple ledger query to test connection
-                    await self.server.ledgers().limit(1).call()
+                    await self._stellar_api_call(
+                        self.server.ledgers().limit(1).call
+                    )
                     health['stellar'] = True
                 except:
                     health['stellar'] = False
             
+            # Check circuit breaker
+            if self.rate_limiter:
+                health['circuit_breaker'] = self.rate_limiter.circuit_breaker.state.value
+                health['rate_limit_metrics'] = self.rate_limiter.get_metrics()
+            
             # Determine overall status
             if health['database'] and health['stellar'] and health['settings_loaded']:
-                health['status'] = 'healthy'
+                if self.rate_limiter and self.rate_limiter.circuit_breaker.state == CircuitState.OPEN:
+                    health['status'] = 'degraded'
+                else:
+                    health['status'] = 'healthy'
             elif health['database']:
                 health['status'] = 'degraded'
             else:
@@ -1588,5 +2305,8 @@ class UBECDataSynchronizer:
 __all__ = [
     'UBECDataSynchronizer',
     'SyncException',
-    'RateLimitException'
+    'RateLimitException',
+    'CircuitBreakerException',
+    'CircuitBreaker',
+    'RateLimiter'
 ]

@@ -46,10 +46,11 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 2.1 (Operations Table Integration)
-Date: October 14, 2025
+Version: 2.2 (fetch_all Parameter Fix)
+Date: October 15, 2025
 
 Changelog:
+    v2.2 - Fixed fetch_all parameter passing (tuple wrapping)
     v2.1 - Updated to use stellar_operations table with correct schema
     v2.0 - Async Service Architecture
 """
@@ -435,8 +436,7 @@ class UBECDistributionEvaluator:
             
             transfers = await self.db_manager.fetch_all(
                 query,
-                self.distribution_service.ubec_code,
-                self.distribution_service.ubec_issuer
+                (self.distribution_service.ubec_code, self.distribution_service.ubec_issuer)
             )
             
             return [
@@ -537,7 +537,7 @@ class UBECDistributionEvaluator:
         score = 100.0
         
         # Deduct for non-compliance
-        if not compliance.get('overall', False):
+        if not compliance.get('overall_compliant', False):
             score -= 20.0
         
         if not compliance.get('administration', False):
@@ -668,7 +668,7 @@ class UBECDistributionEvaluator:
                 LIMIT $2
             """
             
-            operations = await self.db_manager.fetch_all(query, account_id, limit)
+            operations = await self.db_manager.fetch_all(query, (account_id, limit))
             
             return [
                 {

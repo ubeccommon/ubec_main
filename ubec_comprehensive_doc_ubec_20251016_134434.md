@@ -4,27 +4,27 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-15T14:48:42.386101  
+**Generated:** 2025-10-16T13:44:33.935358  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
-**Database Size:** 63 MB  
+**Database Size:** 77 MB  
 
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 63  
-**Total Rows:** 67,238  
-**Total Columns:** 788  
-**Total Views:** 26  
-**Total Functions:** 1128  
-**Total Relationships:** 7  
-**Total Indexes:** 391  
+**Total Tables:** 67  
+**Total Rows:** 86,867  
+**Total Columns:** 840  
+**Total Views:** 29  
+**Total Functions:** 1132  
+**Total Relationships:** 9  
+**Total Indexes:** 418  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 42 | 58,738 | 17 | 75 |
+| ubec_main | Main schema for UBEC four-element protoc... | 46 | 78,367 | 20 | 79 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6378,14 +6378,14 @@
 
 ### Schema Statistics
 
-- **Tables:** 42
-- **Total Rows:** 58,738
-- **Columns:** 514
-- **Views:** 17
-- **Relationships:** 7
-- **Indexes:** 281
-- **Triggers:** 20
-- **Functions:** 75
+- **Tables:** 46
+- **Total Rows:** 78,367
+- **Columns:** 566
+- **Views:** 20
+- **Relationships:** 9
+- **Indexes:** 308
+- **Triggers:** 22
+- **Functions:** 79
 - **Custom Types:** 8
 
 ### Custom Types
@@ -6426,26 +6426,26 @@
 
 | Table | Rows | Columns | Size |
 |-------|------|---------|------|
-| stellar_transactions | 55,992 | 20 | 38 MB |
-| stellar_accounts | 1,263 | 17 | 608 kB |
+| stellar_transactions | 74,495 | 20 | 49 MB |
+| stellar_accounts | 1,299 | 17 | 664 kB |
+| holonic_metrics | 1,286 | 16 | 2624 kB |
 | ubec_balances | 651 | 15 | 552 kB |
-| holonic_metrics | 643 | 16 | 1480 kB |
+| stellar_operations | 434 | 20 | 1248 kB |
 | asset_holder_analysis | 63 | 19 | 184 kB |
-| system_settings | 42 | 12 | 80 kB |
+| system_settings | 47 | 12 | 80 kB |
 | ubec_distributions | 24 | 14 | 112 kB |
 | liquidity_pool_owners | 23 | 13 | 240 kB |
 | distribution_state | 12 | 9 | 104 kB |
 | distribution_history | 10 | 15 | 152 kB |
 | liquidity_pools | 10 | 20 | 208 kB |
-| system_configuration | 5 | 8 | 96 kB |
+| system_configuration | 10 | 8 | 96 kB |
+| scheduler_jobs | 2 | 10 | 80 kB |
+| orderbook_snapshots | 1 | 13 | 96 kB |
 | account_balances | 0 | 6 | 56 kB |
+| account_order_positions | 0 | 10 | 56 kB |
 | agent_activity_history | 0 | 7 | 56 kB |
 | agent_benefit_history | 0 | 7 | 56 kB |
 | agent_contribution_history | 0 | 7 | 56 kB |
-| agent_holon_memberships | 0 | 11 | 72 kB |
-| agents | 0 | 11 | 40 kB |
-| api_rate_limits | 0 | 6 | 8192 bytes |
-| asset_holders | 0 | 7 | 56 kB |
 
 #### ubec_main.account_balances
 
@@ -6464,6 +6464,28 @@
 - `account_balances_balance_check` (CHECK)
 - `account_balances_pkey` (PRIMARY KEY)
 - `account_balances_unique_account_asset` (UNIQUE)
+
+#### ubec_main.account_order_positions
+
+*Aggregated order positions per account and asset*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('account_order_posi... | - |
+| account_id | varchar(56) | ✗ | - | - |
+| asset_code | enum | ✗ | - | - |
+| total_buy_orders | integer | ✓ | 0 | - |
+| total_buy_volume | numeric(20,7) | ✓ | 0 | Sum of all active buy order amounts |
+| avg_buy_price | numeric(20,7) | ✓ | - | - |
+| total_sell_orders | integer | ✓ | 0 | - |
+| total_sell_volume | numeric(20,7) | ✓ | 0 | Sum of all active sell order amounts |
+| avg_sell_price | numeric(20,7) | ✓ | - | - |
+| last_updated | timestamp with time zone | ✗ | now() | - |
+
+**Constraints:**
+- `account_order_positions_pkey` (PRIMARY KEY)
+- `fk_account` (FOREIGN KEY)
+- `unique_account_asset` (UNIQUE)
 
 #### ubec_main.agent_activity_history
 
@@ -6923,6 +6945,54 @@
 - `mutualism_relationships_strength_check` (CHECK)
 - `mutualism_relationships_unique_pair` (UNIQUE)
 
+#### ubec_main.orderbook_analytics
+
+*Pre-computed order book analytics and market metrics*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('orderbook_analytic... | - |
+| asset_code | enum | ✗ | - | - |
+| analysis_time | timestamp with time zone | ✗ | now() | - |
+| total_liquidity | numeric(20,7) | ✓ | - | - |
+| buy_pressure | numeric(10,4) | ✓ | - | Buy pressure score 0-100 (higher = mo... |
+| sell_pressure | numeric(10,4) | ✓ | - | Sell pressure score 0-100 (higher = m... |
+| market_depth_score | numeric(10,4) | ✓ | - | Overall market depth quality 0-100 |
+| price_stability_score | numeric(10,4) | ✓ | - | - |
+| top_10_buyers_volume | numeric(20,7) | ✓ | - | - |
+| top_10_sellers_volume | numeric(20,7) | ✓ | - | - |
+| unique_buyers | integer | ✓ | - | - |
+| unique_sellers | integer | ✓ | - | - |
+| metrics | jsonb | ✓ | - | Extended metrics in JSON format for f... |
+
+**Constraints:**
+- `orderbook_analytics_pkey` (PRIMARY KEY)
+- `unique_analysis` (UNIQUE)
+
+#### ubec_main.orderbook_snapshots
+
+*Historical order book snapshots for market analysis*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('orderbook_snapshot... | - |
+| asset_code | enum | ✗ | - | - |
+| counter_asset | varchar(12) | ✗ | - | - |
+| snapshot_time | timestamp with time zone | ✗ | now() | - |
+| best_bid | numeric(20,7) | ✓ | - | - |
+| best_ask | numeric(20,7) | ✓ | - | - |
+| spread_bps | integer | ✓ | - | Bid-ask spread in basis points (1 bps... |
+| bid_depth_total | numeric(20,7) | ✓ | - | - |
+| ask_depth_total | numeric(20,7) | ✓ | - | - |
+| bid_levels | integer | ✓ | - | - |
+| ask_levels | integer | ✓ | - | - |
+| raw_data | jsonb | ✓ | - | JSON snapshot of top 10 bid/ask levels |
+| created_at | timestamp with time zone | ✗ | now() | - |
+
+**Constraints:**
+- `orderbook_snapshots_pkey` (PRIMARY KEY)
+- `unique_snapshot` (UNIQUE)
+
 #### ubec_main.participants
 
 *Categorization of accounts (general, administration, stewardship)*
@@ -7059,6 +7129,36 @@
 - `fk_operation_id` (FOREIGN KEY)
 - `stellar_effects_effect_id_key` (UNIQUE)
 - `stellar_effects_pkey` (PRIMARY KEY)
+
+#### ubec_main.stellar_offers
+
+*Individual offers/orders on Stellar DEX for UBEC tokens*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('stellar_offers_id_... | - |
+| offer_id | bigint | ✗ | - | - |
+| seller_account | varchar(56) | ✗ | - | - |
+| selling_asset | enum | ✓ | - | - |
+| buying_asset | varchar(12) | ✗ | - | - |
+| amount | numeric(20,7) | ✗ | - | - |
+| price | numeric(20,7) | ✗ | - | - |
+| price_r_n | integer | ✓ | - | Price as ratio numerator (for exact p... |
+| price_r_d | integer | ✓ | - | Price as ratio denominator (for exact... |
+| side | varchar(4) | ✗ | - | Whether this is a buy or sell order f... |
+| is_passive | boolean | ✓ | false | Passive orders do not take offers of ... |
+| last_modified_ledger | bigint | ✓ | - | - |
+| last_modified_time | timestamp with time zone | ✓ | - | - |
+| created_at | timestamp with time zone | ✗ | now() | - |
+| updated_at | timestamp with time zone | ✗ | now() | - |
+| status | varchar(20) | ✓ | 'active'::character varying | - |
+
+**Constraints:**
+- `fk_seller` (FOREIGN KEY)
+- `stellar_offers_offer_id_key` (UNIQUE)
+- `stellar_offers_pkey` (PRIMARY KEY)
+- `stellar_offers_side_check` (CHECK)
+- `stellar_offers_status_check` (CHECK)
 
 #### ubec_main.stellar_operations
 
@@ -7535,6 +7635,24 @@
 
 ```
 
+#### v_market_imbalance
+
+```sql
+
+```
+
+#### v_orderbook_depth
+
+```sql
+
+```
+
+#### v_top_traders
+
+```sql
+
+```
+
 #### view_air_gateway
 
 ```sql
@@ -7573,12 +7691,12 @@
 
 ### Functions
 
-#### armor(bytea)
+#### armor(bytea, text[], text[])
 
 - **Returns:** text
 - **Language:** c
 
-#### armor(bytea, text[], text[])
+#### armor(bytea)
 
 - **Returns:** text
 - **Language:** c
@@ -7601,6 +7719,12 @@
 - **Language:** plpgsql
 - **Description:** Checks if token distribution is within compliance tolerance
 
+#### check_orderbook_table_sizes()
+
+- **Returns:** TABLE(table_name text, row_count bigint, total_size text, table_size text, indexes_size text)
+- **Language:** plpgsql
+- **Description:** Check size and row counts of order book tables
+
 #### crypt(text, text)
 
 - **Returns:** text
@@ -7621,12 +7745,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(bytea, text)
+#### digest(text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(text, text)
+#### digest(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7737,12 +7861,12 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt(bytea, bytea)
+#### pgp_pub_decrypt(bytea, bytea, text, text)
 
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt(bytea, bytea, text, text)
+#### pgp_pub_decrypt(bytea, bytea)
 
 - **Returns:** text
 - **Language:** c
@@ -7752,12 +7876,12 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt_bytea(bytea, bytea, text, text)
+#### pgp_pub_decrypt_bytea(bytea, bytea)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_decrypt_bytea(bytea, bytea)
+#### pgp_pub_decrypt_bytea(bytea, bytea, text, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7767,12 +7891,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea)
+#### pgp_pub_encrypt(text, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea, text)
+#### pgp_pub_encrypt(text, bytea)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7787,12 +7911,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt(bytea, text, text)
+#### pgp_sym_decrypt(bytea, text)
 
 - **Returns:** text
 - **Language:** c
 
-#### pgp_sym_decrypt(bytea, text)
+#### pgp_sym_decrypt(bytea, text, text)
 
 - **Returns:** text
 - **Language:** c
@@ -7832,6 +7956,18 @@
 - **Returns:** integer
 - **Language:** plpgsql
 
+#### refresh_orderbook_summary()
+
+- **Returns:** void
+- **Language:** plpgsql
+- **Description:** Refresh orderbook summary materialized view
+
+#### refresh_orderbook_summary_now()
+
+- **Returns:** text
+- **Language:** plpgsql
+- **Description:** Manually refresh orderbook summary with error handling
+
 #### set_evaluation_date_date()
 
 - **Returns:** trigger
@@ -7847,6 +7983,12 @@
 - **Returns:** trigger
 - **Language:** plpgsql
 - **Description:** Automatically sets token_code and element for liquidity pools on insert/update
+
+#### update_account_position()
+
+- **Returns:** trigger
+- **Language:** plpgsql
+- **Description:** Trigger function to update account positions on offer changes
 
 #### update_asset_holder_balance(p_account_id character varying, p_asset_code character varying, p_asset_issuer character varying, p_balance numeric)
 
