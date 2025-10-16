@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Async Database Manager for UBEC Protocol - WITH HEALTH CHECK
-=============================================================
+Async Database Manager for UBEC Protocol
+=========================================
 Provides async database access using asyncpg.
 
 This module implements:
@@ -10,24 +10,47 @@ This module implements:
 - Transaction management
 - Error handling and retries
 - Automatic parameter placeholder conversion
-- Health check monitoring
 
 Design Principles Compliance:
 - ✅ Strict Async: All operations use async/await
 - ✅ Single Source of Truth: Database is authoritative
 - ✅ No Sync Fallbacks: Pure async implementation
-- ✅ Per-Asset Monitoring: Health checks per service (Principle #7)
+
+Usage:
+    from core.db.database_manager import AsyncDatabaseManager
+    
+    db = AsyncDatabaseManager(
+        host='localhost',
+        port=5432,
+        database='ubec',
+        schema='ubec_main',
+        user='ubec_app',
+        password='your_password'
+    )
+    
+    # Initialize connection pool
+    await db.initialize()
+    
+    # Execute query (supports both %s and $1 placeholders)
+    results = await db.fetch_all(
+        "SELECT * FROM accounts WHERE asset_code = %s",
+        ('UBEC',)
+    )
+    
+    # Close connections
+    await db.close()
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 1.3.0
-Date: October 16, 2025
+Version: 1.2.0
+Date: October 11, 2025
 Changes:
-    - Added health_check() method for service monitoring
-    - Implements Principle #7: Per-Asset Monitoring
+    - Added automatic ISO 8601 datetime string to Python datetime conversion
+    - Ensures asyncpg compatibility by converting datetime strings transparently
+    - Implements Method Singularity principle: one conversion method system-wide
 """
 
 import asyncio
@@ -154,7 +177,7 @@ def _is_iso8601_datetime(value: str) -> bool:
 
 class AsyncDatabaseManager:
     """
-    Async PostgreSQL database manager with health monitoring.
+    Async PostgreSQL database manager.
     
     Provides connection pooling and query execution for UBEC protocols.
     """
@@ -242,87 +265,6 @@ class AsyncDatabaseManager:
             await self._pool.close()
             self._initialized = False
             logger.info("Database pool closed")
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Perform health check on database connection.
-        
-        Returns:
-            Dictionary with health check results:
-            {
-                'status': 'healthy' | 'unhealthy' | 'degraded',
-                'message': str,
-                'details': {
-                    'initialized': bool,
-                    'pool_size': int,
-                    'pool_max': int,
-                    'connection_test': bool,
-                    'response_time_ms': float
-                }
-            }
-        
-        Design Notes:
-            - Principle #7: Per-Asset Monitoring with health checks
-            - Principle #5: Strict async operations
-        """
-        start_time = datetime.now()
-        
-        health_info = {
-            'status': 'unknown',
-            'message': '',
-            'details': {
-                'initialized': self._initialized,
-                'pool_size': 0,
-                'pool_max': self.max_pool_size,
-                'connection_test': False,
-                'response_time_ms': 0.0
-            }
-        }
-        
-        try:
-            # Check if initialized
-            if not self._initialized:
-                health_info['status'] = 'unhealthy'
-                health_info['message'] = 'Database not initialized'
-                return health_info
-            
-            # Check pool status
-            if self._pool:
-                health_info['details']['pool_size'] = self._pool.get_size()
-            
-            # Test connection with simple query
-            async with self._pool.acquire() as conn:
-                await conn.execute(f'SET search_path TO {self.schema}')
-                result = await conn.fetchval('SELECT 1')
-                
-                if result == 1:
-                    health_info['details']['connection_test'] = True
-                    
-                    # Calculate response time
-                    end_time = datetime.now()
-                    response_time = (end_time - start_time).total_seconds() * 1000
-                    health_info['details']['response_time_ms'] = round(response_time, 2)
-                    
-                    # Determine status based on response time
-                    if response_time < 100:
-                        health_info['status'] = 'healthy'
-                        health_info['message'] = f'Database responsive ({response_time:.1f}ms)'
-                    elif response_time < 500:
-                        health_info['status'] = 'degraded'
-                        health_info['message'] = f'Database slow ({response_time:.1f}ms)'
-                    else:
-                        health_info['status'] = 'degraded'
-                        health_info['message'] = f'Database very slow ({response_time:.1f}ms)'
-                else:
-                    health_info['status'] = 'unhealthy'
-                    health_info['message'] = 'Connection test query failed'
-        
-        except Exception as e:
-            health_info['status'] = 'unhealthy'
-            health_info['message'] = f'Health check failed: {str(e)}'
-            logger.error(f"Database health check failed: {e}")
-        
-        return health_info
     
     @asynccontextmanager
     async def _get_connection(self):

@@ -1,107 +1,151 @@
+#!/usr/bin/env python3
 """
-UBEC Protocol - System Configuration (Database-Backed)
-=======================================================
-Configuration management using database as Single Source of Truth.
+UBEC Protocol - System Configuration
+=====================================
+Database-backed configuration following strict design principles.
 
-This module provides configuration access by loading settings from the
-`system_settings` database table, following Design Principle #4.
+This module implements configuration as a SERVICE, not a utility.
+Database is the SINGLE source of truth for all configuration.
 
-Design Principles Applied:
-- Single Source of Truth: Database is authoritative (Principle #4)
-- No Duplicate Configuration: Each parameter defined once in DB (Principle #8)
-- Strict Async Operations: All database access uses async/await (Principle #5)
-- Clear Separation of Concerns: Configuration isolated from business logic
+Design Principles Compliance:
+- ✅ Principle #4: Single Source of Truth - Database only
+- ✅ Principle #5: Strict Async Operations - All I/O is async
+- ✅ Principle #6: No Sync Fallbacks - Async only, no exceptions
+- ✅ Principle #7: Per-Asset Monitoring - Health checks included
+- ✅ Principle #8: No Duplicate Configuration - One definition per setting
+- ✅ Principle #11: Comprehensive Documentation - Full docstrings
+- ✅ Principle #12: Method Singularity - One way to do things
 
 Attribution:
-This project uses the services of Claude and Anthropic PBC to inform our 
-decisions and recommendations. This project was made possible with the 
-assistance of Claude and Anthropic PBC.
+    This project uses the services of Claude and Anthropic PBC to inform our
+    decisions and recommendations. This project was made possible with the
+    assistance of Claude and Anthropic PBC.
 
-Version: 2.0 (Database-Backed)
-Date: October 12, 2025
+Version: 3.0.0 (Clean Implementation)
+Date: October 16, 2025
 """
 
-import os
 import logging
 from typing import Dict, Any, Optional
 from decimal import Decimal
-from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class SystemConfig:
+class ConfigurationService:
     """
-    System configuration loaded from database.
+    Configuration service - loads settings from database.
     
-    This class loads configuration from the system_settings table,
-    implementing the Single Source of Truth principle. All configuration
-    parameters are stored in the database and loaded at runtime.
+    This is a SERVICE, not a static configuration object.
+    It loads from database, caches intelligently, and provides
+    health monitoring.
+    
+    Principles:
+    - Database is SINGLE source of truth (Principle #4)
+    - All operations are async (Principle #5)
+    - No sync fallbacks (Principle #6)
+    - Health monitoring built-in (Principle #7)
+    - No duplicate definitions (Principle #8)
     
     Usage:
-        # Async initialization (preferred)
-        config = SystemConfig()
-        await config.initialize(db_manager)
-        print(config.HORIZON_URL)
-        
-        # Or use get_system_config helper
+        # Create via factory (ONLY way)
         config = await get_system_config(db_manager)
+        
+        # Access settings
+        horizon_url = config['horizon_url']
+        ubec_issuer = config['ubec_issuer']
+        
+        # Check health
+        health = await config.health_check()
     """
     
-    # Database connection (injected)
-    _db: Any = None
-    _initialized: bool = False
+    def __init__(self, db_manager):
+        """
+        Initialize configuration service.
+        
+        Args:
+            db_manager: AsyncDatabaseManager instance (REQUIRED)
+            
+        Note:
+            Do NOT instantiate directly. Use get_system_config() factory.
+        """
+        if db_manager is None:
+            raise ValueError("Database manager is required (Principle #4: Single Source of Truth)")
+        
+        self._db = db_manager
+        self._initialized = False
+        self._settings: Dict[str, Any] = {}
+        self._last_loaded: Optional[datetime] = None
+        self._cache_ttl = timedelta(minutes=5)
     
-    # Configuration cache
-    _settings: Dict[str, Any] = field(default_factory=dict)
-    
-    async def initialize(self, db_manager) -> None:
+    async def initialize(self) -> None:
         """
         Load configuration from database.
         
-        Args:
-            db_manager: AsyncDatabaseManager instance
-            
+        This is the ONLY method that loads configuration.
+        Principle #12: Method Singularity.
+        
         Raises:
-            RuntimeError: If database connection fails
+            RuntimeError: If database is unavailable
             ValueError: If required settings are missing
         """
-        if self._initialized:
-            logger.debug("Configuration already initialized")
+        if self._initialized and self._cache_valid():
+            logger.debug("Configuration cache valid, skipping reload")
             return
-            
-        self._db = db_manager
+        
+        await self._load_from_database()
+        self._initialized = True
+        self._last_loaded = datetime.now()
+        logger.info(f"✓ Configuration loaded: {len(self._settings)} settings from database")
+    
+    def _cache_valid(self) -> bool:
+        """Check if cache is still valid."""
+        if not self._last_loaded:
+            return False
+        return datetime.now() - self._last_loaded < self._cache_ttl
+    
+    async def _load_from_database(self) -> None:
+        """
+        Load all settings from database.
+        
+        Principle #4: Database is SINGLE source of truth.
+        No fallbacks, no environment variables, no defaults.
+        If database fails, we fail explicitly.
+        """
+        query = """
+            SELECT 
+                setting_key, 
+                setting_value, 
+                setting_type
+            FROM system_settings
+            WHERE is_active = TRUE
+        """
         
         try:
-            # Load all active settings from database
-            query = """
-                SELECT 
-                    setting_key, 
-                    setting_value, 
-                    setting_type,
-                    category
-                FROM system_settings
-                WHERE is_active = TRUE
-                ORDER BY category, setting_key
-            """
-            
             rows = await self._db.fetch_all(query)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load configuration from database: {e}. "
+                "Database is the SINGLE source of truth (Principle #4). "
+                "Fix database connection or populate system_settings table."
+            )
+        
+        if not rows:
+            raise ValueError(
+                "No active settings in database. "
+                "Database must contain configuration (Principle #4). "
+                "Run setup_system_settings.sql to initialize."
+            )
+        
+        # Convert types and store
+        for row in rows:
+            key = row['setting_key']
+            value = row['setting_value']
+            setting_type = row.get('setting_type', 'string')
             
-            if not rows:
-                # Fallback to environment variables if database is empty
-                logger.warning("No settings in database, using environment variables as fallback")
-                self._load_from_environment()
-                self._initialized = True
-                return
-            
-            # Convert database rows to typed settings
-            for row in rows:
-                key = row['setting_key']
-                value = row['setting_value']
-                setting_type = row.get('setting_type', 'string')
-                
-                # Type conversion
+            # Type conversion
+            try:
                 if setting_type == 'integer':
                     value = int(value)
                 elif setting_type == 'float':
@@ -109,190 +153,360 @@ class SystemConfig:
                 elif setting_type == 'decimal':
                     value = Decimal(value)
                 elif setting_type == 'boolean':
-                    value = value.lower() in ('true', '1', 'yes', 'on')
+                    value = str(value).lower() in ('true', '1', 'yes')
                 # else: keep as string
                 
                 self._settings[key] = value
             
-            self._initialized = True
-            logger.info(f"✓ Configuration loaded: {len(self._settings)} settings from database")
-            
-        except Exception as e:
-            logger.error(f"Failed to load configuration from database: {e}")
-            logger.warning("Falling back to environment variables")
-            self._load_from_environment()
-            self._initialized = True
+            except (ValueError, TypeError) as e:
+                logger.error(f"Failed to convert setting {key}={value} to {setting_type}: {e}")
+                raise ValueError(f"Invalid setting value in database: {key}")
+        
+        # Validate required settings exist
+        self._validate_required()
     
-    def _load_from_environment(self) -> None:
-        """Load configuration from environment variables as fallback."""
-        self._settings = {
-            # Network
-            'network': os.getenv('UBEC_NETWORK', 'testnet'),
-            'horizon_url': os.getenv('HORIZON_URL', 'https://horizon-testnet.stellar.org'),
-            'network_passphrase': os.getenv('NETWORK_PASSPHRASE', 'Test SDF Network ; September 2015'),
+    def _validate_required(self) -> None:
+        """
+        Validate required settings are present.
+        
+        Fails fast if critical configuration is missing.
+        """
+        required = [
+            'horizon_url',
+            'ubec_code',
+            'ubec_issuer',
+            'network'
+        ]
+        
+        missing = [key for key in required if key not in self._settings or not self._settings[key]]
+        
+        if missing:
+            raise ValueError(
+                f"Missing required configuration in database: {', '.join(missing)}. "
+                f"Database must contain all required settings (Principle #4)."
+            )
+    
+    async def reload(self) -> None:
+        """
+        Force reload configuration from database.
+        
+        Principle #12: This is the ONLY way to refresh configuration.
+        """
+        self._last_loaded = None
+        await self.initialize()
+        logger.info("Configuration reloaded from database")
+    
+    # ========================================================================
+    # CONFIGURATION ACCESS
+    # ========================================================================
+    
+    def __getitem__(self, key: str) -> Any:
+        """
+        Get configuration value using dictionary syntax.
+        
+        Args:
+            key: Configuration key
             
-            # Tokens
-            'ubec_code': os.getenv('UBEC_CODE', 'UBEC'),
-            'ubec_issuer': os.getenv('UBEC_ISSUER', ''),
-            'ubecrc_code': os.getenv('UBECRC_CODE', 'UBECrc'),
-            'ubecrc_issuer': os.getenv('UBECRC_ISSUER', ''),
-            'ubecgpi_code': os.getenv('UBECGPI_CODE', 'UBECgpi'),
-            'ubecgpi_issuer': os.getenv('UBECGPI_ISSUER', ''),
-            'ubectt_code': os.getenv('UBECTT_CODE', 'UBECtt'),
-            'ubectt_issuer': os.getenv('UBECTT_ISSUER', ''),
+        Returns:
+            Configuration value
             
-            # Supply
-            'fallback_supply': Decimal('191766039.00'),
-            'always_load_from_network': True,
+        Raises:
+            RuntimeError: If not initialized
+            KeyError: If key not found
             
-            # Distribution
-            'distribution_general': Decimal('0.65'),
-            'distribution_stewardship': Decimal('0.30'),
-            'distribution_administration': Decimal('0.05'),
-            'rebalance_threshold': Decimal('0.01'),
-            'check_interval': 3600,
-            
-            # Monitoring
-            'supply_check_interval': 86400,
-            'supply_safety_factor': Decimal('0.02'),
-            'supply_calculation_method': 'PRECISE',
-            
-            # Logging
-            'log_file': 'ubec_distribution_manager.log',
-            'log_level': 'INFO',
-            'log_format': '%(asctime)s - %(levelname)s - %(message)s',
-            'log_file_path': 'logs/ubec_distribution_manager.log',
-            'log_date_format': '%Y-%m-%d %H:%M:%S',
-            'log_max_bytes': 10485760,
-            'log_backup_count': 5,
-        }
+        Usage:
+            horizon_url = config['horizon_url']
+        """
+        if not self._initialized:
+            raise RuntimeError("Configuration not initialized. Call await config.initialize() first.")
+        
+        if key not in self._settings:
+            raise KeyError(
+                f"Configuration key '{key}' not found in database. "
+                f"Add to system_settings table (Principle #4)."
+            )
+        
+        return self._settings[key]
     
     def get(self, key: str, default: Any = None) -> Any:
-        """Get a configuration value."""
+        """
+        Get configuration value with optional default.
+        
+        Args:
+            key: Configuration key
+            default: Default value if key not found
+            
+        Returns:
+            Configuration value or default
+        """
         if not self._initialized:
-            raise RuntimeError(
-                "Configuration not initialized. Call await config.initialize(db_manager) first."
-            )
+            raise RuntimeError("Configuration not initialized.")
+        
         return self._settings.get(key, default)
     
-    # Convenience properties matching the original settings.py interface
+    def __contains__(self, key: str) -> bool:
+        """Check if configuration key exists."""
+        return key in self._settings
     
-    @property
-    def NETWORK(self) -> str:
-        return self.get('network', 'testnet')
+    def keys(self):
+        """Get all configuration keys."""
+        return self._settings.keys()
     
-    @property
-    def HORIZON_URL(self) -> str:
-        return self.get('horizon_url', 'https://horizon-testnet.stellar.org')
+    def items(self):
+        """Get all configuration items."""
+        return self._settings.items()
     
-    @property
-    def PUBLIC_NETWORK_PASSPHRASE(self) -> str:
-        return self.get('network_passphrase', 'Test SDF Network ; September 2015')
+    # ========================================================================
+    # HEALTH CHECK (Principle #7: Per-Asset Monitoring)
+    # ========================================================================
     
-    @property
-    def UBEC_CODE(self) -> str:
-        return self.get('ubec_code', 'UBEC')
-    
-    @property
-    def UBEC_ISSUER(self) -> str:
-        return self.get('ubec_issuer', '')
-    
-    @property
-    def FALLBACK_SUPPLY(self) -> Decimal:
-        return Decimal(self.get('fallback_supply', '191766039.00'))
-    
-    @property
-    def ALWAYS_LOAD_FROM_NETWORK(self) -> bool:
-        return self.get('always_load_from_network', True)
-    
-    @property
-    def TARGET_DISTRIBUTION(self) -> Dict[str, Decimal]:
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Check configuration service health.
+        
+        Principle #7: Per-Asset Monitoring with health checks.
+        
+        Returns:
+            Health status dictionary:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'message': str,
+                'details': dict
+            }
+        """
+        start_time = datetime.now()
+        
+        # Check initialization
+        if not self._initialized:
+            return {
+                'status': 'unhealthy',
+                'message': 'Configuration not initialized',
+                'details': {
+                    'initialized': False
+                }
+            }
+        
+        # Check cache validity
+        cache_valid = self._cache_valid()
+        cache_age = (datetime.now() - self._last_loaded).total_seconds() if self._last_loaded else None
+        
+        # Check required settings
+        try:
+            self._validate_required()
+            has_required = True
+        except ValueError:
+            has_required = False
+        
+        # Determine status
+        if has_required and cache_valid:
+            status = 'healthy'
+            message = f'Configuration loaded ({len(self._settings)} settings)'
+        elif has_required and not cache_valid:
+            status = 'degraded'
+            message = 'Configuration cache expired (will reload on next access)'
+        else:
+            status = 'unhealthy'
+            message = 'Configuration missing required settings'
+        
+        response_time = (datetime.now() - start_time).total_seconds() * 1000
+        
         return {
-            'general': Decimal(self.get('distribution_general', '0.65')),
-            'stewardship': Decimal(self.get('distribution_stewardship', '0.30')),
-            'administration': Decimal(self.get('distribution_administration', '0.05'))
+            'status': status,
+            'message': message,
+            'details': {
+                'initialized': self._initialized,
+                'settings_count': len(self._settings),
+                'source': 'database',
+                'cache_valid': cache_valid,
+                'cache_age_seconds': cache_age,
+                'cache_ttl_minutes': self._cache_ttl.total_seconds() / 60,
+                'last_loaded': self._last_loaded.isoformat() if self._last_loaded else None,
+                'has_required_settings': has_required,
+                'response_time_ms': round(response_time, 2)
+            }
         }
     
-    @property
-    def ACCOUNTS(self) -> Dict[str, Any]:
-        # Load from environment as fallback until we add these to DB
+    # ========================================================================
+    # DIAGNOSTIC METHODS
+    # ========================================================================
+    
+    def display(self) -> Dict[str, Any]:
+        """
+        Display configuration for diagnostics.
+        
+        Sensitive values are redacted.
+        
+        Returns:
+            Dictionary of safe-to-display configuration
+        """
+        if not self._initialized:
+            return {'error': 'Not initialized'}
+        
+        def redact(value: str, show_chars: int = 10) -> str:
+            """Redact sensitive string values."""
+            if not isinstance(value, str) or len(value) <= show_chars:
+                return value
+            return value[:show_chars] + '...'
+        
         return {
-            'general': os.getenv('GENERAL_PUBLIC_KEY', ''),
-            'administration': os.getenv('ADMIN_PUBLIC_KEY', ''),
-            'stewardship': [
-                os.getenv('STEWARD_MGMT_PUBLIC_KEY', ''),
-                os.getenv('STEWARD_INFRA_PUBLIC_KEY', ''),
-                os.getenv('STEWARD_LIQUIDITY_PUBLIC_KEY', ''),
-            ]
+            'network': self.get('network', 'unknown'),
+            'horizon_url': self.get('horizon_url', 'unknown'),
+            'ubec_code': self.get('ubec_code', 'unknown'),
+            'ubec_issuer': redact(self.get('ubec_issuer', '')),
+            'settings_count': len(self._settings),
+            'cache_valid': self._cache_valid(),
+            'last_loaded': self._last_loaded.isoformat() if self._last_loaded else None
         }
     
-    @property
-    def REBALANCE_THRESHOLD(self) -> Decimal:
-        return Decimal(self.get('rebalance_threshold', '0.01'))
-    
-    @property
-    def CHECK_INTERVAL(self) -> int:
-        return int(self.get('check_interval', 3600))
-    
-    @property
-    def SUPPLY_CHECK_INTERVAL(self) -> int:
-        return int(self.get('supply_check_interval', 86400))
-    
-    @property
-    def SUPPLY_SAFETY_FACTOR(self) -> Decimal:
-        return Decimal(self.get('supply_safety_factor', '0.02'))
-    
-    @property
-    def SUPPLY_CALCULATION_METHOD(self) -> str:
-        return self.get('supply_calculation_method', 'PRECISE')
-    
-    @property
-    def LOG_FILE(self) -> str:
-        return self.get('log_file', 'ubec_distribution_manager.log')
-    
-    @property
-    def LOG_LEVEL(self) -> str:
-        return self.get('log_level', 'INFO')
-    
-    @property
-    def LOG_FORMAT(self) -> str:
-        return self.get('log_format', '%(asctime)s - %(levelname)s - %(message)s')
-    
-    @property
-    def LOG_FILE_PATH(self) -> str:
-        return self.get('log_file_path', 'logs/ubec_distribution_manager.log')
-    
-    @property
-    def LOG_DATE_FORMAT(self) -> str:
-        return self.get('log_date_format', '%Y-%m-%d %H:%M:%S')
-    
-    @property
-    def LOG_MAX_BYTES(self) -> int:
-        return int(self.get('log_max_bytes', 10485760))
-    
-    @property
-    def LOG_BACKUP_COUNT(self) -> int:
-        return int(self.get('log_backup_count', 5))
+    def __repr__(self) -> str:
+        """String representation."""
+        status = "initialized" if self._initialized else "not initialized"
+        count = len(self._settings) if self._initialized else 0
+        return f"<ConfigurationService: {status}, {count} settings>"
 
 
-# Global configuration instance
-_system_config: Optional[SystemConfig] = None
+# ============================================================================
+# FACTORY FUNCTION (Principle #12: Method Singularity)
+# ============================================================================
 
-
-async def get_system_config(db_manager) -> SystemConfig:
+async def get_system_config(db_manager) -> ConfigurationService:
     """
-    Get the global system configuration instance.
+    Factory function to create and initialize configuration service.
+    
+    This is the ONLY way to create a ConfigurationService instance.
+    Principle #12: Method Singularity - one way to do things.
     
     Args:
-        db_manager: AsyncDatabaseManager instance
+        db_manager: AsyncDatabaseManager instance (REQUIRED)
         
     Returns:
-        SystemConfig instance loaded from database.
+        Initialized ConfigurationService instance
+        
+    Raises:
+        ValueError: If db_manager is None
+        RuntimeError: If database is unavailable
+        ValueError: If required settings missing
+        
+    Usage:
+        # In service registry factory
+        async def create_config(registry):
+            from config.settings import get_system_config
+            db = await registry.get('database')
+            config = await get_system_config(db)
+            return config
+        
+        # In services
+        config = await registry.get('config')
+        horizon_url = config['horizon_url']
+    
+    Design Notes:
+        - Database is REQUIRED (Principle #4: Single Source of Truth)
+        - No fallbacks to environment variables
+        - Fails fast if database unavailable
+        - Validates required settings on load
     """
-    global _system_config
+    if db_manager is None:
+        raise ValueError(
+            "Database manager is required. "
+            "Database is SINGLE source of truth (Principle #4). "
+            "No fallbacks, no environment variables."
+        )
     
-    if _system_config is None:
-        _system_config = SystemConfig()
-        await _system_config.initialize(db_manager)
+    config = ConfigurationService(db_manager)
+    await config.initialize()
     
-    return _system_config
+    logger.info(f"✓ Configuration service initialized: {len(config._settings)} settings")
+    
+    return config
+
+
+# ============================================================================
+# MODULE EXPORTS
+# ============================================================================
+
+__all__ = [
+    'ConfigurationService',
+    'get_system_config',
+]
+
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+
+"""
+CORRECT USAGE:
+
+1. Create via factory (service registry):
+   
+   async def create_config(registry: ServiceRegistry):
+       from config.settings import get_system_config
+       db = await registry.get('database')
+       config = await get_system_config(db)
+       return config
+
+2. Access in services:
+   
+   class MyService:
+       def __init__(self, config, db):
+           self.config = config
+           self.db = db
+       
+       async def do_work(self):
+           # Dictionary-style access
+           url = self.config['horizon_url']
+           issuer = self.config['ubec_issuer']
+           
+           # Check if setting exists
+           if 'optional_setting' in self.config:
+               value = self.config['optional_setting']
+
+3. Health check:
+   
+   health = await config.health_check()
+   print(f"Status: {health['status']}")
+   print(f"Settings: {health['details']['settings_count']}")
+
+4. Reload configuration:
+   
+   # After database update
+   await config.reload()
+
+
+INCORRECT USAGE:
+
+❌ Don't instantiate directly:
+   config = ConfigurationService(db)  # Wrong! Use factory
+
+❌ Don't use properties:
+   config.HORIZON_URL  # Wrong! Use dictionary access
+
+❌ Don't expect fallbacks:
+   # No environment variable fallbacks
+   # No default values in code
+   # Database is ONLY source
+
+❌ Don't create singletons:
+   # Let service registry manage lifecycle
+   # Each factory call returns new instance
+
+
+DATABASE SCHEMA:
+
+CREATE TABLE system_settings (
+    setting_key VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    setting_type VARCHAR(20) DEFAULT 'string',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+Required settings:
+- horizon_url (string)
+- ubec_code (string)
+- ubec_issuer (string)
+- network (string)
+
+See setup_system_settings.sql for complete schema.
+"""

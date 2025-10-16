@@ -196,7 +196,7 @@ def register_core_services():
         """Create configuration service"""
         from config.settings import get_system_config
         
-        db = registry.get_initialized('database')
+        db = await registry.get('database')
         config = await get_system_config(db)
         return config
     
@@ -211,11 +211,11 @@ def register_core_services():
     # STELLAR CLIENT
     # ========================================================================
     
-    def create_stellar(registry: ServiceRegistry):
+    async def create_stellar(registry: ServiceRegistry):
         """Create Stellar client service"""
         from stellar_sdk import ServerAsync
         
-        config = registry.get_initialized('config')
+        config = await registry.get('config')
         return ServerAsync(horizon_url=config.HORIZON_URL)
     
     registry.register_factory(
@@ -233,8 +233,8 @@ def register_core_services():
         """Create data synchronizer service"""
         from core.db.ubec_data_synchronizer import UBECDataSynchronizer
         
-        db = registry.get_initialized('database')
-        stellar = registry.get_initialized('stellar_client')
+        db = await registry.get('database')
+        stellar = await registry.get('stellar_client')
         
         sync = UBECDataSynchronizer(db)
         await sync.initialize(stellar)
@@ -255,7 +255,7 @@ def register_core_services():
         """Create analytics service"""
         from services.analytics.ubec_analytics_service import UBECAnalyticsService
         
-        db = registry.get_initialized('database')
+        db = await registry.get('database')
         analytics = UBECAnalyticsService(db)
         await analytics.initialize()
         return analytics
@@ -275,9 +275,9 @@ def register_core_services():
         """Create order book service"""
         from services.market.ubec_orderbook_service import create_orderbook_service
         
-        db = registry.get_initialized('database')
-        stellar = registry.get_initialized('stellar_client')
-        config = registry.get_initialized('config')
+        db = await registry.get('database')
+        stellar = await registry.get('stellar_client')
+        config = await registry.get('config')
         
         return create_orderbook_service(
             db_manager=db,
@@ -301,9 +301,9 @@ def register_core_services():
     def create_protocol_factory(element: str, module_path: str):
         """Factory generator for protocol services"""
         async def factory(registry: ServiceRegistry):
-            db = registry.get_initialized('database')
-            stellar = registry.get_initialized('stellar_client')
-            config = registry.get_initialized('config')
+            db = await registry.get('database')
+            stellar = await registry.get('stellar_client')
+            config = await registry.get('config')
             
             module = __import__(module_path, fromlist=['create_service'])
             factory_func = getattr(module, f'create_ubec{element}_service' if element else 'create_ubec_service')
@@ -347,8 +347,8 @@ def register_core_services():
         """Create audit service"""
         from services.audit.ubec_audit_service import create_audit_service
         
-        db = registry.get_initialized('database')
-        config = registry.get_initialized('config')
+        db = await registry.get('database')
+        config = await registry.get('config')
         
         primary_schema = getattr(db, 'primary_schema', db.schema.split(',')[0].strip())
         
@@ -386,10 +386,10 @@ def register_core_services():
         """Create distribution service"""
         from services.distribution.distribution_service import create_distribution_service
         
-        db = registry.get_initialized('database')
-        stellar = registry.get_initialized('stellar_client')
-        config = registry.get_initialized('config')
-        audit = registry.get_initialized('audit')
+        db = await registry.get('database')
+        stellar = await registry.get('stellar_client')
+        config = await registry.get('config')
+        audit = await registry.get('audit')
         
         primary_schema = getattr(db, 'primary_schema', db.schema.split(',')[0].strip())
         
@@ -435,8 +435,8 @@ def register_core_services():
         """Create holonic evaluator service"""
         from core.holonic.ubec_holonic_evaluator import create_holonic_evaluator
         
-        db = registry.get_initialized('database')
-        config = registry.get_initialized('config')
+        db = await registry.get('database')
+        config = await registry.get('config')
         
         primary_schema = getattr(db, 'primary_schema', db.schema.split(',')[0].strip())
         
@@ -466,7 +466,7 @@ def register_core_services():
         """Create visualization service"""
         from core.holonic.ubec_holonic_visualizer import create_holonic_visualizer
         
-        db = registry.get_initialized('database')
+        db = await registry.get('database')
         primary_schema = getattr(db, 'primary_schema', db.schema.split(',')[0].strip())
         
         visualizer_config = {'db_schema': primary_schema}
@@ -487,13 +487,13 @@ def register_core_services():
     # DISTRIBUTION EVALUATOR
     # ========================================================================
     
-    def create_dist_evaluator(registry: ServiceRegistry):
+    async def create_dist_evaluator(registry: ServiceRegistry):
         """Create distribution evaluator service"""
         from core.evaluation.distribution_evaluator import create_evaluator_service
         
-        dist = registry.get_initialized('distribution')
-        audit = registry.get_initialized('audit')
-        db = registry.get_initialized('database')
+        dist = await registry.get('distribution')
+        audit = await registry.get('audit')
+        db = await registry.get('database')
         
         return create_evaluator_service(
             distribution_service=dist,
