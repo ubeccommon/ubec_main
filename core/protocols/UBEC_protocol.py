@@ -6,7 +6,7 @@ UBEC Protocol - Air Element (Gateway & Universal Access)
 Service implementation for the Air element of the UBEC four-element system.
 
 The Air element represents:
-- 🜁 Gateway: Universal entry point for all participants
+- 🌬️ Gateway: Universal entry point for all participants
 - Diversity: Welcoming all forms of participation
 - Accessibility: Lowering barriers to economic inclusion
 - Freedom: Unrestricted access to basic economic rights
@@ -17,25 +17,28 @@ This module implements the service pattern with:
 - Database as single source of truth
 - Built-in rate limiting
 - In-memory caching with TTL
+- Comprehensive health monitoring
 
 Design Principles Compliance:
-- ✅ Modular Design: Self-contained service with clear boundaries
-- ✅ Service Pattern: No standalone execution, factory-based instantiation
-- ✅ Service Registry: Accessed through centralized registry
-- ✅ Single Source of Truth: Database is authoritative
-- ✅ Strict Async: All I/O operations use async/await
-- ✅ No Sync Fallbacks: Pure async implementation
-- ✅ Per-Asset Monitoring: Individual account tracking
-- ✅ No Duplicate Config: Uses global configuration
-- ✅ Rate Limiting: Built-in API rate limiting
-- ✅ Separation of Concerns: Gateway logic separated from data access
-- ✅ Documentation: Comprehensive docstrings and inline comments
-- ✅ Method Singularity: No duplicate methods
+════════════════════════════════════════════════════════════════════════════
+    ✅ 1.  Modular Design: Self-contained service with clear boundaries
+    ✅ 2.  Service Pattern: No standalone execution, factory-based instantiation
+    ✅ 3.  Service Registry: Accessed through centralized registry
+    ✅ 4.  Single Source of Truth: Database is authoritative
+    ✅ 5.  Strict Async: All I/O operations use async/await
+    ✅ 6.  No Sync Fallbacks: Pure async implementation
+    ✅ 7.  Per-Asset Monitoring: Health checks and individual account tracking
+    ✅ 8.  No Duplicate Config: Uses global configuration
+    ✅ 9.  Rate Limiting: Built-in API rate limiting
+    ✅ 10. Separation of Concerns: Gateway logic separated from data access
+    ✅ 11. Documentation: Comprehensive docstrings and inline comments
+    ✅ 12. Method Singularity: No duplicate methods
+════════════════════════════════════════════════════════════════════════════
 
 Usage:
     from UBEC_protocol import create_ubec_service
     
-    service = create_ubec_service(
+    service = await create_ubec_service(
         db_manager=async_db,
         config={'asset_code': 'UBEC', 'issuer': 'G...'},
         stellar_client=stellar_async
@@ -45,14 +48,23 @@ Usage:
     await service.sync_gateway_data()
     accounts = await service.get_gateway_accounts()
     stats = await service.get_gateway_statistics()
+    health = await service.health_check()
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.0.0 (Async Service Architecture)
-Date: October 10, 2025
+Version: 2.1.0 (Enhanced Health Check Support)
+Date: October 16, 2025
+
+Changelog:
+    v2.1.0 - Enhanced health_check() method for comprehensive monitoring
+           - Implements Principle #7: Per-Asset Monitoring with detailed checks
+           - Added initialization tracking
+           - Improved error handling and validation
+           - Added operation statistics tracking
+    v2.0.0 - Complete async service architecture
 """
 
 import asyncio
@@ -70,6 +82,9 @@ class RateLimiter:
     """
     Simple async rate limiter for API calls.
     Implements token bucket algorithm.
+    
+    Principle 5: Strict Async - All operations use async/await
+    Principle 9: Integrated Rate Limiting
     """
     
     def __init__(self, calls_per_second: float = 10.0):
@@ -88,6 +103,8 @@ class RateLimiter:
         """
         Acquire permission to make a call.
         Blocks if rate limit would be exceeded.
+        
+        Principle 5: Uses async sleep, not blocking time.sleep()
         """
         async with self._lock:
             now = asyncio.get_event_loop().time()
@@ -112,7 +129,11 @@ class GatewayAccessLevel(Enum):
 
 @dataclass
 class GatewayAccount:
-    """Represents a gateway account in the Air element"""
+    """
+    Represents a gateway account in the Air element.
+    
+    Principle 1: Modular Design - Clear data structure
+    """
     account_id: str
     access_level: GatewayAccessLevel
     balance: Decimal
@@ -125,7 +146,11 @@ class GatewayAccount:
 
 @dataclass
 class GatewayStatistics:
-    """Gateway-wide statistics"""
+    """
+    Gateway-wide statistics.
+    
+    Principle 7: Per-Asset Monitoring - Comprehensive metrics
+    """
     total_accounts: int
     active_accounts: int
     total_balance: Decimal
@@ -144,12 +169,29 @@ class UBECProtocolService:
     Manages gateway access and universal participation in the UBEC ecosystem.
     All operations are async and use the database as the single source of truth.
     
+    This service represents the Air element:
+    - Gateway to the UBEC ecosystem
+    - Diversity in participation
+    - Universal accessibility
+    - Freedom of economic access
+    
     Attributes:
         db_manager: Async database manager
         config: Protocol configuration
         stellar_client: Async Stellar SDK client
         logger: Logger instance
         rate_limiter: API rate limiter
+        
+    Lifecycle:
+        1. Instantiate via create_ubec_service() factory
+        2. Service auto-initializes on first use
+        3. Cleanup via close() method
+        
+    Design Principles:
+        - Principle 1: Modular - Clear boundaries and single responsibility
+        - Principle 4: Single Source of Truth - Database-driven
+        - Principle 5: Strict Async - All I/O operations async
+        - Principle 10: Separation of Concerns - Clear layer separation
     """
     
     def __init__(
@@ -161,6 +203,8 @@ class UBECProtocolService:
     ):
         """
         Initialize UBEC Air protocol service.
+        
+        DO NOT call directly - use create_ubec_service() factory instead.
         
         Args:
             db_manager: Database manager with async support
@@ -177,7 +221,7 @@ class UBECProtocolService:
         # Setup logging
         self.logger = logging.getLogger(f'UBECProtocol.{self.asset_code}')
         
-        # Rate limiting
+        # Rate limiting (Principle 9: Integrated Rate Limiting)
         self.rate_limiter = RateLimiter(rate_limit_calls_per_second)
         
         # In-memory cache with TTL
@@ -185,12 +229,244 @@ class UBECProtocolService:
         self._cache_timestamp: Optional[datetime] = None
         self._cache_ttl = timedelta(minutes=5)
         
-        self.logger.info(f"Air Protocol Service initialized for {self.asset_code}")
+        # Initialization and operation tracking (for health checks)
+        self._initialized = True  # Service is ready after construction
+        self._last_sync_time: Optional[datetime] = None
+        self._last_query_time: Optional[datetime] = None
+        self._sync_count = 0
+        self._query_count = 0
+        self._error_count = 0
+        self._last_error: Optional[str] = None
+        self._last_error_time: Optional[datetime] = None
+        
+        self.logger.info(
+            f"Air Protocol Service initialized for {self.asset_code} "
+            f"(Element: Gateway & Universal Access)"
+        )
+    
+    # ==================== HEALTH CHECK ====================
+    # Principle 7: Per-Asset Monitoring with health checks
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform comprehensive health check on Air protocol service.
+        
+        Implements Principle #7: Per-Asset Monitoring with Execution Minimums.
+        
+        Checks:
+        - Service initialization status
+        - Database connectivity
+        - Stellar client connectivity (if configured)
+        - Cache status and freshness
+        - Recent operation history
+        - Error tracking
+        - Configuration validity
+        
+        Returns:
+            Health status dictionary:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'message': str,
+                'details': {
+                    'protocol': str,
+                    'element': str,
+                    'asset_code': str,
+                    'initialized': bool,
+                    'database_connected': bool,
+                    'stellar_connected': bool,
+                    'cache_status': str,
+                    'cache_age_seconds': float,
+                    'cached_accounts': int,
+                    'last_sync': str (ISO timestamp),
+                    'last_query': str (ISO timestamp),
+                    'sync_count': int,
+                    'query_count': int,
+                    'error_count': int,
+                    'last_error': str,
+                    'last_error_time': str (ISO timestamp),
+                    'config_valid': bool,
+                    'response_time_ms': float
+                }
+            }
+        
+        Example:
+            >>> health = await service.health_check()
+            >>> if health['status'] == 'healthy':
+            ...     print("Air protocol operational")
+            >>> else:
+            ...     print(f"Issues detected: {health['message']}")
+        """
+        start_time = datetime.now()
+        
+        health_info = {
+            'status': 'unknown',
+            'message': '',
+            'details': {
+                'protocol': 'UBEC Air Protocol',
+                'element': 'Air (Gateway & Universal Access)',
+                'asset_code': self.asset_code,
+                'initialized': self._initialized,
+                'database_connected': False,
+                'stellar_connected': False,
+                'cache_status': 'unknown',
+                'cache_age_seconds': None,
+                'cached_accounts': len(self._account_cache),
+                'last_sync': self._last_sync_time.isoformat() if self._last_sync_time else None,
+                'last_query': self._last_query_time.isoformat() if self._last_query_time else None,
+                'sync_count': self._sync_count,
+                'query_count': self._query_count,
+                'error_count': self._error_count,
+                'last_error': self._last_error,
+                'last_error_time': self._last_error_time.isoformat() if self._last_error_time else None,
+                'config_valid': False,
+                'response_time_ms': 0.0
+            }
+        }
+        
+        issues = []
+        
+        try:
+            # 1. Check initialization
+            if not self._initialized:
+                issues.append("Service not initialized")
+            
+            # 2. Check configuration validity
+            try:
+                self._validate_config()
+                health_info['details']['config_valid'] = True
+            except ValueError as e:
+                issues.append(f"Invalid configuration: {e}")
+            
+            # 3. Test database connection
+            try:
+                if hasattr(self.db_manager, 'health_check'):
+                    db_health = await self.db_manager.health_check()
+                    health_info['details']['database_connected'] = (
+                        db_health.get('status') == 'healthy'
+                    )
+                    if not health_info['details']['database_connected']:
+                        issues.append(f"Database unhealthy: {db_health.get('message')}")
+                else:
+                    # Fallback: try a simple query
+                    test_query = "SELECT 1 as test"
+                    result = await self.db_manager.fetch_one(test_query)
+                    health_info['details']['database_connected'] = (result is not None)
+            except Exception as e:
+                issues.append(f"Database connection failed: {e}")
+            
+            # 4. Test Stellar client connection (if configured)
+            if self.stellar_client:
+                try:
+                    # Rate limit before checking
+                    await self.rate_limiter.acquire()
+                    
+                    # Try to get ledger info (lightweight operation)
+                    ledger = await self.stellar_client.ledgers().order(desc=True).limit(1).call()
+                    health_info['details']['stellar_connected'] = (ledger is not None)
+                except Exception as e:
+                    issues.append(f"Stellar connection failed: {e}")
+            else:
+                # No Stellar client configured - not an error
+                health_info['details']['stellar_connected'] = None
+            
+            # 5. Check cache status
+            if self._cache_timestamp:
+                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
+                health_info['details']['cache_age_seconds'] = round(cache_age, 2)
+                
+                if cache_age < self._cache_ttl.total_seconds():
+                    health_info['details']['cache_status'] = 'fresh'
+                elif cache_age < self._cache_ttl.total_seconds() * 2:
+                    health_info['details']['cache_status'] = 'stale'
+                    issues.append(f"Cache is stale ({cache_age/60:.1f} minutes old)")
+                else:
+                    health_info['details']['cache_status'] = 'expired'
+                    issues.append(f"Cache is expired ({cache_age/60:.1f} minutes old)")
+            else:
+                health_info['details']['cache_status'] = 'empty'
+                if self._sync_count == 0:
+                    issues.append("No data synced yet")
+            
+            # 6. Check operation recency
+            if self._last_sync_time:
+                sync_age = (datetime.now() - self._last_sync_time).total_seconds()
+                # Warn if no sync in last 24 hours
+                if sync_age > 86400:
+                    issues.append(f"No sync in {sync_age/3600:.1f} hours")
+            
+            # 7. Check error rate
+            if self._error_count > 0:
+                total_ops = self._sync_count + self._query_count
+                if total_ops > 0:
+                    error_rate = self._error_count / total_ops
+                    if error_rate > 0.1:  # More than 10% error rate
+                        issues.append(
+                            f"High error rate: {error_rate:.1%} "
+                            f"({self._error_count} errors in {total_ops} operations)"
+                        )
+            
+            # Calculate response time
+            end_time = datetime.now()
+            response_time = (end_time - start_time).total_seconds() * 1000
+            health_info['details']['response_time_ms'] = round(response_time, 2)
+            
+            # Determine overall status
+            critical_issues = [
+                issue for issue in issues 
+                if any(word in issue.lower() for word in ['database', 'stellar', 'configuration', 'initialized'])
+            ]
+            
+            if len(critical_issues) > 0:
+                health_info['status'] = 'unhealthy'
+                health_info['message'] = f"Critical issues: {', '.join(critical_issues)}"
+            elif len(issues) > 0:
+                health_info['status'] = 'degraded'
+                health_info['message'] = f"Warnings: {', '.join(issues)}"
+            else:
+                health_info['status'] = 'healthy'
+                health_info['message'] = (
+                    f"Air protocol operational "
+                    f"({self._sync_count} syncs, {self._query_count} queries, "
+                    f"{len(self._account_cache)} cached accounts)"
+                )
+            
+            return health_info
+            
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}", exc_info=True)
+            health_info['status'] = 'unhealthy'
+            health_info['message'] = f"Health check error: {str(e)}"
+            return health_info
+    
+    def _validate_config(self) -> None:
+        """
+        Validate service configuration.
+        
+        Raises:
+            ValueError: If configuration is invalid
+        
+        Principle 11: Comprehensive validation
+        """
+        if not self.asset_code:
+            raise ValueError("asset_code not configured")
+        
+        if not self.issuer:
+            raise ValueError("issuer address not configured")
+        
+        # Validate issuer format (Stellar public key)
+        if not self.issuer.startswith('G') or len(self.issuer) != 56:
+            raise ValueError(f"Invalid issuer address format: {self.issuer}")
     
     # ==================== CACHE MANAGEMENT ====================
+    # Principle 10: Clear Separation - Cache management separated
     
     def _is_cache_valid(self) -> bool:
-        """Check if cache is still valid"""
+        """
+        Check if cache is still valid.
+        
+        Returns:
+            True if cache is fresh, False otherwise
+        """
         if self._cache_timestamp is None:
             return False
         return datetime.now() - self._cache_timestamp < self._cache_ttl
@@ -198,7 +474,12 @@ class UBECProtocolService:
     async def _load_from_database(self) -> None:
         """
         Load gateway accounts from database into cache.
-        This is the single source of truth.
+        
+        Principle 4: Database is the single source of truth.
+        Principle 5: Fully async operation.
+        
+        Raises:
+            Exception: If database query fails
         """
         try:
             # Ensure connection is established
@@ -206,6 +487,7 @@ class UBECProtocolService:
                 await self.db_manager.connect()
             
             # Query database for all accounts with UBEC trustlines
+            # Principle 4: Database is single source of truth
             query = """
                 SELECT 
                     account_id,
@@ -241,15 +523,23 @@ class UBECProtocolService:
             self.logger.info(f"Loaded {len(self._account_cache)} accounts into cache")
             
         except Exception as e:
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
             self.logger.error(f"Error loading from database: {e}")
             raise
     
     async def _ensure_cache_loaded(self) -> None:
-        """Ensure cache is loaded and valid"""
+        """
+        Ensure cache is loaded and valid.
+        
+        Principle 5: Async operation.
+        """
         if not self._is_cache_valid():
             await self._load_from_database()
     
     # ==================== GATEWAY OPERATIONS ====================
+    # Principle 10: Separation of Concerns - Business logic layer
     
     async def sync_gateway_data(self) -> Dict[str, Any]:
         """
@@ -261,9 +551,23 @@ class UBECProtocolService:
         
         Returns:
             Dict: Sync status and metrics
+            
+        Example:
+            >>> result = await service.sync_gateway_data()
+            >>> print(f"Status: {result['status']}")
+            >>> print(f"Accounts: {result['accounts_loaded']}")
+        
+        Design Notes:
+            - Principle 5: Fully async operation
+            - Principle 7: Per-asset monitoring with metrics
+            - Principle 11: Comprehensive logging
         """
         try:
             self.logger.info("Starting Air (UBEC) gateway data synchronization...")
+            
+            # Track operation for health checks
+            self._last_sync_time = datetime.now()
+            self._sync_count += 1
             
             # Force cache refresh
             await self._load_from_database()
@@ -289,6 +593,9 @@ class UBECProtocolService:
             }
             
         except Exception as e:
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
             self.logger.error(f"Error syncing gateway data: {e}")
             return {
                 'element': 'air',
@@ -314,23 +621,47 @@ class UBECProtocolService:
             
         Returns:
             List of GatewayAccount objects
+            
+        Example:
+            >>> accounts = await service.get_gateway_accounts(
+            ...     min_balance=Decimal('100'),
+            ...     active_only=True
+            ... )
+            >>> for account in accounts:
+            ...     print(f"{account.account_id}: {account.balance}")
+        
+        Design Notes:
+            - Principle 5: Async operation
+            - Principle 7: Per-asset monitoring with filtering
         """
-        await self._ensure_cache_loaded()
-        
-        accounts = list(self._account_cache.values())
-        
-        # Apply filters
-        if access_level:
-            accounts = [a for a in accounts if a.access_level == access_level]
-        
-        if min_balance:
-            accounts = [a for a in accounts if a.balance >= min_balance]
-        
-        if active_only:
-            cutoff = datetime.now() - timedelta(days=30)
-            accounts = [a for a in accounts if a.last_activity >= cutoff]
-        
-        return accounts
+        try:
+            # Track operation for health checks
+            self._last_query_time = datetime.now()
+            self._query_count += 1
+            
+            await self._ensure_cache_loaded()
+            
+            accounts = list(self._account_cache.values())
+            
+            # Apply filters
+            if access_level:
+                accounts = [a for a in accounts if a.access_level == access_level]
+            
+            if min_balance:
+                accounts = [a for a in accounts if a.balance >= min_balance]
+            
+            if active_only:
+                cutoff = datetime.now() - timedelta(days=30)
+                accounts = [a for a in accounts if a.last_activity >= cutoff]
+            
+            return accounts
+            
+        except Exception as e:
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
+            self.logger.error(f"Error getting gateway accounts: {e}")
+            raise
     
     async def get_gateway_statistics(self) -> GatewayStatistics:
         """
@@ -338,49 +669,71 @@ class UBECProtocolService:
         
         Returns:
             GatewayStatistics object with current metrics
+            
+        Example:
+            >>> stats = await service.get_gateway_statistics()
+            >>> print(f"Total accounts: {stats.total_accounts}")
+            >>> print(f"Active accounts: {stats.active_accounts}")
+            >>> print(f"Diversity index: {stats.diversity_index:.2f}")
+        
+        Design Notes:
+            - Principle 7: Per-asset monitoring with comprehensive metrics
+            - Principle 12: Single implementation of statistics calculation
         """
-        await self._ensure_cache_loaded()
-        
-        accounts = list(self._account_cache.values())
-        
-        # Calculate metrics
-        total_accounts = len(accounts)
-        
-        # Active accounts (activity in last 30 days)
-        cutoff = datetime.now() - timedelta(days=30)
-        active_accounts = len([a for a in accounts if a.last_activity >= cutoff])
-        
-        # Balance metrics
-        balances = [a.balance for a in accounts]
-        total_balance = sum(balances)
-        average_balance = total_balance / total_accounts if total_accounts > 0 else Decimal('0')
-        
-        # New accounts in last 24 hours
-        cutoff_24h = datetime.now() - timedelta(hours=24)
-        new_accounts_24h = len([a for a in accounts if a.first_access >= cutoff_24h])
-        
-        # Diversity index (simplified - based on balance distribution)
-        diversity_index = self._calculate_diversity_index(balances)
-        
-        # Trustline adoption
-        with_trustlines = len([a for a in accounts if a.trustline_established])
-        trustline_adoption_rate = with_trustlines / total_accounts if total_accounts > 0 else 0.0
-        
-        return GatewayStatistics(
-            total_accounts=total_accounts,
-            active_accounts=active_accounts,
-            total_balance=total_balance,
-            average_balance=average_balance,
-            new_accounts_24h=new_accounts_24h,
-            diversity_index=diversity_index,
-            trustline_adoption_rate=trustline_adoption_rate
-        )
+        try:
+            # Track operation for health checks
+            self._last_query_time = datetime.now()
+            self._query_count += 1
+            
+            await self._ensure_cache_loaded()
+            
+            accounts = list(self._account_cache.values())
+            
+            # Calculate metrics
+            total_accounts = len(accounts)
+            
+            # Active accounts (activity in last 30 days)
+            cutoff = datetime.now() - timedelta(days=30)
+            active_accounts = len([a for a in accounts if a.last_activity >= cutoff])
+            
+            # Balance metrics
+            balances = [a.balance for a in accounts]
+            total_balance = sum(balances)
+            average_balance = total_balance / total_accounts if total_accounts > 0 else Decimal('0')
+            
+            # New accounts in last 24 hours
+            cutoff_24h = datetime.now() - timedelta(hours=24)
+            new_accounts_24h = len([a for a in accounts if a.first_access >= cutoff_24h])
+            
+            # Diversity index (simplified - based on balance distribution)
+            diversity_index = self._calculate_diversity_index(balances)
+            
+            # Trustline adoption
+            with_trustlines = len([a for a in accounts if a.trustline_established])
+            trustline_adoption_rate = with_trustlines / total_accounts if total_accounts > 0 else 0.0
+            
+            return GatewayStatistics(
+                total_accounts=total_accounts,
+                active_accounts=active_accounts,
+                total_balance=total_balance,
+                average_balance=average_balance,
+                new_accounts_24h=new_accounts_24h,
+                diversity_index=diversity_index,
+                trustline_adoption_rate=trustline_adoption_rate
+            )
+            
+        except Exception as e:
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
+            self.logger.error(f"Error calculating gateway statistics: {e}")
+            raise
     
     def _calculate_diversity_index(self, balances: List[Decimal]) -> float:
         """
         Calculate diversity index based on balance distribution.
-        Higher values indicate more diverse distribution.
         
+        Higher values indicate more diverse distribution.
         Uses simplified Gini coefficient (0 = perfect equality, 1 = perfect inequality)
         Diversity index = 1 - Gini coefficient
         
@@ -389,6 +742,9 @@ class UBECProtocolService:
             
         Returns:
             Diversity index (0.0 - 1.0)
+            
+        Design Notes:
+            - Principle 12: Single implementation of diversity calculation
         """
         if not balances or len(balances) < 2:
             return 0.0
@@ -422,43 +778,54 @@ class UBECProtocolService:
             
         Returns:
             GatewayAccount object or None if not found
-        """
-        await self._ensure_cache_loaded()
-        return self._account_cache.get(account_id)
-    
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Check service health.
+            
+        Example:
+            >>> account = await service.get_account_info('GXXX...')
+            >>> if account:
+            ...     print(f"Balance: {account.balance}")
+            ...     print(f"Active: {account.last_activity}")
         
-        Returns:
-            Dict with health status
+        Design Notes:
+            - Principle 5: Async operation
+            - Principle 7: Per-asset monitoring
         """
         try:
-            await self._ensure_cache_loaded()
+            # Track operation for health checks
+            self._last_query_time = datetime.now()
+            self._query_count += 1
             
-            return {
-                'protocol': f'UBEC (Air)',
-                'status': 'healthy',
-                'cached_accounts': len(self._account_cache),
-                'cache_age_seconds': (
-                    (datetime.now() - self._cache_timestamp).total_seconds()
-                    if self._cache_timestamp else None
-                ),
-                'timestamp': datetime.now().isoformat()
-            }
+            await self._ensure_cache_loaded()
+            return self._account_cache.get(account_id)
+            
         except Exception as e:
-            self.logger.error(f"Health check failed: {e}")
-            return {
-                'protocol': f'UBEC (Air)',
-                'status': 'unhealthy',
-                'error': str(e),
-                'timestamp': datetime.now().isoformat()
-            }
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
+            self.logger.error(f"Error getting account info: {e}")
+            raise
+    
+    # ==================== LIFECYCLE MANAGEMENT ====================
+    # Principle 10: Clear Separation of Concerns
+    
+    async def close(self) -> None:
+        """
+        Clean up service resources.
+        
+        Called during shutdown to release resources and cleanup caches.
+        
+        Principle 5: Async cleanup operation.
+        """
+        self.logger.info("Closing Air protocol service...")
+        self._account_cache.clear()
+        self._cache_timestamp = None
+        self._initialized = False
+        self.logger.info("Air protocol service closed")
 
 
 # ==================== SERVICE FACTORY ====================
+# Principle 2: Service Pattern - Factory for instantiation
 
-def create_ubec_service(
+async def create_ubec_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,
@@ -468,31 +835,87 @@ def create_ubec_service(
     Factory function to create UBEC Air protocol service instance.
     
     This is the proper way to instantiate the service for use in the service registry.
+    Changed to async to allow for future async initialization if needed.
+    
+    Principle 2: Service pattern with factory function.
+    Principle 3: Dependencies injected via service registry.
     
     Args:
         db_manager: Database manager with async support
-        config: Configuration dictionary
+        config: Configuration dictionary with:
+            - asset_code: UBEC token code (required)
+            - issuer: Issuer address (required)
         stellar_client: Optional Stellar async client
         **kwargs: Additional configuration options
     
     Returns:
         UBECProtocolService: Initialized service instance
+        
+    Raises:
+        ValueError: If required config parameters are missing
+    
+    Example:
+        >>> # In main.py or service registry
+        >>> service = await create_ubec_service(
+        ...     db_manager=db,
+        ...     config={'asset_code': 'UBEC', 'issuer': 'GDPNB7S3...'},
+        ...     stellar_client=stellar
+        ... )
+        >>> health = await service.health_check()
     """
-    return UBECProtocolService(
+    # Validate required config parameters
+    required_params = ['asset_code', 'issuer']
+    
+    for param in required_params:
+        if param not in config:
+            raise ValueError(f"Configuration missing required parameter: '{param}'")
+    
+    # Create service instance
+    service = UBECProtocolService(
         db_manager=db_manager,
         config=config,
         stellar_client=stellar_client,
         rate_limit_calls_per_second=kwargs.get('rate_limit_calls_per_second', 10.0)
     )
+    
+    # Note: No async initialization needed currently
+    # Pattern allows for future async initialization if needed
+    
+    return service
 
 
 # ==================== MODULE EXPORTS ====================
+# Principle 1: Modular Design - Clear public interface
 
 __all__ = [
+    # Enums
     'GatewayAccessLevel',
+    
+    # Data models
     'GatewayAccount',
     'GatewayStatistics',
+    
+    # Service
     'UBECProtocolService',
     'create_ubec_service',
+    
+    # Utilities
     'RateLimiter'
 ]
+
+
+# ==================== STANDALONE EXECUTION PREVENTION ====================
+# Principle 2: Service Pattern - No standalone execution
+
+if __name__ == "__main__":
+    raise RuntimeError(
+        "This module implements the service pattern and should not be run directly. "
+        "Use main.py as the orchestrator.\n\n"
+        "Example usage:\n"
+        "  from UBEC_protocol import create_ubec_service\n"
+        "  service = await create_ubec_service(db_manager, config, stellar_client)\n"
+        "  health = await service.health_check()\n"
+        "  await service.sync_gateway_data()\n\n"
+        "Attribution:\n"
+        "  This project uses the services of Claude and Anthropic PBC."
+    )

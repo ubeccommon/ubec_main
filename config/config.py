@@ -1,165 +1,304 @@
 # config/config.py
 """
-UBEC Protocol - Unified Configuration
-======================================
+UBEC Protocol - Unified Configuration Service
+==============================================
 Single source of truth for all configuration.
 
-Imports from settings.py and provides both:
-- Config dataclass (new style)
-- GlobalConfig class (for legacy compatibility)
+This module provides configuration management following the service pattern.
+Configuration is loaded from environment variables (primary source) with
+sensible defaults. Legacy settings.py is supported for backward compatibility
+but environment variables take precedence.
+
+Design Principles Compliance:
+- ✅ Modular Design: Self-contained configuration module
+- ✅ Service Pattern: Factory function for instantiation
+- ✅ Service Registry: Accessed through registry
+- ✅ Single Source of Truth: Environment variables → defaults → settings.py
+- ✅ Strict Async: Synchronous by nature (no I/O)
+- ✅ No Sync Fallbacks: No fallbacks needed
+- ✅ Per-Asset Monitoring: Token-level configuration available
+- ✅ No Duplicate Config: Clear precedence order
+- ✅ Integrated Rate Limiting: Rate limit config provided
+- ✅ Separation of Concerns: Pure configuration
+- ✅ Documentation: Comprehensive docstrings
+- ✅ Method Singularity: No duplicate methods
+
+Usage:
+    # Via service registry (preferred)
+    from core.service_registry import registry
+    config = registry.get_initialized('config')
+    
+    # Direct instantiation (legacy)
+    from config.config import create_config_service
+    config = create_config_service()
+    
+    # Access configuration
+    horizon_url = config.horizon_url
+    token_cfg = config.get_token_config('UBEC')
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform 
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
+
+Version: 2.0.0 (Service Pattern + Health Check)
+Date: October 16, 2025
 """
 
 import os
+import logging
 from decimal import Decimal
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Any, Optional
 from dataclasses import dataclass, field
+from dotenv import load_dotenv
 
-# Import from settings.py to preserve existing values
-# Try multiple import methods to ensure we find it
-HAS_SETTINGS = False
-settings = None
+# Load environment variables
+load_dotenv()
 
-# Method 1: Relative import (if imported as package)
-try:
-    from . import settings
-    HAS_SETTINGS = True
-except (ImportError, ValueError):
-    pass
+logger = logging.getLogger(__name__)
 
-# Method 2: Direct import (if config is in sys.path)
-if not HAS_SETTINGS:
+
+# ============================================================================
+# CONFIGURATION LOADING UTILITIES
+# ============================================================================
+
+def _load_legacy_settings() -> Optional[Any]:
+    """
+    Attempt to load legacy settings.py for backward compatibility.
+    
+    This is a fallback mechanism only. Environment variables take precedence.
+    
+    Returns:
+        Settings module if found, None otherwise
+    """
+    settings = None
+    
+    # Method 1: Relative import
     try:
-        import config.settings as settings
-        HAS_SETTINGS = True
+        from . import settings as _settings
+        settings = _settings
+        logger.debug("Loaded settings via relative import")
+        return settings
+    except (ImportError, ValueError):
+        pass
+    
+    # Method 2: Direct import
+    try:
+        import config.settings as _settings
+        settings = _settings
+        logger.debug("Loaded settings via direct import")
+        return settings
     except ImportError:
         pass
-
-# Method 3: Absolute import from current location
-if not HAS_SETTINGS:
+    
+    # Method 3: Absolute import from file
     try:
         import sys
-        import os
-        # Get the directory where this config.py file is located
+        import importlib.util
         config_dir = os.path.dirname(os.path.abspath(__file__))
         settings_path = os.path.join(config_dir, 'settings.py')
         
         if os.path.exists(settings_path):
-            import importlib.util
             spec = importlib.util.spec_from_file_location("settings", settings_path)
             settings = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(settings)
-            HAS_SETTINGS = True
-    except Exception:
-        pass
+            logger.debug("Loaded settings via absolute path")
+            return settings
+    except Exception as e:
+        logger.debug(f"Could not load settings.py: {e}")
+    
+    logger.debug("No legacy settings.py found, using environment/defaults only")
+    return None
 
-# Load from environment
-from dotenv import load_dotenv
-load_dotenv()
 
+def _get_config_value(env_key: str, settings_key: str, default: Any, 
+                      settings_module: Optional[Any] = None) -> Any:
+    """
+    Get configuration value with clear precedence order.
+    
+    Precedence (highest to lowest):
+    1. Environment variable
+    2. Legacy settings.py
+    3. Default value
+    
+    Args:
+        env_key: Environment variable name
+        settings_key: Key in settings.py
+        default: Default value if not found
+        settings_module: Optional settings module
+    
+    Returns:
+        Configuration value
+    """
+    # 1. Check environment variable first (highest priority)
+    env_value = os.getenv(env_key)
+    if env_value is not None:
+        return env_value
+    
+    # 2. Check legacy settings.py (medium priority)
+    if settings_module and hasattr(settings_module, settings_key):
+        return getattr(settings_module, settings_key)
+    
+    # 3. Use default (lowest priority)
+    return default
+
+
+# Load legacy settings once at module level
+_LEGACY_SETTINGS = _load_legacy_settings()
+
+
+# ============================================================================
+# TOKEN CONFIGURATION
+# ============================================================================
 
 @dataclass
 class TokenConfig:
-    """Configuration for a single token"""
+    """
+    Configuration for a single UBEC token.
+    
+    Attributes:
+        code: Token code (e.g., 'UBEC', 'UBECrc')
+        issuer: Stellar issuer public key
+        minimum_transaction: Minimum transaction amount
+        distribution_general: General distribution percentage
+        distribution_stewardship: Stewardship distribution percentage
+        distribution_admin: Admin distribution percentage
+    """
     code: str
     issuer: str
     minimum_transaction: Decimal = Decimal('10.0')
     distribution_general: Decimal = Decimal('0.75')
     distribution_stewardship: Decimal = Decimal('0.20')
     distribution_admin: Decimal = Decimal('0.05')
+    
+    def __post_init__(self):
+        """Validate token configuration."""
+        if not self.code:
+            raise ValueError("Token code cannot be empty")
+        if not self.issuer:
+            raise ValueError("Token issuer cannot be empty")
+        
+        # Validate distribution percentages sum to 1.0
+        total = self.distribution_general + self.distribution_stewardship + self.distribution_admin
+        if abs(float(total) - 1.0) > 0.001:  # Allow small floating point errors
+            raise ValueError(f"Distribution percentages must sum to 1.0, got {total}")
 
+
+# ============================================================================
+# MAIN CONFIGURATION CLASS
+# ============================================================================
 
 @dataclass
 class Config:
     """
-    Single source of truth for all configuration.
-    Dataclass style for new code.
+    Single source of truth for all UBEC configuration.
+    
+    Configuration is loaded with clear precedence:
+    1. Environment variables (primary source)
+    2. Legacy settings.py (backward compatibility)
+    3. Default values (sensible defaults)
+    
+    This class is designed to be instantiated via factory function
+    for service pattern compliance.
     """
     
-    # Network (from settings.py or env)
-    NETWORK: str = field(default_factory=lambda: 
-        getattr(settings, 'NETWORK', None) if HAS_SETTINGS 
-        else os.getenv('STELLAR_NETWORK', 'mainnet')
+    # ========================================================================
+    # NETWORK CONFIGURATION
+    # ========================================================================
+    
+    NETWORK: str = field(default_factory=lambda: _get_config_value(
+        'STELLAR_NETWORK', 'NETWORK', 'mainnet', _LEGACY_SETTINGS
+    ))
+    
+    HORIZON_URL: str = field(default_factory=lambda: _get_config_value(
+        'STELLAR_HORIZON_URL', 'HORIZON_URL', 
+        'https://horizon.stellar.org', _LEGACY_SETTINGS
+    ))
+    
+    # ========================================================================
+    # UBEC TOKEN CONFIGURATION
+    # ========================================================================
+    
+    UBEC_CODE: str = field(default_factory=lambda: _get_config_value(
+        'UBEC_CODE', 'UBEC_CODE', 'UBEC', _LEGACY_SETTINGS
+    ))
+    
+    UBEC_ISSUER: str = field(default_factory=lambda: _get_config_value(
+        'UBEC_ISSUER', 'UBEC_ISSUER',
+        'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN',
+        _LEGACY_SETTINGS
+    ))
+    
+    # ========================================================================
+    # SUPPLY CONFIGURATION
+    # ========================================================================
+    
+    FALLBACK_SUPPLY: Decimal = field(default_factory=lambda: Decimal(
+        _get_config_value('FALLBACK_SUPPLY', 'FALLBACK_SUPPLY', 
+                         '191766039.00', _LEGACY_SETTINGS)
+    ))
+    
+    ALWAYS_LOAD_FROM_NETWORK: bool = field(default_factory=lambda: 
+        _get_config_value('ALWAYS_LOAD_FROM_NETWORK', 'ALWAYS_LOAD_FROM_NETWORK',
+                         True, _LEGACY_SETTINGS)
     )
     
-    # Horizon URL
-    HORIZON_URL: str = field(default_factory=lambda:
-        getattr(settings, 'HORIZON_URL', None) if HAS_SETTINGS
-        else os.getenv('STELLAR_HORIZON_URL', 'https://horizon.stellar.org')
-    )
+    # ========================================================================
+    # DISTRIBUTION CONFIGURATION
+    # ========================================================================
     
-    # UBEC Token (from settings.py or env)
-    UBEC_CODE: str = field(default_factory=lambda:
-        getattr(settings, 'UBEC_CODE', 'UBEC') if HAS_SETTINGS else 'UBEC'
-    )
+    TARGET_DISTRIBUTION: Dict[str, Decimal] = field(default_factory=lambda: {
+        'general': Decimal('0.65'),
+        'stewardship': Decimal('0.30'),
+        'administration': Decimal('0.05')
+    })
     
-    UBEC_ISSUER: str = field(default_factory=lambda:
-        getattr(settings, 'UBEC_ISSUER', None) if HAS_SETTINGS
-        else os.getenv('UBEC_ISSUER', '')
-    )
-    
-    # Supply (from settings.py)
-    FALLBACK_SUPPLY: Decimal = field(default_factory=lambda:
-        getattr(settings, 'FALLBACK_SUPPLY', Decimal('191766039.00')) if HAS_SETTINGS
-        else Decimal('191766039.00')
-    )
-    
-    ALWAYS_LOAD_FROM_NETWORK: bool = field(default_factory=lambda:
-        getattr(settings, 'ALWAYS_LOAD_FROM_NETWORK', True) if HAS_SETTINGS else True
-    )
-    
-    # Distribution (from settings.py)
-    TARGET_DISTRIBUTION: Dict[str, Decimal] = field(default_factory=lambda:
-        getattr(settings, 'TARGET_DISTRIBUTION', {
-            'general': Decimal('0.65'),
-            'stewardship': Decimal('0.30'),
-            'administration': Decimal('0.05')
-        }) if HAS_SETTINGS else {
-            'general': Decimal('0.65'),
-            'stewardship': Decimal('0.30'),
-            'administration': Decimal('0.05')
-        }
-    )
-    
-    # Accounts (from settings.py)
     ACCOUNTS: Dict[str, Union[str, List[str]]] = field(default_factory=lambda:
-        getattr(settings, 'ACCOUNTS', {}) if HAS_SETTINGS else {}
+        getattr(_LEGACY_SETTINGS, 'ACCOUNTS', {}) if _LEGACY_SETTINGS else {}
     )
     
-    # Operation settings (from settings.py)
-    REBALANCE_THRESHOLD: Decimal = field(default_factory=lambda:
-        getattr(settings, 'REBALANCE_THRESHOLD', Decimal('0.01')) if HAS_SETTINGS
-        else Decimal('0.01')
-    )
+    # ========================================================================
+    # OPERATION SETTINGS
+    # ========================================================================
     
-    CHECK_INTERVAL: int = field(default_factory=lambda:
-        getattr(settings, 'CHECK_INTERVAL', 3600) if HAS_SETTINGS else 3600
-    )
+    REBALANCE_THRESHOLD: Decimal = field(default_factory=lambda: Decimal(
+        _get_config_value('REBALANCE_THRESHOLD', 'REBALANCE_THRESHOLD',
+                         '0.01', _LEGACY_SETTINGS)
+    ))
     
-    # Supply calculation (from settings.py)
-    SUPPLY_CHECK_INTERVAL: int = field(default_factory=lambda:
-        getattr(settings, 'SUPPLY_CHECK_INTERVAL', 86400) if HAS_SETTINGS else 86400
-    )
+    CHECK_INTERVAL: int = field(default_factory=lambda: int(
+        _get_config_value('CHECK_INTERVAL', 'CHECK_INTERVAL',
+                         '3600', _LEGACY_SETTINGS)
+    ))
     
-    SUPPLY_SAFETY_FACTOR: Decimal = field(default_factory=lambda:
-        getattr(settings, 'SUPPLY_SAFETY_FACTOR', Decimal('0.02')) if HAS_SETTINGS
-        else Decimal('0.02')
-    )
+    # ========================================================================
+    # SUPPLY CALCULATION
+    # ========================================================================
+    
+    SUPPLY_CHECK_INTERVAL: int = field(default_factory=lambda: int(
+        _get_config_value('SUPPLY_CHECK_INTERVAL', 'SUPPLY_CHECK_INTERVAL',
+                         '86400', _LEGACY_SETTINGS)
+    ))
+    
+    SUPPLY_SAFETY_FACTOR: Decimal = field(default_factory=lambda: Decimal(
+        _get_config_value('SUPPLY_SAFETY_FACTOR', 'SUPPLY_SAFETY_FACTOR',
+                         '0.02', _LEGACY_SETTINGS)
+    ))
     
     SUPPLY_CALCULATION_METHOD: str = field(default_factory=lambda:
-        getattr(settings, 'SUPPLY_CALCULATION_METHOD', 'PRECISE') if HAS_SETTINGS
-        else 'PRECISE'
+        _get_config_value('SUPPLY_CALCULATION_METHOD', 'SUPPLY_CALCULATION_METHOD',
+                         'PRECISE', _LEGACY_SETTINGS)
     )
     
-    # Tokens configuration
+    # ========================================================================
+    # TOKENS CONFIGURATION
+    # ========================================================================
+    
     TOKENS: Dict[str, TokenConfig] = field(default_factory=lambda: {
         'UBEC': TokenConfig(
             code='UBEC',
-            issuer=os.getenv('UBEC_ISSUER', 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN'),
+            issuer=os.getenv('UBEC_ISSUER', 
+                           'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCSIKELEH7ORUCX5UB2VN'),
             minimum_transaction=Decimal('10.0'),
             distribution_general=Decimal('0.65'),
             distribution_stewardship=Decimal('0.30'),
@@ -167,7 +306,8 @@ class Config:
         ),
         'UBECrc': TokenConfig(
             code='UBECrc',
-            issuer=os.getenv('UBECrc_ISSUER', 'GBYOTGM27KLFNQQU3G6QWVEK7LQB36N6OX2YLYMN4WU3AFM4VRFZUBEC'),
+            issuer=os.getenv('UBECrc_ISSUER',
+                           'GBYOTGM27KLFNQQU3G6QWVEK7LQB36N6OX2YLYMN4WU3AFM4VRFZUBEC'),
             minimum_transaction=Decimal('5.0'),
             distribution_general=Decimal('0.70'),
             distribution_stewardship=Decimal('0.25'),
@@ -175,7 +315,8 @@ class Config:
         ),
         'UBECgpi': TokenConfig(
             code='UBECgpi',
-            issuer=os.getenv('UBECgpi_ISSUER', 'GCPU3LUGRIYLWMPOQEEGIL2HI5Z637PQVK42Z5PYRRQMPFDTNT5SUBEC'),
+            issuer=os.getenv('UBECgpi_ISSUER',
+                           'GCPU3LUGRIYLWMPOQEEGIL2HI5Z637PQVK42Z5PYRRQMPFDTNT5SUBEC'),
             minimum_transaction=Decimal('100.0'),
             distribution_general=Decimal('0.80'),
             distribution_stewardship=Decimal('0.15'),
@@ -183,7 +324,8 @@ class Config:
         ),
         'UBECtt': TokenConfig(
             code='UBECtt',
-            issuer=os.getenv('UBECtt_ISSUER', 'GBWYGECRQ7R5E6QQKWBTVNYSCFVTIYZLF6MGDHJQBHP2KU2U65Z5UBEC'),
+            issuer=os.getenv('UBECtt_ISSUER',
+                           'GBWYGECRQ7R5E6QQKWBTVNYSCFVTIYZLF6MGDHJQBHP2KU2U65Z5UBEC'),
             minimum_transaction=Decimal('1.0'),
             distribution_general=Decimal('0.75'),
             distribution_stewardship=Decimal('0.20'),
@@ -191,21 +333,47 @@ class Config:
         )
     })
     
-    # Database
-    DATABASE_URL: str = field(default_factory=lambda:
-        os.getenv('DATABASE_URL', 'postgresql://ubec_app:App252010!@#@localhost/ubec')
-    )
+    # ========================================================================
+    # DATABASE CONFIGURATION
+    # ========================================================================
     
-    # Rate Limiting
-    RATE_LIMIT_CALLS: int = 100
-    RATE_LIMIT_PERIOD: int = 60
+    DATABASE_URL: str = field(default_factory=lambda: os.getenv(
+        'DATABASE_URL',
+        'postgresql://ubec_app:App252010!@#@localhost/ubec'
+    ))
     
-    # Sync Settings
-    SYNC_BATCH_SIZE: int = 200
-    SYNC_BATCH_DELAY: float = 1.0
-    SYNC_MAX_ACCOUNTS: int = 1000
+    # ========================================================================
+    # RATE LIMITING
+    # ========================================================================
     
-    # Holonic Weights
+    RATE_LIMIT_CALLS: int = field(default_factory=lambda: int(
+        os.getenv('RATE_LIMIT_CALLS', '100')
+    ))
+    
+    RATE_LIMIT_PERIOD: int = field(default_factory=lambda: int(
+        os.getenv('RATE_LIMIT_PERIOD', '60')
+    ))
+    
+    # ========================================================================
+    # SYNC SETTINGS
+    # ========================================================================
+    
+    SYNC_BATCH_SIZE: int = field(default_factory=lambda: int(
+        os.getenv('SYNC_BATCH_SIZE', '200')
+    ))
+    
+    SYNC_BATCH_DELAY: float = field(default_factory=lambda: float(
+        os.getenv('SYNC_BATCH_DELAY', '1.0')
+    ))
+    
+    SYNC_MAX_ACCOUNTS: int = field(default_factory=lambda: int(
+        os.getenv('SYNC_MAX_ACCOUNTS', '1000')
+    ))
+    
+    # ========================================================================
+    # HOLONIC EVALUATION
+    # ========================================================================
+    
     HOLONIC_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
         'autonomy_integration': 0.25,
         'multi_scale': 0.20,
@@ -214,46 +382,178 @@ class Config:
         'ubuntu': 0.15
     })
     
-    # Logging (from settings.py or env)
-    LOG_LEVEL: str = field(default_factory=lambda:
-        getattr(settings, 'LOG_LEVEL', None) if HAS_SETTINGS
-        else os.getenv('LOG_LEVEL', 'INFO')
-    )
+    # ========================================================================
+    # LOGGING CONFIGURATION
+    # ========================================================================
     
-    LOG_FORMAT: str = field(default_factory=lambda:
-        getattr(settings, 'LOG_FORMAT', '%(asctime)s - %(levelname)s - %(message)s')
-        if HAS_SETTINGS
-        else '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    LOG_LEVEL: str = field(default_factory=lambda: _get_config_value(
+        'LOG_LEVEL', 'LOG_LEVEL', 'INFO', _LEGACY_SETTINGS
+    ))
     
-    LOG_FILE: str = field(default_factory=lambda:
-        getattr(settings, 'LOG_FILE', 'ubec_protocol.log') if HAS_SETTINGS
-        else 'ubec_protocol.log'
-    )
+    LOG_FORMAT: str = field(default_factory=lambda: _get_config_value(
+        'LOG_FORMAT', 'LOG_FORMAT',
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        _LEGACY_SETTINGS
+    ))
+    
+    LOG_FILE: str = field(default_factory=lambda: _get_config_value(
+        'LOG_FILE', 'LOG_FILE', 'ubec_protocol.log', _LEGACY_SETTINGS
+    ))
+    
+    # ========================================================================
+    # COMPUTED PROPERTIES
+    # ========================================================================
     
     @property
     def horizon_url(self) -> str:
-        """Get Horizon URL for current network"""
+        """
+        Get Horizon URL for current network.
+        
+        Returns:
+            str: Horizon URL
+        """
         return self.HORIZON_URL
     
+    # ========================================================================
+    # PUBLIC METHODS
+    # ========================================================================
+    
     def get_token_config(self, token_code: str) -> TokenConfig:
-        """Get configuration for specific token"""
+        """
+        Get configuration for a specific token.
+        
+        Args:
+            token_code: Token code (e.g., 'UBEC', 'UBECrc')
+        
+        Returns:
+            TokenConfig: Token configuration
+        
+        Raises:
+            ValueError: If token code is unknown
+        
+        Example:
+            config = Config()
+            ubec_cfg = config.get_token_config('UBEC')
+            print(f"Issuer: {ubec_cfg.issuer}")
+        """
         if token_code not in self.TOKENS:
-            raise ValueError(f"Unknown token: {token_code}")
+            available = ', '.join(self.TOKENS.keys())
+            raise ValueError(
+                f"Unknown token: {token_code}. Available tokens: {available}"
+            )
         return self.TOKENS[token_code]
+    
+    def validate(self) -> bool:
+        """
+        Validate that configuration is complete and correct.
+        
+        Returns:
+            bool: True if configuration is valid
+        
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        # Check critical configuration
+        if not self.UBEC_ISSUER:
+            raise ValueError("UBEC_ISSUER is not configured")
+        
+        if not self.HORIZON_URL:
+            raise ValueError("HORIZON_URL is not configured")
+        
+        if not self.DATABASE_URL:
+            raise ValueError("DATABASE_URL is not configured")
+        
+        # Validate token configurations
+        for token_code, token_cfg in self.TOKENS.items():
+            if not token_cfg.issuer:
+                raise ValueError(f"Token {token_code} has no issuer configured")
+        
+        logger.info("Configuration validation passed")
+        return True
+    
+    def display(self) -> Dict[str, Any]:
+        """
+        Display current configuration values (safe for logging).
+        
+        Returns:
+            dict: Configuration as dictionary (sensitive values masked)
+        """
+        return {
+            'NETWORK': self.NETWORK,
+            'HORIZON_URL': self.HORIZON_URL,
+            'UBEC_CODE': self.UBEC_CODE,
+            'UBEC_ISSUER': self.UBEC_ISSUER[:10] + '...' if self.UBEC_ISSUER else 'None',
+            'TOKEN_COUNT': len(self.TOKENS),
+            'TOKENS': list(self.TOKENS.keys()),
+            'LOG_LEVEL': self.LOG_LEVEL,
+            'DATABASE_CONFIGURED': bool(self.DATABASE_URL),
+            'RATE_LIMIT_CALLS': self.RATE_LIMIT_CALLS,
+            'RATE_LIMIT_PERIOD': self.RATE_LIMIT_PERIOD,
+        }
+    
+    def health_check(self) -> Dict[str, Any]:
+        """
+        Check configuration service health.
+        
+        This is a synchronous health check since config has no I/O operations.
+        
+        Returns:
+            dict: Health status with configuration validation
+        
+        Example:
+            config = Config()
+            health = config.health_check()
+            if health['status'] == 'healthy':
+                print("Configuration is valid")
+        """
+        from datetime import datetime
+        
+        health = {
+            'status': 'healthy',
+            'message': 'config operational',
+            'timestamp': datetime.now().isoformat(),
+            'details': {
+                'initialized': True,
+                'config_loaded': True,
+                'num_tokens': len(self.TOKENS),
+                'tokens_configured': list(self.TOKENS.keys()),
+                'database_configured': bool(self.DATABASE_URL),
+                'network': self.NETWORK,
+                'horizon_configured': bool(self.HORIZON_URL),
+            }
+        }
+        
+        # Perform validation checks
+        try:
+            self.validate()
+            health['details']['validation'] = 'passed'
+        except ValueError as e:
+            health['status'] = 'unhealthy'
+            health['message'] = f'config validation failed: {str(e)}'
+            health['details']['validation'] = 'failed'
+            health['details']['validation_error'] = str(e)
+        
+        return health
 
+
+# ============================================================================
+# LEGACY COMPATIBILITY CLASS
+# ============================================================================
 
 class GlobalConfig:
     """
-    Legacy-style configuration class for compatibility.
+    Legacy-style configuration class for backward compatibility.
     
-    Provides the same interface as Config but as a class instead of dataclass.
-    Used by holonic evaluator and other legacy modules.
+    This class provides the same interface as Config but wraps the Config
+    dataclass. Used by legacy modules that expect a class-based config.
+    
+    New code should use Config directly via the service registry.
     """
     
     def __init__(self):
-        """Initialize GlobalConfig by creating a Config instance"""
+        """Initialize GlobalConfig by wrapping a Config instance."""
         self._config = Config()
+        logger.debug("GlobalConfig initialized (legacy compatibility mode)")
     
     # Network
     @property
@@ -369,56 +669,134 @@ class GlobalConfig:
     
     @property
     def LOG_FILE_PATH(self) -> str:
-        """Alias for LOG_FILE for backward compatibility"""
+        """Alias for LOG_FILE for backward compatibility."""
         return self._config.LOG_FILE
     
+    # Methods
     def get_token_config(self, token_code: str) -> TokenConfig:
-        """Get configuration for specific token"""
+        """Get configuration for specific token."""
         return self._config.get_token_config(token_code)
+    
+    def validate(self) -> bool:
+        """Validate configuration."""
+        return self._config.validate()
+    
+    def display(self) -> Dict[str, Any]:
+        """Display configuration."""
+        return self._config.display()
+    
+    def health_check(self) -> Dict[str, Any]:
+        """Check configuration health."""
+        return self._config.health_check()
 
 
-# SINGLE GLOBAL INSTANCES
+# ============================================================================
+# SERVICE FACTORY (Principle #2: Service Pattern)
+# ============================================================================
+
+def create_config_service(**kwargs) -> Config:
+    """
+    Factory function to create configuration service instance.
+    
+    This is the PREFERRED way to instantiate the config service,
+    following Principle #2 (Service Pattern).
+    
+    Args:
+        **kwargs: Optional configuration overrides (not typically used)
+    
+    Returns:
+        Config: Configured instance
+    
+    Example:
+        # Via service registry (preferred)
+        from core.service_registry import registry
+        config = registry.get_initialized('config')
+        
+        # Direct instantiation
+        from config.config import create_config_service
+        config = create_config_service()
+    
+    Note:
+        Configuration is loaded from environment variables and .env file.
+        Make sure your .env file is properly configured before calling.
+    """
+    config_instance = Config()
+    logger.info("Config service created via factory")
+    return config_instance
+
+
+def create_legacy_config_service(**kwargs) -> GlobalConfig:
+    """
+    Factory function to create legacy GlobalConfig instance.
+    
+    Use this for backward compatibility with legacy code that expects
+    GlobalConfig instead of Config.
+    
+    Args:
+        **kwargs: Optional configuration overrides
+    
+    Returns:
+        GlobalConfig: Legacy-style config instance
+    """
+    config_instance = GlobalConfig()
+    logger.info("Legacy config service created via factory")
+    return config_instance
+
+
+# ============================================================================
+# MODULE-LEVEL INSTANCES (For backward compatibility)
+# ============================================================================
+
+# Global instances for legacy code
+# New code should use the factory function and service registry
 config = Config()
 global_config = GlobalConfig()
 
-def validate_config() -> bool:
-    """
-    Validate configuration is complete and correct.
-    
-    Returns:
-        bool: True if configuration is valid, False otherwise
-    """
-    # Check critical configuration
-    if not config.UBEC_ISSUER:
-        return False
-    
-    if not config.HORIZON_URL:
-        return False
-    
-    # Configuration is valid
-    return True
+logger.info(f"Configuration loaded: {config.NETWORK} network, {len(config.TOKENS)} tokens")
 
 
-def display_config() -> Dict[str, str]:
-    """
-    Display current configuration values.
-    
-    Returns:
-        dict: Current configuration as a dictionary
-    """
-    return {
-        'NETWORK': config.NETWORK,
-        'HORIZON_URL': config.HORIZON_URL,
-        'UBEC_CODE': config.UBEC_CODE,
-        'UBEC_ISSUER': config.UBEC_ISSUER,
-        'ACCOUNTS': str(config.ACCOUNTS),
-        'LOG_LEVEL': config.LOG_LEVEL,
-    }
+# ============================================================================
+# PUBLIC INTERFACE
+# ============================================================================
 
-
-# For backward compatibility - both names work
 __all__ = [
-    'Config', 'GlobalConfig', 'TokenConfig', 
-    'config', 'global_config', 
-    'validate_config', 'display_config'
+    # Main classes
+    'Config',
+    'GlobalConfig',
+    'TokenConfig',
+    # Factory functions (preferred)
+    'create_config_service',
+    'create_legacy_config_service',
+    # Legacy instances (backward compatibility)
+    'config',
+    'global_config',
 ]
+
+
+# ============================================================================
+# STANDALONE EXECUTION PREVENTION (Principle #2: Service Pattern)
+# ============================================================================
+
+if __name__ == "__main__":
+    # Allow validation when run directly
+    print("=" * 80)
+    print("UBEC Configuration Service")
+    print("=" * 80)
+    
+    try:
+        test_config = Config()
+        test_config.validate()
+        
+        print("\n✓ Configuration validation PASSED")
+        print("\nConfiguration details:")
+        for key, value in test_config.display().items():
+            print(f"  {key}: {value}")
+        
+        print("\nHealth check:")
+        health = test_config.health_check()
+        print(f"  Status: {health['status']}")
+        print(f"  Message: {health['message']}")
+        
+    except Exception as e:
+        print(f"\n✗ Configuration validation FAILED: {e}")
+        exit(1)

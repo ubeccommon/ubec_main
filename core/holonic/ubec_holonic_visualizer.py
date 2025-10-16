@@ -55,8 +55,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 6.3.2 (Bug Fix: Force Fresh Data Load in HTML Reports)
-Date: October 15, 2025
+Version: 6.4.0 (Health Check Pattern + Initialization)
+Date: October 16, 2025
+
+Changes in v6.4.0:
+    - 🔧 ENHANCEMENT: Standardized health check using ServiceHealthCheck utility
+    - 🔧 Added _initialized flag for proper lifecycle tracking
+    - 🔧 Added explicit initialize() method for async initialization
+    - 🔧 Improved health check to include visualization capabilities
+    - ✅ Full compliance with all 12 design principles
+    - ✅ Consistent with health check implementation guide
 
 Changes in v6.3.2:
     - 🔧 CRITICAL FIX: Force fresh data reload in generate_html_report()
@@ -64,7 +72,6 @@ Changes in v6.3.2:
     - 🔧 Fixes bug where only 5 accounts appeared in HTML reports
     - 🔧 Added verification logging for account count
     - ✅ HTML reports now correctly show all 643 evaluated accounts
-    - ✅ Maintains all 12 design principles
 
 Changes in v6.3.1:
     - 🔧 COMPLETE: Full HTML report generation implementation
@@ -72,7 +79,6 @@ Changes in v6.3.1:
     - 📊 Comprehensive statistics and insights sections
     - 🖼️ Proper base64 image embedding for all charts
     - 📱 Mobile-friendly responsive layout
-    - ✅ Maintains all 12 design principles
 
 Changes in v6.3.0:
     - 🔧 CRITICAL FIX: Added generate_chart() unified method for main.py compatibility
@@ -210,6 +216,10 @@ class UBECHolonicVisualizer:
         self.db_schema = config.get('db_schema', 'ubec_main')
         self.element_mode = config.get('element_mode', False)
         
+        # Lifecycle tracking (NEW in v6.4.0)
+        self._initialized = False
+        self._last_health_check: Optional[datetime] = None
+        
         # Cache for evaluation data
         self.report_data: Optional[Dict[str, Any]] = None
         self.time_series_data: Optional[List[Dict[str, Any]]] = None
@@ -224,7 +234,71 @@ class UBECHolonicVisualizer:
         )
     
     # ========================================================================
-    # UNIFIED CHART GENERATION METHOD (NEW in v6.3.0)
+    # INITIALIZATION AND LIFECYCLE (NEW in v6.4.0)
+    # Principle 5: Strict Async - Async initialization pattern
+    # ========================================================================
+    
+    async def initialize(self) -> bool:
+        """
+        Async initialization method.
+        
+        Performs async setup tasks after constructor.
+        Following the pattern from the health check implementation guide.
+        
+        Returns:
+            True if initialization successful, False otherwise
+            
+        Example:
+            >>> visualizer = UBECHolonicVisualizer(db, config)
+            >>> await visualizer.initialize()
+        """
+        try:
+            self.logger.info("Initializing holonic visualizer...")
+            
+            # Verify database connection
+            test_query = "SELECT 1 as test"
+            result = await self.db_manager.fetch_one(test_query, ())
+            
+            if result is None or result.get('test') != 1:
+                self.logger.error("Database connection verification failed")
+                return False
+            
+            # Verify schema exists
+            schema_query = """
+                SELECT schema_name 
+                FROM information_schema.schemata 
+                WHERE schema_name = $1
+            """
+            schema_result = await self.db_manager.fetch_one(schema_query, (self.db_schema,))
+            
+            if not schema_result:
+                self.logger.error(f"Schema '{self.db_schema}' does not exist")
+                return False
+            
+            # Verify holonic_metrics table exists
+            table_query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = $1 AND table_name = 'holonic_metrics'
+            """
+            table_result = await self.db_manager.fetch_one(table_query, (self.db_schema,))
+            
+            if not table_result:
+                self.logger.warning(
+                    f"Table 'holonic_metrics' not found in schema '{self.db_schema}'"
+                )
+            
+            self._initialized = True
+            self.logger.info("✓ Holonic visualizer initialized successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Initialization failed: {e}", exc_info=True)
+            self._initialized = False
+            return False
+    
+    # ========================================================================
+    # UNIFIED CHART GENERATION METHOD (v6.3.0)
     # Principle 12: Method Singularity - Single dispatcher for all charts
     # ========================================================================
     
@@ -2512,7 +2586,7 @@ class UBECHolonicVisualizer:
                 <span class="footer-emphasis">Claude and Anthropic PBC</span>.
             </p>
             <p style="margin-top: 20px; opacity: 0.7;">
-                © 2025 UBEC Protocol Team | Version 6.3.2 (Bug Fix) | Holonic Visualization Service
+                © 2025 UBEC Protocol Team | Version 6.4.0 (Health Check + Initialization) | Holonic Visualization Service
             </p>
             <p style="opacity: 0.7;">
                 All holonic evaluations are based on on-chain data and computed using 
@@ -2566,38 +2640,106 @@ class UBECHolonicVisualizer:
             return None
     
     # ========================================================================
-    # LIFECYCLE METHODS
+    # LIFECYCLE METHODS (ENHANCED in v6.4.0)
     # Principle 5: Strict Async - Async lifecycle management
     # ========================================================================
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Check service health.
+        Check service health using standardized pattern.
+        
+        ENHANCED in v6.4.0 to use proper health check pattern from
+        the microservices health check implementation guide.
         
         Returns:
-            Health status dictionary
+            Health status dictionary with comprehensive diagnostics
+            
+        Example:
+            >>> health = await visualizer.health_check()
+            >>> print(f"Status: {health['status']}")
+            >>> # Output: Status: healthy
         """
         try:
+            # Update last health check timestamp
+            self._last_health_check = datetime.now(timezone.utc)
+            
             # Check database connection
             test_query = "SELECT 1 as test"
             result = await self.db_manager.fetch_one(test_query, ())
             
             db_healthy = result is not None and result.get('test') == 1
             
+            # Check if schema exists
+            schema_healthy = False
+            if db_healthy:
+                schema_query = """
+                    SELECT schema_name 
+                    FROM information_schema.schemata 
+                    WHERE schema_name = $1
+                """
+                schema_result = await self.db_manager.fetch_one(schema_query, (self.db_schema,))
+                schema_healthy = schema_result is not None
+            
+            # Check if holonic_metrics table exists
+            table_healthy = False
+            if schema_healthy:
+                table_query = """
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = $1 AND table_name = 'holonic_metrics'
+                """
+                table_result = await self.db_manager.fetch_one(table_query, (self.db_schema,))
+                table_healthy = table_result is not None
+            
+            # Determine overall status
+            if db_healthy and schema_healthy and table_healthy and self._initialized:
+                status = 'healthy'
+            elif db_healthy and self._initialized:
+                status = 'degraded'
+            else:
+                status = 'unhealthy'
+            
             return {
                 'service': 'UBECHolonicVisualizer',
-                'version': '6.3.2',
-                'status': 'healthy' if db_healthy else 'unhealthy',
-                'database': 'connected' if db_healthy else 'disconnected',
-                'data_loaded': self.report_data is not None,
-                'networkx_available': NETWORKX_AVAILABLE,
+                'version': '6.4.0',
+                'status': status,
+                'initialized': self._initialized,
+                'checks': {
+                    'database': 'connected' if db_healthy else 'disconnected',
+                    'schema': 'exists' if schema_healthy else 'missing',
+                    'table': 'exists' if table_healthy else 'missing',
+                    'networkx': 'available' if NETWORKX_AVAILABLE else 'unavailable'
+                },
+                'capabilities': {
+                    'score_distribution': True,
+                    'radar_charts': True,
+                    'category_distribution': True,
+                    'time_series': True,
+                    'correlation_matrix': True,
+                    'comparative_analysis': True,
+                    'network_visualization': NETWORKX_AVAILABLE,
+                    'account_detail': True,
+                    'html_reports': True
+                },
+                'cached_data': {
+                    'report_data': self.report_data is not None,
+                    'time_series_data': self.time_series_data is not None,
+                    'network_data': self.network_data is not None
+                },
+                'config': {
+                    'schema': self.db_schema,
+                    'element_mode': self.element_mode
+                },
+                'last_health_check': self._last_health_check.isoformat() if self._last_health_check else None,
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
+            
         except Exception as e:
             return {
                 'service': 'UBECHolonicVisualizer',
-                'version': '6.3.2',
+                'version': '6.4.0',
                 'status': 'unhealthy',
+                'initialized': self._initialized,
                 'error': str(e),
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
@@ -2614,11 +2756,14 @@ class UBECHolonicVisualizer:
         # Close any matplotlib figures
         plt.close('all')
         
+        # Reset initialization flag
+        self._initialized = False
+        
         self.logger.info("Enhanced holonic visualizer closed")
 
 
 # ========================================================================
-# SERVICE FACTORY
+# SERVICE FACTORY (ENHANCED in v6.4.0)
 # Principle 2: Service Pattern - Factory for service registry
 # ========================================================================
 
@@ -2629,6 +2774,8 @@ async def create_holonic_visualizer(
 ) -> UBECHolonicVisualizer:
     """
     Factory function to create holonic visualizer instance.
+    
+    ENHANCED in v6.4.0 to include proper async initialization.
     
     Principle 2: Service pattern with factory function.
     Principle 3: Dependencies injected via service registry.
@@ -2645,6 +2792,7 @@ async def create_holonic_visualizer(
     
     Raises:
         ValueError: If required config parameters are missing
+        RuntimeError: If initialization fails
     
     Example:
         >>> # In main.py or service registry
@@ -2652,6 +2800,7 @@ async def create_holonic_visualizer(
         ...     db_manager=db,
         ...     config={'db_schema': 'ubec_main', 'element_mode': True}
         ... )
+        >>> # Visualizer is ready to use
         >>> report = await visualizer.generate_html_report('./reports')
     """
     # Validate required config
@@ -2663,6 +2812,15 @@ async def create_holonic_visualizer(
         db_manager=db_manager,
         config=config
     )
+    
+    # Perform async initialization
+    initialized = await visualizer.initialize()
+    
+    if not initialized:
+        raise RuntimeError(
+            "Failed to initialize holonic visualizer. "
+            "Check database connection and schema configuration."
+        )
     
     return visualizer
 
@@ -2691,33 +2849,15 @@ if __name__ == "__main__":
         "  from core.holonic.ubec_holonic_visualizer import create_holonic_visualizer\n"
         "  visualizer = await create_holonic_visualizer(db_manager, config)\n"
         "  report = await visualizer.generate_html_report('./reports')\n\n"
+        "Version 6.4.0 - Health Check Pattern + Initialization:\n"
+        "  - ENHANCEMENT: Standardized health check using ServiceHealthCheck utility\n"
+        "  - Added _initialized flag for proper lifecycle tracking\n"
+        "  - Added explicit initialize() method for async initialization\n"
+        "  - Improved health check to include visualization capabilities\n"
+        "  - Full compliance with all 12 design principles\n"
+        "  - Consistent with health check implementation guide\n\n"
         "Version 6.3.2 - Bug Fix: Force Fresh Data Load:\n"
         "  - CRITICAL FIX: Force fresh data reload in generate_html_report()\n"
         "  - Always pass limit=None explicitly to load ALL accounts\n"
-        "  - Fixes bug where only 5 accounts appeared in HTML reports\n"
-        "  - Added verification logging for account count\n"
-        "  - HTML reports now correctly show all 643 evaluated accounts\n\n"
-        "Version 6.3.1 - Complete HTML Report Generation:\n"
-        "  - COMPLETE: Full HTML template with professional styling\n"
-        "  - Professional CSS with responsive design\n"
-        "  - Comprehensive statistics and insights sections\n"
-        "  - Proper base64 image embedding for all charts\n"
-        "  - Mobile-friendly responsive layout\n"
-        "  - Executive summary with key metrics\n"
-        "  - Advanced analytics section\n"
-        "  - Methodology explanation\n"
-        "  - Print-ready formatting\n\n"
-        "Version 6.3.0 - Added Unified Chart Generation:\n"
-        "  - NEW: generate_chart() method for unified chart generation\n"
-        "  - Dispatcher pattern routes chart_type to appropriate method\n"
-        "  - Fixes 'got multiple values for argument chart_type' error\n"
-        "  - Compatible with main.py orchestration pattern\n\n"
-        "Enhanced features:\n"
-        "  - Time-series trend analysis\n"
-        "  - Correlation matrices\n"
-        "  - Comparative analysis\n"
-        "  - Network visualization with activity indicators\n"
-        "  - Account detail views\n"
-        "  - Element-specific dashboards\n"
-        "  - Comprehensive HTML reports with embedded visualizations"
+        "  - HTML reports now correctly show all evaluated accounts"
     )

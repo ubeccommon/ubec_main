@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-UBEC Analytics Service - Async Production Version
+UBEC Analytics Service - Production Implementation
 
 Provides comprehensive analytics and insights for the UBEC token ecosystem.
 Analyzes distribution, holder patterns, transaction trends, and ecosystem health
 across all four UBEC elements (Air, Water, Earth, Fire).
 
 Design Principles Compliance:
-- ✅ Modular Design: Self-contained analytics service with defined boundaries
-- ✅ Service Pattern: No standalone execution, used as service only
-- ✅ Service Registry: Accessed through service registry pattern
-- ✅ Database as Single Source of Truth: All data from database
-- ✅ Strict Async Operations: All I/O uses async/await
-- ✅ No Sync Fallbacks: Pure async implementation
-- ✅ Per-Asset Monitoring: Individual token/element tracking
-- ✅ No Duplicate Configuration: No config duplication
-- ✅ Integrated Rate Limiting: N/A (read-only database operations)
-- ✅ Separation of Concerns: Analytics separated from sync/trading
-- ✅ Comprehensive Documentation: Full docstrings and examples
-- ✅ Method Singularity: Each analysis method implemented once
+- ✅ Principle #1: Modular Design - Self-contained analytics service with defined boundaries
+- ✅ Principle #2: Service Pattern - No standalone execution, used as service only
+- ✅ Principle #3: Service Registry - Accessed through service registry pattern
+- ✅ Principle #4: Single Source of Truth - All data from database
+- ✅ Principle #5: Strict Async Operations - All I/O uses async/await
+- ✅ Principle #6: No Sync Fallbacks - Pure async implementation
+- ✅ Principle #7: Per-Asset Monitoring - Individual token/element tracking with health checks
+- ✅ Principle #8: No Duplicate Configuration - No config duplication
+- ✅ Principle #9: Integrated Rate Limiting - N/A (read-only database operations)
+- ✅ Principle #10: Separation of Concerns - Analytics separated from sync/trading
+- ✅ Principle #11: Comprehensive Documentation - Full docstrings and examples
+- ✅ Principle #12: Method Singularity - Each analysis method implemented once
 
 Key Features:
 - Token distribution analysis across all 4 elements
@@ -42,8 +42,8 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 1.0
-Date: October 11, 2025
+Version: 2.0
+Date: October 16, 2025
 """
 
 import asyncio
@@ -170,7 +170,17 @@ class UBECAnalyticsService:
     the database. All operations are asynchronous and designed for
     high-performance data analysis.
     
+    Principle #7 Compliance (Per-Asset Monitoring):
+    - Tracks each token individually
+    - Monitors health per element
+    - Provides aggregated ecosystem metrics
+    
     Usage:
+        # Via service registry (RECOMMENDED - Principle #3)
+        registry = ServiceRegistry()
+        analytics = await registry.get('analytics')
+        
+        # Direct instantiation (for testing only)
         db = AsyncDatabaseManager(config)
         await db.initialize()
         
@@ -183,6 +193,9 @@ class UBECAnalyticsService:
         # Analyze holder concentration
         holders = await analytics.analyze_holder_concentration('UBEC')
         
+        # Health check (Principle #7)
+        health = await analytics.health_check()
+        
         await analytics.close()
     """
     
@@ -191,8 +204,16 @@ class UBECAnalyticsService:
         Initialize the analytics service.
         
         Args:
-            db_manager: AsyncDatabaseManager instance
+            db_manager: AsyncDatabaseManager instance (REQUIRED)
+            
+        Raises:
+            ValueError: If db_manager is None (Principle #4)
         """
+        if db_manager is None:
+            raise ValueError(
+                "Database manager is required (Principle #4: Single Source of Truth)"
+            )
+        
         logger.info("Initializing UBEC Analytics Service")
         
         self.db = db_manager
@@ -202,12 +223,19 @@ class UBECAnalyticsService:
         self._cache: Dict[str, Tuple[Any, datetime]] = {}
         self._cache_ttl_seconds = 300  # 5 minutes default
         
+        # Service metadata
+        self._service_name = 'analytics'
+        self._last_query_time: Optional[datetime] = None
+        self._query_count = 0
+        
         logger.info("✓ UBEC Analytics Service initialized")
     
     async def initialize(self):
         """
         Initialize the analytics service.
         Must be called before using analytics methods.
+        
+        Principle #5: Strict Async Operations - async initialization only
         """
         if self.initialized:
             logger.warning("Analytics service already initialized")
@@ -215,7 +243,7 @@ class UBECAnalyticsService:
         
         logger.info("Initializing analytics service...")
         
-        # Verify database connection
+        # Verify database connection (Principle #4)
         try:
             result = await self.db.fetch_one("SELECT 1 as test")
             if not result:
@@ -227,17 +255,83 @@ class UBECAnalyticsService:
         logger.info("✓ Analytics service fully initialized")
     
     async def close(self):
-        """Clean up resources"""
+        """
+        Clean up resources.
+        
+        Principle #5: Strict Async Operations - async cleanup
+        """
         self._cache.clear()
         self.initialized = False
         logger.info("Analytics service closed")
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform health check on analytics service.
+        
+        Principle #7: Per-Asset Monitoring - Health checks with detailed metrics
+        
+        Returns:
+            Dict with health status and metrics:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'service_name': 'analytics',
+                'initialized': bool,
+                'database_connected': bool,
+                'cache_size': int,
+                'query_count': int,
+                'last_query_time': str | None,
+                'issues': List[str]
+            }
+        
+        Example:
+            health = await analytics.health_check()
+            if health['status'] == 'healthy':
+                print("Analytics service is operational")
+        """
+        issues = []
+        
+        # Check initialization
+        if not self.initialized:
+            issues.append("Service not initialized")
+        
+        # Check database connection
+        db_connected = False
+        try:
+            result = await self.db.fetch_one("SELECT 1")
+            db_connected = bool(result)
+        except Exception as e:
+            issues.append(f"Database connection error: {e}")
+        
+        # Determine overall status
+        if not issues:
+            status = 'healthy'
+        elif not self.initialized or not db_connected:
+            status = 'unhealthy'
+        else:
+            status = 'degraded'
+        
+        return {
+            'status': status,
+            'service_name': self._service_name,
+            'initialized': self.initialized,
+            'database_connected': db_connected,
+            'cache_size': len(self._cache),
+            'query_count': self._query_count,
+            'last_query_time': self._last_query_time.isoformat() if self._last_query_time else None,
+            'issues': issues,
+            'timestamp': datetime.now().isoformat()
+        }
     
     # ========================================================================
     # CACHE MANAGEMENT
     # ========================================================================
     
     def _get_cache_key(self, prefix: str, *args, **kwargs) -> str:
-        """Generate cache key from method parameters"""
+        """
+        Generate cache key from method parameters.
+        
+        Principle #12: Method Singularity - Single cache key generation method
+        """
         key_parts = [prefix]
         key_parts.extend(str(arg) for arg in args)
         key_parts.extend(f"{k}={v}" for k, v in sorted(kwargs.items()))
@@ -265,9 +359,43 @@ class UBECAnalyticsService:
         logger.debug(f"Cache set: {cache_key}")
     
     def clear_cache(self):
-        """Clear all cached data"""
+        """
+        Clear all cached data.
+        
+        Call this to force fresh data on next queries.
+        """
         self._cache.clear()
         logger.info("Analytics cache cleared")
+    
+    async def _execute_query(self, query: str, params: Tuple = ()) -> Any:
+        """
+        Execute query and update service metrics.
+        
+        Principle #12: Method Singularity - Single query execution method
+        """
+        self._query_count += 1
+        self._last_query_time = datetime.now()
+        
+        try:
+            return await self.db.fetch_one(query, params)
+        except Exception as e:
+            logger.error(f"Query execution error: {e}")
+            raise
+    
+    async def _execute_query_all(self, query: str, params: Tuple = ()) -> List[Dict]:
+        """
+        Execute query returning all rows and update service metrics.
+        
+        Principle #12: Method Singularity - Single multi-row query method
+        """
+        self._query_count += 1
+        self._last_query_time = datetime.now()
+        
+        try:
+            return await self.db.fetch_all(query, params)
+        except Exception as e:
+            logger.error(f"Query execution error: {e}")
+            raise
     
     # ========================================================================
     # TOKEN DISTRIBUTION ANALYSIS
@@ -287,6 +415,9 @@ class UBECAnalyticsService:
             
         Returns:
             TokenDistribution object with comprehensive metrics
+            
+        Raises:
+            AnalyticsException: If analysis fails
             
         Example:
             dist = await analytics.get_token_distribution('UBEC')
@@ -320,7 +451,7 @@ class UBECAnalyticsService:
                 GROUP BY token_code, element
             """
             
-            row = await self.db.fetch_one(query, (token_code,))
+            row = await self._execute_query(query, (token_code,))
             
             if not row:
                 raise AnalyticsException(f"No data found for token {token_code}")
@@ -361,7 +492,11 @@ class UBECAnalyticsService:
         token_code: str,
         n: int
     ) -> Decimal:
-        """Calculate percentage of supply held by top N holders"""
+        """
+        Calculate percentage of supply held by top N holders.
+        
+        Principle #12: Method Singularity - Reusable helper method
+        """
         try:
             query = """
                 WITH ranked_balances AS (
@@ -386,14 +521,14 @@ class UBECAnalyticsService:
                 FROM top_n_supply, total_supply
             """
             
-            row = await self.db.fetch_one(query, (token_code, n))
+            row = await self._execute_query(query, (token_code, n))
             return Decimal(str(row['percentage'])) if row else Decimal('0')
             
         except Exception as e:
             logger.error(f"Error calculating top {n} concentration: {e}")
             return Decimal('0')
     
-    async def _calculate_gini_coefficient(self, token_code: str) -> Decimal:
+    async def _calculate_gini_coefficient(self, token_code: str) -> Optional[Decimal]:
         """
         Calculate Gini coefficient for token distribution.
         
@@ -402,7 +537,7 @@ class UBECAnalyticsService:
         - 1 = Perfect inequality (one holder has everything)
         
         Returns:
-            Gini coefficient as Decimal
+            Gini coefficient as Decimal, or None if calculation fails
         """
         try:
             query = """
@@ -429,8 +564,8 @@ class UBECAnalyticsService:
                 GROUP BY total_count, total_sum
             """
             
-            row = await self.db.fetch_one(query, (token_code,))
-            return Decimal(str(row['gini'])) if row and row['gini'] else Decimal('0')
+            row = await self._execute_query(query, (token_code,))
+            return Decimal(str(row['gini'])) if row and row['gini'] else None
             
         except Exception as e:
             logger.warning(f"Could not calculate Gini coefficient: {e}")
@@ -448,6 +583,11 @@ class UBECAnalyticsService:
             
         Returns:
             List of TokenDistribution objects for all tokens
+            
+        Example:
+            distributions = await analytics.get_all_token_distributions()
+            for dist in distributions:
+                print(f"{dist.token_code}: {dist.total_holders} holders")
         """
         logger.info("Analyzing distribution for all UBEC tokens...")
         
@@ -544,7 +684,7 @@ class UBECAnalyticsService:
                 LEFT JOIN tier_stats small ON small.tier = 'small'
             """
             
-            row = await self.db.fetch_one(
+            row = await self._execute_query(
                 query,
                 (token_code, whale_threshold, mid_tier_threshold)
             )
@@ -619,7 +759,7 @@ class UBECAnalyticsService:
                 LIMIT $3
             """
             
-            rows = await self.db.fetch_all(query, (token_code, threshold, limit))
+            rows = await self._execute_query_all(query, (token_code, threshold, limit))
             
             whales = []
             for row in rows:
@@ -692,7 +832,7 @@ class UBECAnalyticsService:
                     AND successful = TRUE
             """.format(period_days)
             
-            row = await self.db.fetch_one(query)
+            row = await self._execute_query(query)
             
             if not row or row['total_transactions'] == 0:
                 # No transactions in period
@@ -726,11 +866,11 @@ class UBECAnalyticsService:
             """
             
             supply_params = (token_code,) if token_code else ()
-            supply_row = await self.db.fetch_one(supply_query, supply_params)
+            supply_row = await self._execute_query(supply_query, supply_params)
             total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
             
-            # For now, use placeholder values for volume-based metrics
-            # These would need actual transaction amount data
+            # Placeholder values for volume-based metrics
+            # These would need actual transaction amount data from operations table
             total_volume = Decimal('0')
             avg_tx_size = Decimal('0')
             median_tx_size = Decimal('0')
@@ -802,15 +942,15 @@ class UBECAnalyticsService:
                 WHERE token_code = $1 AND balance > 0
             """
             
-            row = await self.db.fetch_one(query, (token_code,))
+            row = await self._execute_query(query, (token_code,))
             
             if not row:
                 raise AnalyticsException(f"No data found for token {token_code}")
             
             total_supply = Decimal(str(row['total_supply']))
             
-            # For now, assume all supply is circulating
-            # In future, could identify locked/vesting accounts
+            # Assume all supply is circulating for now
+            # Future enhancement: identify locked/vesting accounts
             circulating_supply = total_supply
             locked_supply = Decimal('0')
             available_liquidity = circulating_supply
@@ -847,6 +987,8 @@ class UBECAnalyticsService:
         """
         Get overall ecosystem health metrics.
         
+        Principle #7: Per-Asset Monitoring - Aggregated health across all elements
+        
         Args:
             use_cache: Whether to use cached results
             
@@ -874,7 +1016,7 @@ class UBECAnalyticsService:
                 FROM ubec_balances
                 WHERE balance > 0
             """
-            holders_row = await self.db.fetch_one(holders_query)
+            holders_row = await self._execute_query(holders_query)
             total_holders = holders_row['total_holders'] if holders_row else 0
             
             # Get account counts
@@ -882,7 +1024,7 @@ class UBECAnalyticsService:
                 SELECT COUNT(*) as total_accounts
                 FROM stellar_accounts
             """
-            accounts_row = await self.db.fetch_one(accounts_query)
+            accounts_row = await self._execute_query(accounts_query)
             total_accounts = accounts_row['total_accounts'] if accounts_row else 0
             
             # Get transaction counts
@@ -890,7 +1032,7 @@ class UBECAnalyticsService:
                 SELECT COUNT(*) as total_transactions
                 FROM stellar_transactions
             """
-            tx_row = await self.db.fetch_one(tx_query)
+            tx_row = await self._execute_query(tx_query)
             total_transactions = tx_row['total_transactions'] if tx_row else 0
             
             # Get total supply across all tokens
@@ -898,7 +1040,7 @@ class UBECAnalyticsService:
                 SELECT SUM(balance) as total_supply
                 FROM ubec_balances
             """
-            supply_row = await self.db.fetch_one(supply_query)
+            supply_row = await self._execute_query(supply_query)
             total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
             
             # Get active accounts by period
@@ -932,7 +1074,11 @@ class UBECAnalyticsService:
             raise AnalyticsException(f"Ecosystem health analysis failed: {e}")
     
     async def _get_active_accounts(self, days: int) -> int:
-        """Get count of accounts with activity in last N days"""
+        """
+        Get count of accounts with activity in last N days.
+        
+        Principle #12: Method Singularity - Reusable helper method
+        """
         try:
             query = """
                 SELECT COUNT(DISTINCT source_account) as active_count
@@ -941,7 +1087,7 @@ class UBECAnalyticsService:
                     AND successful = TRUE
             """.format(days)
             
-            row = await self.db.fetch_one(query)
+            row = await self._execute_query(query)
             return row['active_count'] if row else 0
             
         except Exception as e:
@@ -968,7 +1114,7 @@ class UBECAnalyticsService:
                 GROUP BY element
             """
             
-            rows = await self.db.fetch_all(query)
+            rows = await self._execute_query_all(query)
             
             if not rows or len(rows) < 4:
                 return Decimal('0')
@@ -1075,38 +1221,21 @@ class UBECAnalyticsService:
                 FROM ubec_balances
                 WHERE balance > 0
             """
-            unique_row = await self.db.fetch_one(unique_query)
+            unique_row = await self._execute_query(unique_query)
             comparison['totals']['unique_accounts'] = unique_row['unique_accounts'] if unique_row else 0
             
             # Create rankings
-            comparison['rankings']['by_holders'] = sorted(
-                distributions,
-                key=lambda d: d.total_holders,
-                reverse=True
-            )
-            comparison['rankings']['by_supply'] = sorted(
-                distributions,
-                key=lambda d: d.total_supply,
-                reverse=True
-            )
-            comparison['rankings']['by_concentration'] = sorted(
-                distributions,
-                key=lambda d: d.top_10_concentration,
-                reverse=True
-            )
-            
-            # Convert to simple format
             comparison['rankings']['by_holders'] = [
                 {'token': d.token_code, 'holders': d.total_holders}
-                for d in comparison['rankings']['by_holders']
+                for d in sorted(distributions, key=lambda d: d.total_holders, reverse=True)
             ]
             comparison['rankings']['by_supply'] = [
                 {'token': d.token_code, 'supply': float(d.total_supply)}
-                for d in comparison['rankings']['by_supply']
+                for d in sorted(distributions, key=lambda d: d.total_supply, reverse=True)
             ]
             comparison['rankings']['by_concentration'] = [
                 {'token': d.token_code, 'concentration': float(d.top_10_concentration)}
-                for d in comparison['rankings']['by_concentration']
+                for d in sorted(distributions, key=lambda d: d.top_10_concentration, reverse=True)
             ]
             
             # Convert Decimal to float for JSON serialization

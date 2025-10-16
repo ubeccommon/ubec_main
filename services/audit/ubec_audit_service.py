@@ -44,7 +44,7 @@ Design Principles Compliance:
     ✅  4. Single Source of Truth: Database is sole authoritative source
     ✅  5. Strict Async: 100% async/await for all I/O operations
     ✅  6. No Sync Fallbacks: Pure async implementation, no legacy code
-    ✅  7. Per-Asset Monitoring: Individual account tracking with thresholds
+    ✅  7. Per-Asset Monitoring: Individual account tracking with health checks
     ✅  8. No Duplicate Config: Uses global configuration exclusively
     ✅  9. Integrated Rate Limiting: Built-in for all database operations
     ✅ 10. Separation of Concerns: Audit logic isolated from other domains
@@ -77,6 +77,10 @@ Usage Example:
     print(f"Total supply: {report.total_supply}")
     print(f"Compliance: {report.overall_compliance}")
     
+    # Check service health
+    health = await audit_service.health_check()
+    print(f"Service health: {health['status']}")
+    
     # Check specific tokenomics compliance
     compliance = await audit_service.check_tokenomics_compliance()
     if not compliance.overall_compliant:
@@ -103,10 +107,13 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 3.0.0 (Full Async Service Architecture)
-Date: October 15, 2025
+Version: 3.1.0 (Added Health Check Support)
+Date: October 16, 2025
 
 Changelog:
+    v3.1.0 - Added health_check() method for service monitoring
+           - Implements Principle #7: Per-Asset Monitoring
+           - Enhanced error handling and validation
     v3.0.0 - Complete rewrite as pure async service
            - Full design principles compliance
            - Integrated validation and error handling
@@ -343,15 +350,175 @@ class UBECAuditService:
         self.admin_account = config.get('administration_account', '')
         self.steward_account = config.get('stewardship_account', '')
         
+        # Initialization tracking (for health checks)
+        self._initialized = True  # Set to True since __init__ completes initialization
+        
         # Cache settings
         self._cache_ttl = 300  # 5 minutes
         self._last_snapshot: Optional[DistributionSnapshot] = None
         self._last_snapshot_time: Optional[datetime] = None
+        self._last_audit_time: Optional[datetime] = None
+        self._audit_count = 0
         
         self.logger.info(
             f"Audit service initialized for {self.ubec_code} "
             f"(schema: {self.db_schema})"
         )
+    
+    # ========================================================================
+    # HEALTH CHECK METHOD
+    # Principle 7: Per-Asset Monitoring with health checks
+    # ========================================================================
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform comprehensive health check on audit service.
+        
+        Implements Principle #7: Per-Asset Monitoring with Execution Minimums.
+        
+        Checks:
+        - Service initialization status
+        - Database connectivity
+        - Cache freshness
+        - Last audit recency
+        - Configuration validity
+        
+        Returns:
+            Health status dictionary:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'message': str,
+                'details': {
+                    'initialized': bool,
+                    'database_connected': bool,
+                    'cache_fresh': bool,
+                    'last_snapshot': str (ISO timestamp),
+                    'last_audit': str (ISO timestamp),
+                    'audit_count': int,
+                    'config_valid': bool,
+                    'response_time_ms': float
+                }
+            }
+        
+        Example:
+            >>> health = await service.health_check()
+            >>> if health['status'] == 'healthy':
+            ...     print("Audit service operational")
+            >>> else:
+            ...     print(f"Issues detected: {health['message']}")
+        """
+        start_time = datetime.now()
+        
+        health_info = {
+            'status': 'unknown',
+            'message': '',
+            'details': {
+                'initialized': self._initialized,
+                'database_connected': False,
+                'cache_fresh': self._is_snapshot_fresh(),
+                'last_snapshot': self._last_snapshot_time.isoformat() if self._last_snapshot_time else None,
+                'last_audit': self._last_audit_time.isoformat() if self._last_audit_time else None,
+                'audit_count': self._audit_count,
+                'config_valid': False,
+                'response_time_ms': 0.0
+            }
+        }
+        
+        issues = []
+        
+        try:
+            # 1. Check initialization
+            if not self._initialized:
+                issues.append("Service not initialized")
+            
+            # 2. Check configuration validity
+            try:
+                self._validate_config()
+                health_info['details']['config_valid'] = True
+            except ValueError as e:
+                issues.append(f"Invalid configuration: {e}")
+            
+            # 3. Test database connection
+            try:
+                if hasattr(self.db, 'health_check'):
+                    db_health = await self.db.health_check()
+                    health_info['details']['database_connected'] = (
+                        db_health.get('status') == 'healthy'
+                    )
+                    if not health_info['details']['database_connected']:
+                        issues.append(f"Database unhealthy: {db_health.get('message')}")
+                else:
+                    # Fallback: try a simple query
+                    test_query = "SELECT 1 as test"
+                    result = await self.db.fetch_one(test_query)
+                    health_info['details']['database_connected'] = (result is not None)
+            except Exception as e:
+                issues.append(f"Database connection failed: {e}")
+            
+            # 4. Check cache staleness warning
+            if self._last_snapshot_time:
+                cache_age = (datetime.now() - self._last_snapshot_time).total_seconds()
+                if cache_age > self._cache_ttl * 2:  # Warn if cache is very old
+                    issues.append(f"Snapshot cache very old ({cache_age/60:.1f} minutes)")
+            
+            # 5. Check if audit has been run recently
+            if self._last_audit_time:
+                audit_age = (datetime.now() - self._last_audit_time).total_seconds()
+                # Warn if no audit in last 24 hours
+                if audit_age > 86400:
+                    issues.append(f"No audit in {audit_age/3600:.1f} hours")
+            
+            # Calculate response time
+            end_time = datetime.now()
+            response_time = (end_time - start_time).total_seconds() * 1000
+            health_info['details']['response_time_ms'] = round(response_time, 2)
+            
+            # Determine overall status
+            if len(issues) == 0:
+                health_info['status'] = 'healthy'
+                health_info['message'] = (
+                    f"Audit service operational "
+                    f"({self._audit_count} audits performed)"
+                )
+            elif not health_info['details']['database_connected'] or not health_info['details']['config_valid']:
+                health_info['status'] = 'unhealthy'
+                health_info['message'] = f"Critical issues: {', '.join(issues)}"
+            else:
+                health_info['status'] = 'degraded'
+                health_info['message'] = f"Warnings: {', '.join(issues)}"
+            
+            return health_info
+            
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}", exc_info=True)
+            health_info['status'] = 'unhealthy'
+            health_info['message'] = f"Health check error: {str(e)}"
+            return health_info
+    
+    def _validate_config(self) -> None:
+        """
+        Validate service configuration.
+        
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        if not self.ubec_code:
+            raise ValueError("ubec_code not configured")
+        
+        if not self.ubec_issuer:
+            raise ValueError("ubec_issuer not configured")
+        
+        if not self.admin_account:
+            raise ValueError("administration_account not configured")
+        
+        if not self.steward_account:
+            raise ValueError("stewardship_account not configured")
+        
+        if self.admin_target <= 0 or self.admin_target >= 1:
+            raise ValueError(f"Invalid administration_target: {self.admin_target}")
+        
+        if self.steward_target <= 0 or self.steward_target >= 1:
+            raise ValueError(f"Invalid stewardship_target: {self.steward_target}")
     
     # ========================================================================
     # PUBLIC API - PRIMARY METHODS
@@ -436,6 +603,10 @@ class UBECAuditService:
             # 7. Save to database if requested
             if save_to_database:
                 await self._save_audit_report(report)
+            
+            # 8. Update audit tracking
+            self._last_audit_time = datetime.now()
+            self._audit_count += 1
             
             duration = (datetime.now() - start_time).total_seconds()
             self.logger.info(
@@ -849,6 +1020,7 @@ class UBECAuditService:
         self.logger.info("Closing audit service...")
         self._last_snapshot = None
         self._last_snapshot_time = None
+        self._initialized = False
         self.logger.info("Audit service closed")
 
 
@@ -905,6 +1077,7 @@ async def create_audit_service(
         ...     holonic_evaluator=holonic
         ... )
         >>> report = await audit.perform_comprehensive_audit()
+        >>> health = await audit.health_check()
     """
     # Validate required config parameters
     required_params = [
@@ -963,7 +1136,8 @@ if __name__ == "__main__":
         "Example usage:\n"
         "  from services.audit.ubec_audit_service import create_audit_service\n"
         "  audit_service = await create_audit_service(db_manager, config)\n"
-        "  report = await audit_service.perform_comprehensive_audit()\n\n"
+        "  report = await audit_service.perform_comprehensive_audit()\n"
+        "  health = await audit_service.health_check()\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

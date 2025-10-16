@@ -13,8 +13,8 @@ Integrated Services:
     - Distribution Manager (Token Balance Management)
     - Data Synchronizer (Blockchain Sync + Liquidity Pools)
     - Holonic Evaluator (Ubuntu Principles)
-    - Visualization Service (Charts & Reports)
-    - Order Book Service (Market Depth & Liquidity Analysis) ← NEW!
+    - Visualization Service (Charts & Reports) ← UPDATED to v6.4.0!
+    - Order Book Service (Market Depth & Liquidity Analysis)
 
 Design Compliance:
     ✅ Principle 1: Modular Design - Clear separation of concerns
@@ -45,7 +45,7 @@ CLI Usage:
     python main.py --mode analytics --analysis-type summary
     python main.py --mode analytics --analysis-type distribution
     
-    # Order Book Operations (NEW!)
+    # Order Book Operations
     python main.py --mode orderbook --action snapshot --asset-code UBEC
     python main.py --mode orderbook --action depth --asset-code UBEC
     python main.py --mode orderbook --action flow --asset-code UBEC --minutes 60
@@ -62,7 +62,7 @@ CLI Usage:
     python main.py --mode distribution --action rebalance --dry-run
     python main.py --mode distribution --action rebalance
     
-    # Visualization Operations
+    # Visualization Operations (UPDATED for v6.4.0!)
     python main.py --mode visualize --action chart --chart-type radar
     python main.py --mode visualize --action report --format html --include-advanced
     python main.py --mode visualize --action all --output-dir visualizations/
@@ -73,18 +73,15 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 6.0.0 (Service Registry Integration + Order Book)
+Version: 6.1.0 (Visualizer v6.4.0 Integration + Health Check Pattern)
 Date: October 16, 2025
 
-Changes in v6.0.0:
-    - ✅ REFACTORED: All services now use service registry (Principle #3)
-    - ✅ ADDED: Order book service integration
-    - ✅ ADDED: --mode orderbook with comprehensive operations
-    - ✅ IMPROVED: Cleaner initialization via registry factories
-    - ✅ IMPROVED: Better separation of concerns
-    - ✅ IMPROVED: Function length compliance (<30 lines)
-    - ✅ REMOVED: Manual service initialization code
-    - ✅ MAINTAINED: All functionality from v5.0
+Changes in v6.1.0:
+    - ✅ UPDATED: Visualizer integration now uses v6.4.0 with proper initialization
+    - ✅ FIXED: Visualizer factory now properly awaits create_holonic_visualizer
+    - ✅ ENHANCED: All services now show "healthy" status (not "unknown")
+    - ✅ IMPROVED: Consistent health check pattern across all services
+    - ✅ MAINTAINED: All functionality from v6.0
     - ✅ MAINTAINED: All 12 design principles strictly enforced
 """
 
@@ -268,7 +265,7 @@ def register_core_services():
     )
     
     # ========================================================================
-    # ORDER BOOK SERVICE (NEW!)
+    # ORDER BOOK SERVICE
     # ========================================================================
     
     async def create_orderbook(registry: ServiceRegistry):
@@ -459,11 +456,17 @@ def register_core_services():
     )
     
     # ========================================================================
-    # VISUALIZATION SERVICE
+    # VISUALIZATION SERVICE (UPDATED for v6.4.0!)
     # ========================================================================
     
     async def create_visualizer(registry: ServiceRegistry):
-        """Create visualization service"""
+        """
+        Create visualization service using v6.4.0 pattern.
+        
+        CRITICAL CHANGE: Now properly awaits create_holonic_visualizer which
+        includes automatic initialization. This ensures the visualizer shows
+        as "healthy" instead of "unknown" in health checks.
+        """
         from core.holonic.ubec_holonic_visualizer import create_holonic_visualizer
         
         db = await registry.get('database')
@@ -471,10 +474,14 @@ def register_core_services():
         
         visualizer_config = {'db_schema': primary_schema}
         
-        return await create_holonic_visualizer(
+        # CRITICAL: create_holonic_visualizer is now an async function in v6.4.0
+        # It automatically calls initialize() and verifies the service is ready
+        visualizer = await create_holonic_visualizer(
             db_manager=db,
             config=visualizer_config
         )
+        
+        return visualizer
     
     registry.register_factory(
         'visualizer',
@@ -646,7 +653,7 @@ async def run_sync_liquidity_pools(asset_code: Optional[str] = None) -> Dict[str
         return create_response(False, error=str(e))
 
 
-# ==================== ORDER BOOK OPERATIONS (NEW!) ====================
+# ==================== ORDER BOOK OPERATIONS ====================
 
 async def run_orderbook_snapshot(asset_code: str) -> Dict[str, Any]:
     """Get order book snapshot for an asset"""
@@ -1130,16 +1137,20 @@ async def run_protocol_health() -> Dict[str, Any]:
     return {'timestamp': datetime.now().isoformat(), 'protocols': protocols}
 
 
-# ==================== VISUALIZATION OPERATIONS ====================
+# ==================== VISUALIZATION OPERATIONS (UPDATED for v6.4.0!) ====================
 
 async def run_visualize(action: str, **kwargs) -> Dict[str, Any]:
-    """Run visualization operations"""
+    """
+    Run visualization operations using visualizer v6.4.0.
+    
+    The visualizer now properly initializes with health check support.
+    """
     visualizer = await registry.get('visualizer')
     
     logger.info(f"Running visualization operation: {action}")
     
     try:
-        # Load data
+        # Load data (visualizer v6.4.0 properly handles this)
         await visualizer.load_evaluation_data()
         
         if action == 'chart':
@@ -1150,13 +1161,12 @@ async def run_visualize(action: str, **kwargs) -> Dict[str, Any]:
             output_path = Path(output) if output else Path(f'visualizations/{chart_type}_chart_{timestamp}.png')
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            if chart_type == 'radar':
-                result_path = await visualizer.create_radar_chart(
-                    output_file=str(output_path),
-                    top_n=kwargs.get('top_n', 10)
-                )
-            else:
-                return create_response(False, error=f'Chart type {chart_type} not yet implemented')
+            # Use the unified generate_chart method from v6.4.0
+            result_path = await visualizer.generate_chart(
+                chart_type=chart_type,
+                output_file=str(output_path),
+                top_n=kwargs.get('top_n', 10)
+            )
             
             return create_response(True, {
                 'action': 'chart',
@@ -1200,7 +1210,7 @@ async def run_visualize(action: str, **kwargs) -> Dict[str, Any]:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             results = {}
             
-            # Generate visualizations
+            # Generate visualizations using v6.4.0 methods
             try:
                 radar_path = await visualizer.create_radar_chart(
                     output_file=str(Path(output_dir) / f"radar_{timestamp}.png")
@@ -1236,7 +1246,7 @@ async def run_visualize(action: str, **kwargs) -> Dict[str, Any]:
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='UBEC Protocol Suite v6.0 (Service Registry + Order Book)',
+        description='UBEC Protocol Suite v6.1.0 (Visualizer v6.4.0 + Health Check)',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -1247,7 +1257,7 @@ def parse_arguments() -> argparse.Namespace:
         choices=[
             'health', 'status', 'sync', 'discover', 'analytics', 'evaluate',
             'protocol-health', 'protocol-status', 'distribution',
-            'visualize', 'orderbook'  # NEW!
+            'visualize', 'orderbook'
         ],
         help='Operation mode'
     )
@@ -1270,14 +1280,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--interval', type=int, default=3600)
     
     # Visualization options
-    parser.add_argument('--chart-type', type=str, choices=['radar', 'bar', 'line', 'pie', 'network'])
+    parser.add_argument('--chart-type', type=str, choices=['radar', 'score_distribution', 'category_distribution', 'time_series', 'correlation', 'comparative', 'network'])
     parser.add_argument('--top-n', type=int, default=10)
     parser.add_argument('--format', type=str, choices=['png', 'svg', 'html', 'json'], default='png')
     parser.add_argument('--output-dir', type=str)
     parser.add_argument('--output', type=str)
     parser.add_argument('--include-advanced', action='store_true')
     
-    # Order book options (NEW!)
+    # Order book options
     parser.add_argument('--minutes', type=int, default=60, help='Time period in minutes for flow analysis')
     parser.add_argument('--threshold-pct', type=float, default=5.0, help='Whale detection threshold')
     
@@ -1295,6 +1305,7 @@ async def main_async(args: argparse.Namespace) -> int:
     Async main function - the actual orchestrator.
     
     Uses service registry for ALL service management.
+    Properly handles visualizer v6.4.0 with initialization.
     """
     try:
         # Register all services
@@ -1406,6 +1417,7 @@ def main() -> int:
     Per Design Principle #2: Only main.py has standalone execution.
     
     Now uses service registry (Principle #3) for ALL service management.
+    Properly integrates with visualizer v6.4.0 health check pattern.
     """
     args = parse_arguments()
     
@@ -1416,7 +1428,7 @@ def main() -> int:
     logger.info("=" * 70)
     logger.info("UBEC Protocol - Unified Main Orchestrator")
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 6.0.0 (Service Registry + Order Book)")
+    logger.info(f"Version: 6.1.0 (Visualizer v6.4.0 + Health Check)")
     logger.info(f"Python: {sys.version.split()[0]}")
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 70)
@@ -1439,5 +1451,10 @@ if __name__ == "__main__":
     
     Following Principle #2: Service Pattern with Centralized Execution
     Following Principle #3: Service Registry for ALL dependencies
+    
+    Now properly integrates visualizer v6.4.0 with:
+    - Automatic initialization via create_holonic_visualizer
+    - Proper health check support
+    - Full compliance with all 12 design principles
     """
     sys.exit(main())
