@@ -860,7 +860,7 @@ class UBECrcProtocolService:
 # ==================== SERVICE FACTORY ====================
 # Principle 2: Service Pattern - Factory for instantiation
 
-def create_async def create_ubecrc_service(
+async def create_ubecrc_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,

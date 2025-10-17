@@ -90,7 +90,7 @@ Changelog:
     v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
            - Implements Principle #12: Method Singularity with shared utility
            - Removed custom health_check() implementation (~400 lines)
-           - Now uses ServiceHealthCheck.database_dependent_health()
+           - Now uses ServiceHealthCheck.database_only_health()
            - Cleaner, more maintainable code with consistent patterns
            - Full compliance with health check implementation guide
     v2.1.0 - Enhanced health_check() method for comprehensive monitoring
@@ -411,7 +411,7 @@ class UBECHolonicEvaluator:
         all services, implementing Principle #12 (Method Singularity).
         
         This implementation follows the health check pattern guide:
-        - Uses ServiceHealthCheck.database_dependent_health() for database-only services
+        - Uses ServiceHealthCheck.database_only_health() for database-only services
         - Provides schema detection information
         - Includes service-specific context (weights, thresholds, cache)
         - Tracks operation metrics and error rates
@@ -511,7 +511,7 @@ class UBECHolonicEvaluator:
         }
         
         # Use standardized health check utility (Principle #12: Method Singularity)
-        return await ServiceHealthCheck.database_dependent_health(
+        return await ServiceHealthCheck.database_only_health(
             service_name='holonic_evaluator',
             is_initialized=self._initialized,
             db_manager=self.db_manager,
@@ -989,7 +989,7 @@ if __name__ == "__main__":
         "  report = await evaluator.evaluate_network_holism()\n"
         "  await evaluator.close()\n\n"
         "Version 2.2.0 - Standardized Health Check Pattern:\n"
-        "  - Uses ServiceHealthCheck.database_dependent_health() utility\n"
+        "  - Uses ServiceHealthCheck.database_only_health() utility\n"
         "  - Implements Principle #12: Method Singularity\n"
         "  - Consistent health checks across all services\n"
         "  - Enhanced schema detection and validation\n"

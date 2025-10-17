@@ -1044,7 +1044,7 @@ class UBECttProtocolService:
 # ==================== SERVICE FACTORY ====================
 # Principle 2: Service Pattern - Factory for instantiation
 
-def create_async def create_ubectt_service(
+def create_ubectt_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,

@@ -325,8 +325,7 @@ class UBECDistributionService:
             - Principle 11: Comprehensive validation and logging
         """
         if self._initialized:
-            self.logger.debug("Distribution service already initialized, skipping")
-            return
+            raise RuntimeError("Service already initialized")
         
         self.logger.info("Initializing distribution service...")
         

@@ -14,7 +14,7 @@ Architecture:
 - Service Registry: Discovers and manages Config instances
 
 Design Principles Compliance:
-════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
     ✅ #1  Modular Design: Self-contained wrapper with clear boundaries
     ✅ #2  Service Pattern: Factory-based, no standalone execution
     ✅ #3  Service Registry: Accessed through service registry
@@ -27,7 +27,7 @@ Design Principles Compliance:
     ✅ #10 Separation of Concerns: Wrapper separated from storage logic
     ✅ #11 Comprehensive Documentation: Full docstrings and examples
     ✅ #12 Method Singularity: Single factory, single wrapper implementation
-════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
 
 Key Features:
 - Property-style access (config.HORIZON_URL)
@@ -42,16 +42,15 @@ Attribution:
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
 
-Version: 4.0.0 (Enhanced Health Check Integration)
+Version: 4.1.0 (Added ACCOUNTS Property - Config Access Fix)
 Date: October 17, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
-Changes from v3.1.0:
-- Enhanced health check using ServiceHealthCheck utility
-- Better error handling in property access
-- Improved documentation with examples
-- Additional utility methods for token configuration
-- Better type hints and validation
+Changes from v4.0.0:
+- Added ACCOUNTS property for account address access
+- Maps database settings to expected account structure
+- Supports both single stewardship and stewardship list
+- Enhanced documentation with account access examples
 """
 
 import logging
@@ -95,6 +94,11 @@ class Config:
         url = config.HORIZON_URL
         issuer = config.UBEC_ISSUER
         network = config.NETWORK
+        
+        # Account access (NEW in v4.1.0)
+        admin_addr = config.ACCOUNTS['administration']
+        steward_addr = config.ACCOUNTS['stewardship']
+        general_addr = config.ACCOUNTS['general']
         
         # Dictionary access (also supported)
         url = config['horizon_url']
@@ -229,6 +233,99 @@ class Config:
         return self._config.get('ubectt_issuer', '')
     
     # ========================================================================
+    # ACCOUNT PROPERTIES (NEW in v4.1.0 - Config Access Fix)
+    # ========================================================================
+    
+    @property
+    def ACCOUNTS(self) -> Dict[str, Any]:
+        """
+        Get managed account addresses dictionary.
+        
+        Maps database settings to account structure expected by services.
+        
+        Database Settings → ACCOUNTS Structure:
+            administration_account → {'administration': 'GXXX...'}
+            stewardship_account    → {'stewardship': 'GXXX...' or ['GXXX...', ...]}
+            general_account        → {'general': 'GXXX...'}
+        
+        Returns:
+            Dictionary with account types as keys and addresses as values:
+            {
+                'administration': str,           # Admin account address
+                'stewardship': str or List[str], # Steward account(s)
+                'general': str,                  # General account address
+                'stewardship_management': str,   # Individual steward accounts
+                'stewardship_infrastructure': str,
+                'stewardship_liquidity': str
+            }
+        
+        Example:
+            # Access individual accounts
+            admin_addr = config.ACCOUNTS['administration']
+            general_addr = config.ACCOUNTS['general']
+            
+            # Stewardship can be single or list
+            steward = config.ACCOUNTS['stewardship']
+            if isinstance(steward, list):
+                for addr in steward:
+                    process_steward_account(addr)
+            else:
+                process_steward_account(steward)
+            
+            # Access specific stewardship accounts
+            mgmt_addr = config.ACCOUNTS.get('stewardship_management', '')
+            infra_addr = config.ACCOUNTS.get('stewardship_infrastructure', '')
+            liq_addr = config.ACCOUNTS.get('stewardship_liquidity', '')
+        
+        Design Notes:
+            - Principle #4: Database is single source of truth
+            - Principle #8: No duplicate config - built from database settings
+            - Supports legacy code expecting either single or list stewardship
+        """
+        accounts = {}
+        
+        # Get account addresses from database settings
+        admin = self._config.get('administration_account', '')
+        steward = self._config.get('stewardship_account', '')
+        general = self._config.get('general_account', '')
+        
+        # Additional stewardship accounts if present (for multi-account stewardship)
+        steward_mgmt = self._config.get('stewardship_management_account', '')
+        steward_infra = self._config.get('stewardship_infrastructure_account', '')
+        steward_liquidity = self._config.get('stewardship_liquidity_account', '')
+        
+        # Build accounts dictionary
+        if admin:
+            accounts['administration'] = admin
+        
+        # Stewardship: Handle both single and multi-account scenarios
+        if steward:
+            # Single stewardship account (backward compatibility)
+            accounts['stewardship'] = steward
+        elif steward_mgmt:
+            # Multi-account stewardship - provide as list
+            steward_list = [s for s in [steward_mgmt, steward_infra, steward_liquidity] if s]
+            if len(steward_list) == 1:
+                # Only one stewardship account - provide as string
+                accounts['stewardship'] = steward_list[0]
+            else:
+                # Multiple stewardship accounts - provide as list
+                accounts['stewardship'] = steward_list
+        
+        if general:
+            accounts['general'] = general
+        
+        # Add individual stewardship accounts for direct access
+        if steward_mgmt:
+            accounts['stewardship_management'] = steward_mgmt
+        if steward_infra:
+            accounts['stewardship_infrastructure'] = steward_infra
+        if steward_liquidity:
+            accounts['stewardship_liquidity'] = steward_liquidity
+        
+        return accounts
+    
+    # ========================================================================
     # SUPPLY CALCULATION PROPERTIES
     # ========================================================================
     
@@ -301,14 +398,17 @@ class Config:
             print(f"General: {dist['general'] * 100}%")
         """
         # Load from config if available, otherwise use defaults
-        general = Decimal(str(self._config.get('target_general', '0.65')))
-        stewardship = Decimal(str(self._config.get('target_stewardship', '0.30')))
-        administration = Decimal(str(self._config.get('target_administration', '0.05')))
+        # Note: Database uses administration_target, stewardship_target
+        admin_target = self._config.get('administration_target', 0.05)
+        steward_target = self._config.get('stewardship_target', 0.30)
+        
+        # Calculate general as remainder (1.0 - admin - steward)
+        general_target = 1.0 - float(admin_target) - float(steward_target)
         
         return {
-            'general': general,
-            'stewardship': stewardship,
-            'administration': administration
+            'general': Decimal(str(general_target)),
+            'stewardship': Decimal(str(steward_target)),
+            'administration': Decimal(str(admin_target))
         }
     
     @property
@@ -321,20 +421,6 @@ class Config:
         """
         val = self._config.get('rebalance_threshold', '0.01')
         return Decimal(str(val))
-    
-    @property
-    def ACCOUNTS(self) -> Dict[str, Any]:
-        """
-        Managed accounts configuration.
-        
-        Returns:
-            Dictionary of managed accounts
-        
-        Note:
-            This may be empty if accounts are managed differently.
-        """
-        # Could load from database if accounts are stored there
-        return {}
     
     # ========================================================================
     # OPERATIONAL PROPERTIES
@@ -912,6 +998,9 @@ async def create_config_service(db_manager: Any) -> Config:
         url = config.HORIZON_URL
         issuer = config.UBEC_ISSUER
         
+        # Account access
+        admin = config.ACCOUNTS['administration']
+        
         # Health check
         health = await config.health_check()
         print(f"Config status: {health['status']}")
@@ -986,6 +1075,11 @@ if __name__ == "__main__":
     print("  url = config.HORIZON_URL")
     print("  issuer = config.UBEC_ISSUER")
     print("  network = config.NETWORK")
+    print()
+    print("  # Account access (NEW in v4.1.0)")
+    print("  admin = config.ACCOUNTS['administration']")
+    print("  steward = config.ACCOUNTS['stewardship']")
+    print("  general = config.ACCOUNTS['general']")
     print()
     print("  # Dictionary access")
     print("  url = config['horizon_url']")
