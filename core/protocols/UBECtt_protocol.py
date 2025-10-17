@@ -17,10 +17,10 @@ This module implements the service pattern with:
 - Database as single source of truth
 - Built-in rate limiting
 - In-memory caching with TTL
-- Comprehensive health monitoring
+- Comprehensive health monitoring using ServiceHealthCheck utility
 
 Design Principles Compliance:
-════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
     ✅ 1.  Modular Design: Self-contained service with clear boundaries
     ✅ 2.  Service Pattern: No standalone execution, factory-based instantiation
     ✅ 3.  Service Registry: Accessed through centralized registry
@@ -32,8 +32,8 @@ Design Principles Compliance:
     ✅ 9.  Rate Limiting: Built-in API rate limiting
     ✅ 10. Separation of Concerns: Transformation logic separated from data access
     ✅ 11. Documentation: Comprehensive docstrings and inline comments
-    ✅ 12. Method Singularity: No duplicate methods
-════════════════════════════════════════════════════════════════════════════
+    ✅ 12. Method Singularity: No duplicate methods, uses ServiceHealthCheck utility
+══════════════════════════════════════════════════════════════════════════════
 
 Usage:
     from UBECtt_protocol import create_ubectt_service
@@ -55,10 +55,17 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.1.0 (Enhanced Health Check Support)
-Date: October 16, 2025
+Version: 2.2.0 (Standardized Health Check Pattern)
+Date: October 17, 2025
 
 Changelog:
+    v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
+           - Implements Principle #12: Method Singularity with shared utility
+           - Removed custom health_check() implementation
+           - Now uses ServiceHealthCheck.api_dependent_health()
+           - Added enhanced cache status tracking with dual caches
+           - Cleaner, more maintainable code with consistent patterns
+           - Full compliance with health check implementation guide
     v2.1.0 - Enhanced health_check() method for comprehensive monitoring
            - Implements Principle #7: Per-Asset Monitoring with detailed checks
            - Added initialization tracking
@@ -76,6 +83,9 @@ from decimal import Decimal, getcontext
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+
+# Import standardized health check utility (Principle #12: Method Singularity)
+from core.utils.service_health import ServiceHealthCheck
 
 # Configure precision for decimal calculations
 getcontext().prec = 10
@@ -340,6 +350,7 @@ class UBECttProtocolService:
         - Principle 4: Single Source of Truth - Database-driven
         - Principle 5: Strict Async - All I/O operations async
         - Principle 10: Separation of Concerns - Clear layer separation
+        - Principle 12: Method Singularity - Uses ServiceHealthCheck utility
     """
     
     def __init__(
@@ -402,211 +413,130 @@ class UBECttProtocolService:
     
     # ==================== HEALTH CHECK ====================
     # Principle 7: Per-Asset Monitoring with health checks
+    # Principle 12: Method Singularity - Uses standardized utility
     
     async def health_check(self) -> Dict[str, Any]:
         """
         Perform comprehensive health check on Fire protocol service.
         
-        Implements Principle #7: Per-Asset Monitoring with Execution Minimums.
+        Uses standardized ServiceHealthCheck utility for consistency across
+        all services, implementing Principle #12 (Method Singularity).
         
-        Checks:
-        - Service initialization status
-        - Database connectivity
-        - Stellar client connectivity (if configured)
-        - Cache status and freshness
-        - Transformation activity metrics
-        - Recent operation history
-        - Error tracking
-        - Configuration validity
+        This implementation follows the health check pattern guide:
+        - Uses ServiceHealthCheck.api_dependent_health() for API-based services
+        - Provides dual cache information (actions + phases)
+        - Includes protocol-specific context (element, asset_code)
+        - Tracks transformation and regeneration metrics
         
         Returns:
-            Health status dictionary with detailed metrics
+            Health status dictionary from ServiceHealthCheck utility:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy' | 'unknown',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {
+                    'initialized': bool,
+                    'has_rate_limiter': bool,
+                    'has_cache': bool,
+                    'rate_limiter': {...},
+                    'cache': {
+                        'actions_size': int,
+                        'phases_size': int,
+                        'last_sync': str (ISO timestamp),
+                        'age_seconds': float,
+                        'status': str
+                    },
+                    'asset_code': str,
+                    'element': str,
+                    'regeneration_capacity': float,
+                    'active_phases': int,
+                    'sync_count': int,
+                    'query_count': int,
+                    'action_record_count': int,
+                    'distribution_count': int,
+                    'error_count': int,
+                    'last_error': str,
+                    'last_error_time': str (ISO timestamp)
+                }
+            }
         
         Example:
             >>> health = await service.health_check()
             >>> if health['status'] == 'healthy':
             ...     print("Fire protocol operational")
-            ...     print(f"Regeneration capacity: {health['details']['regeneration_capacity']:.2f}")
-        """
-        start_time = datetime.now()
+            ...     print(f"Regeneration: {health['details']['regeneration_capacity']:.2f}")
+            >>> else:
+            ...     print(f"Issues detected: {health['message']}")
         
-        health_info = {
-            'status': 'unknown',
-            'message': '',
-            'details': {
-                'protocol': 'UBECtt Fire Protocol',
-                'element': 'Fire (Transformation & Catalytic Change)',
-                'asset_code': self.asset_code,
-                'initialized': self._initialized,
-                'database_connected': False,
-                'stellar_connected': False,
-                'cache_status': 'unknown',
-                'cache_age_seconds': None,
-                'cached_actions': len(self._action_cache),
-                'cached_phases': len(self._phase_cache),
-                'active_phases': 0,
-                'regeneration_capacity': 0.0,
-                'last_sync': self._last_sync_time.isoformat() if self._last_sync_time else None,
-                'last_query': self._last_query_time.isoformat() if self._last_query_time else None,
-                'sync_count': self._sync_count,
-                'query_count': self._query_count,
-                'action_record_count': self._action_record_count,
-                'distribution_count': self._distribution_count,
-                'error_count': self._error_count,
-                'last_error': self._last_error,
-                'last_error_time': self._last_error_time.isoformat() if self._last_error_time else None,
-                'config_valid': False,
-                'response_time_ms': 0.0
-            }
+        Design Notes:
+            - Principle 7: Comprehensive per-asset monitoring
+            - Principle 12: Delegates to ServiceHealthCheck utility (no duplication)
+        """
+        # Prepare cache information for health check (dual caches for Fire)
+        cache_info = {
+            'actions_size': len(self._action_cache),
+            'phases_size': len(self._phase_cache),
+            'last_sync': self._last_sync_time.isoformat() if self._last_sync_time else None
         }
         
-        issues = []
+        # Calculate cache age and status if cache exists
+        if self._cache_timestamp:
+            cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
+            cache_info['age_seconds'] = round(cache_age, 2)
+            
+            # Determine cache status
+            if cache_age < self._cache_ttl.total_seconds():
+                cache_info['status'] = 'fresh'
+            elif cache_age < self._cache_ttl.total_seconds() * 2:
+                cache_info['status'] = 'stale'
+            else:
+                cache_info['status'] = 'expired'
+        else:
+            cache_info['status'] = 'empty'
         
-        try:
-            # 1. Check initialization
-            if not self._initialized:
-                issues.append("Service not initialized")
-            
-            # 2. Check configuration validity
+        # Calculate Fire-specific metrics for context
+        regeneration_capacity = 0.0
+        active_phases = 0
+        
+        if self._action_cache:
             try:
-                self._validate_config()
-                health_info['details']['config_valid'] = True
-            except ValueError as e:
-                issues.append(f"Invalid configuration: {e}")
-            
-            # 3. Test database connection
-            try:
-                if hasattr(self.db_manager, 'health_check'):
-                    db_health = await self.db_manager.health_check()
-                    health_info['details']['database_connected'] = (
-                        db_health.get('status') == 'healthy'
-                    )
-                    if not health_info['details']['database_connected']:
-                        issues.append(f"Database unhealthy: {db_health.get('message')}")
-                else:
-                    # Fallback: try a simple query
-                    test_query = "SELECT 1 as test"
-                    result = await self.db_manager.fetch_one(test_query)
-                    health_info['details']['database_connected'] = (result is not None)
-            except Exception as e:
-                issues.append(f"Database connection failed: {e}")
-            
-            # 4. Test Stellar client connection (if configured)
-            if self.stellar_client:
-                try:
-                    # Rate limit before checking
-                    await self.rate_limiter.acquire()
-                    
-                    # Try to get ledger info (lightweight operation)
-                    ledger = await self.stellar_client.ledgers().order(desc=True).limit(1).call()
-                    health_info['details']['stellar_connected'] = (ledger is not None)
-                except Exception as e:
-                    issues.append(f"Stellar connection failed: {e}")
-            else:
-                # No Stellar client configured - not an error
-                health_info['details']['stellar_connected'] = None
-            
-            # 5. Check cache status
-            if self._cache_timestamp:
-                cache_age = (datetime.now() - self._cache_timestamp).total_seconds()
-                health_info['details']['cache_age_seconds'] = round(cache_age, 2)
+                # Calculate average regeneration score
+                regeneration_scores = [
+                    action.regeneration_score 
+                    for action in self._action_cache.values()
+                ]
+                if regeneration_scores:
+                    avg_regen = sum(regeneration_scores) / len(regeneration_scores)
+                    regeneration_capacity = float(avg_regen)
                 
-                if cache_age < self._cache_ttl.total_seconds():
-                    health_info['details']['cache_status'] = 'fresh'
-                elif cache_age < self._cache_ttl.total_seconds() * 2:
-                    health_info['details']['cache_status'] = 'stale'
-                    issues.append(f"Cache is stale ({cache_age/60:.1f} minutes old)")
-                else:
-                    health_info['details']['cache_status'] = 'expired'
-                    issues.append(f"Cache is expired ({cache_age/60:.1f} minutes old)")
-            else:
-                health_info['details']['cache_status'] = 'empty'
-                if self._sync_count == 0:
-                    issues.append("No transformation data synced yet")
-            
-            # 6. Calculate transformation metrics (if data available)
-            if self._action_cache:
-                try:
-                    # Calculate regeneration capacity
-                    regeneration_scores = [
-                        action.regeneration_score 
-                        for action in self._action_cache.values()
-                    ]
-                    if regeneration_scores:
-                        avg_regen = sum(regeneration_scores) / len(regeneration_scores)
-                        health_info['details']['regeneration_capacity'] = round(float(avg_regen), 3)
-                        
-                        if avg_regen < Decimal('0.3'):
-                            issues.append(f"Low regeneration capacity ({avg_regen:.2f})")
-                    
-                    # Count active phases
-                    active_phases = sum(1 for phase in self._phase_cache.values() if phase.is_active)
-                    health_info['details']['active_phases'] = active_phases
-                    
-                    if active_phases == 0 and self._sync_count > 0:
-                        issues.append("No active transformation phases")
-                    
-                except Exception as e:
-                    self.logger.warning(f"Could not calculate transformation metrics: {e}")
-            
-            # 7. Check operation recency
-            if self._last_sync_time:
-                sync_age = (datetime.now() - self._last_sync_time).total_seconds()
-                # Warn if no sync in last 24 hours
-                if sync_age > 86400:
-                    issues.append(f"No sync in {sync_age/3600:.1f} hours")
-            
-            # 8. Check action activity
-            if len(self._action_cache) == 0 and self._sync_count > 0:
-                issues.append("No transformative actions recorded")
-            
-            # 9. Check error rate
-            if self._error_count > 0:
-                total_ops = (self._sync_count + self._query_count + 
-                            self._action_record_count + self._distribution_count)
-                if total_ops > 0:
-                    error_rate = self._error_count / total_ops
-                    if error_rate > 0.1:  # More than 10% error rate
-                        issues.append(
-                            f"High error rate: {error_rate:.1%} "
-                            f"({self._error_count} errors in {total_ops} operations)"
-                        )
-            
-            # Calculate response time
-            end_time = datetime.now()
-            response_time = (end_time - start_time).total_seconds() * 1000
-            health_info['details']['response_time_ms'] = round(response_time, 2)
-            
-            # Determine overall status
-            critical_issues = [
-                issue for issue in issues 
-                if any(word in issue.lower() for word in [
-                    'database', 'stellar', 'configuration', 'initialized'
-                ])
-            ]
-            
-            if len(critical_issues) > 0:
-                health_info['status'] = 'unhealthy'
-                health_info['message'] = f"Critical issues: {', '.join(critical_issues)}"
-            elif len(issues) > 0:
-                health_info['status'] = 'degraded'
-                health_info['message'] = f"Warnings: {', '.join(issues)}"
-            else:
-                health_info['status'] = 'healthy'
-                health_info['message'] = (
-                    f"Fire protocol operational "
-                    f"({self._sync_count} syncs, {self._action_record_count} actions recorded, "
-                    f"{len(self._action_cache)} cached actions, "
-                    f"regeneration: {health_info['details']['regeneration_capacity']:.2f})"
-                )
-            
-            return health_info
-            
-        except Exception as e:
-            self.logger.error(f"Health check failed: {e}", exc_info=True)
-            health_info['status'] = 'unhealthy'
-            health_info['message'] = f"Health check error: {str(e)}"
-            return health_info
+                # Count active phases
+                active_phases = sum(1 for phase in self._phase_cache.values() if phase.is_active)
+                
+            except Exception as e:
+                self.logger.warning(f"Could not calculate metrics in health check: {e}")
+        
+        # Use standardized health check utility (Principle #12: Method Singularity)
+        return await ServiceHealthCheck.api_dependent_health(
+            service_name='fire_protocol',
+            is_initialized=self._initialized,
+            rate_limiter=self.rate_limiter,
+            cache_info=cache_info,
+            # Protocol-specific context
+            asset_code=self.asset_code,
+            element='Fire (Transformation & Catalytic Change)',
+            issuer=self.issuer,
+            # Fire-specific metrics
+            regeneration_capacity=round(regeneration_capacity, 3),
+            active_phases=active_phases,
+            # Operation statistics
+            sync_count=self._sync_count,
+            query_count=self._query_count,
+            action_record_count=self._action_record_count,
+            distribution_count=self._distribution_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
+        )
     
     def _validate_config(self) -> None:
         """
@@ -1114,7 +1044,7 @@ class UBECttProtocolService:
 # ==================== SERVICE FACTORY ====================
 # Principle 2: Service Pattern - Factory for instantiation
 
-async def create_ubectt_service(
+def create_async def create_ubectt_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,
@@ -1208,6 +1138,13 @@ if __name__ == "__main__":
         "  service = await create_ubectt_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
         "  await service.sync_transformation_data()\n\n"
+        "Version 2.2.0 - Standardized Health Check Pattern:\n"
+        "  - Uses ServiceHealthCheck.api_dependent_health() utility\n"
+        "  - Implements Principle #12: Method Singularity\n"
+        "  - Consistent health checks across all services\n"
+        "  - Enhanced transformation and regeneration metrics tracking\n"
+        "  - Dual cache monitoring (actions + phases)\n"
+        "  - Cleaner, more maintainable code\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

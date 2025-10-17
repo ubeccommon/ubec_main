@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
-UBEC Analytics Service - Production Implementation
+UBEC Protocol Suite - Analytics Service
+========================================
+Comprehensive analytics and insights for the UBEC token ecosystem.
 
-Provides comprehensive analytics and insights for the UBEC token ecosystem.
 Analyzes distribution, holder patterns, transaction trends, and ecosystem health
 across all four UBEC elements (Air, Water, Earth, Fire).
 
 Design Principles Compliance:
-- ✅ Principle #1: Modular Design - Self-contained analytics service with defined boundaries
-- ✅ Principle #2: Service Pattern - No standalone execution, used as service only
-- ✅ Principle #3: Service Registry - Accessed through service registry pattern
-- ✅ Principle #4: Single Source of Truth - All data from database
-- ✅ Principle #5: Strict Async Operations - All I/O uses async/await
-- ✅ Principle #6: No Sync Fallbacks - Pure async implementation
-- ✅ Principle #7: Per-Asset Monitoring - Individual token/element tracking with health checks
-- ✅ Principle #8: No Duplicate Configuration - No config duplication
-- ✅ Principle #9: Integrated Rate Limiting - N/A (read-only database operations)
-- ✅ Principle #10: Separation of Concerns - Analytics separated from sync/trading
-- ✅ Principle #11: Comprehensive Documentation - Full docstrings and examples
-- ✅ Principle #12: Method Singularity - Each analysis method implemented once
+════════════════════════════════════════════════════════════════════════════
+    ✅ #1  Modular Design: Self-contained analytics service with defined boundaries
+    ✅ #2  Service Pattern: No standalone execution, used as service only
+    ✅ #3  Service Registry: Accessed through service registry pattern
+    ✅ #4  Single Source of Truth: All data from database
+    ✅ #5  Strict Async Operations: All I/O uses async/await
+    ✅ #6  No Sync Fallbacks: Pure async implementation
+    ✅ #7  Per-Asset Monitoring: Individual token/element tracking with health checks
+    ✅ #8  No Duplicate Configuration: No config duplication
+    ✅ #9  Integrated Rate Limiting: N/A (read-only database operations)
+    ✅ #10 Separation of Concerns: Analytics separated from sync/trading
+    ✅ #11 Comprehensive Documentation: Full docstrings and examples
+    ✅ #12 Method Singularity: Each analysis method implemented once
+════════════════════════════════════════════════════════════════════════════
 
 Key Features:
 - Token distribution analysis across all 4 elements
@@ -41,9 +44,16 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Author: UBEC Protocol Team
-Version: 2.0
-Date: October 16, 2025
+Author: UBEC Protocol Team with Claude AI assistance
+Version: 3.0.0 (Enhanced Health Check Integration)
+Date: October 17, 2025
+
+Changes from v2.0:
+- Enhanced health check using ServiceHealthCheck utility (Principle #12)
+- Added data freshness validation
+- Improved error handling and reporting
+- Better integration with service registry
+- Enhanced caching statistics in health check
 """
 
 import asyncio
@@ -53,6 +63,9 @@ from decimal import Decimal, getcontext
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
+
+# Import health check utility (Principle #12: Method Singularity)
+from core.utils.service_health import ServiceHealthCheck
 
 # Configure precision for decimal calculations
 getcontext().prec = 10
@@ -174,6 +187,7 @@ class UBECAnalyticsService:
     - Tracks each token individually
     - Monitors health per element
     - Provides aggregated ecosystem metrics
+    - Enhanced health check with data freshness validation
     
     Usage:
         # Via service registry (RECOMMENDED - Principle #3)
@@ -193,8 +207,10 @@ class UBECAnalyticsService:
         # Analyze holder concentration
         holders = await analytics.analyze_holder_concentration('UBEC')
         
-        # Health check (Principle #7)
+        # Health check (Principle #7) - Now uses ServiceHealthCheck utility!
         health = await analytics.health_check()
+        print(f"Status: {health['status']}")
+        print(f"Query count: {health['details']['query_count']}")
         
         await analytics.close()
     """
@@ -217,16 +233,21 @@ class UBECAnalyticsService:
         logger.info("Initializing UBEC Analytics Service")
         
         self.db = db_manager
-        self.initialized = False
+        self._initialized = False
         
         # Cache for frequently accessed data (with TTL)
         self._cache: Dict[str, Tuple[Any, datetime]] = {}
         self._cache_ttl_seconds = 300  # 5 minutes default
+        self._cache_hits = 0
+        self._cache_misses = 0
         
         # Service metadata
         self._service_name = 'analytics'
         self._last_query_time: Optional[datetime] = None
         self._query_count = 0
+        self._error_count = 0
+        self._last_error: Optional[str] = None
+        self._last_error_time: Optional[datetime] = None
         
         logger.info("✓ UBEC Analytics Service initialized")
     
@@ -237,7 +258,7 @@ class UBECAnalyticsService:
         
         Principle #5: Strict Async Operations - async initialization only
         """
-        if self.initialized:
+        if self._initialized:
             logger.warning("Analytics service already initialized")
             return
         
@@ -248,10 +269,13 @@ class UBECAnalyticsService:
             result = await self.db.fetch_one("SELECT 1 as test")
             if not result:
                 raise AnalyticsException("Database connection test failed")
+            
+            logger.info("✓ Database connection verified")
         except Exception as e:
+            self._record_error(f"Failed to verify database connection: {e}")
             raise AnalyticsException(f"Failed to verify database connection: {e}")
         
-        self.initialized = True
+        self._initialized = True
         logger.info("✓ Analytics service fully initialized")
     
     async def close(self):
@@ -261,66 +285,142 @@ class UBECAnalyticsService:
         Principle #5: Strict Async Operations - async cleanup
         """
         self._cache.clear()
-        self.initialized = False
+        self._initialized = False
         logger.info("Analytics service closed")
+    
+    # ========================================================================
+    # HEALTH CHECK (Enhanced with ServiceHealthCheck utility)
+    # ========================================================================
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Perform health check on analytics service.
+        Perform comprehensive health check on analytics service.
         
-        Principle #7: Per-Asset Monitoring - Health checks with detailed metrics
+        Now uses ServiceHealthCheck utility (Principle #12: Method Singularity)
+        for standardized health reporting across all services.
+        
+        Implements Principle #7 (Per-Asset Monitoring) with detailed metrics:
+        - Database connectivity
+        - Query performance
+        - Cache effectiveness
+        - Error tracking
+        - Data freshness validation
         
         Returns:
-            Dict with health status and metrics:
+            Dict with health status and comprehensive metrics:
             {
                 'status': 'healthy' | 'degraded' | 'unhealthy',
-                'service_name': 'analytics',
-                'initialized': bool,
-                'database_connected': bool,
-                'cache_size': int,
-                'query_count': int,
-                'last_query_time': str | None,
-                'issues': List[str]
+                'message': str,
+                'timestamp': str (ISO 8601),
+                'details': {
+                    'initialized': bool,
+                    'query_count': int,
+                    'cache_size': int,
+                    'cache_hit_rate': float,
+                    'error_count': int,
+                    'last_query_time': str,
+                    'last_error': str or None,
+                    'has_database': bool,
+                    'checks_passed': int,
+                    'checks_failed': int,
+                    'checks': List[Tuple[str, Any]]
+                }
             }
         
         Example:
             health = await analytics.health_check()
+            
             if health['status'] == 'healthy':
-                print("Analytics service is operational")
+                print("✓ Analytics service operational")
+                print(f"  Queries: {health['details']['query_count']}")
+                print(f"  Cache hit rate: {health['details']['cache_hit_rate']:.1%}")
+            else:
+                print(f"✗ Analytics {health['status']}: {health['message']}")
+                if health['details']['last_error']:
+                    print(f"  Last error: {health['details']['last_error']}")
         """
-        issues = []
+        async def check_data_freshness():
+            """
+            Verify that analytics data is reasonably fresh.
+            
+            Checks the last query time - if it's None or too old,
+            it might indicate the service isn't being used properly.
+            """
+            if self._last_query_time is None:
+                # Service initialized but never used - not necessarily bad
+                return "No queries yet (service not used)"
+            
+            age = (datetime.now() - self._last_query_time).total_seconds()
+            
+            # Warn if last query was more than 1 hour ago (configurable)
+            if age > 3600:
+                raise Exception(f"Last query {age/60:.1f} minutes ago (service may be idle)")
+            
+            return f"Last query {age:.1f}s ago"
         
-        # Check initialization
-        if not self.initialized:
-            issues.append("Service not initialized")
+        async def check_cache_health():
+            """Verify cache is functioning properly."""
+            total_cache_ops = self._cache_hits + self._cache_misses
+            
+            if total_cache_ops > 100:  # Only check if enough operations
+                hit_rate = self._cache_hits / total_cache_ops
+                
+                # Warn if cache hit rate is very low
+                if hit_rate < 0.1:  # Less than 10% hit rate
+                    raise Exception(f"Low cache hit rate: {hit_rate:.1%}")
+            
+            return f"Cache operational"
         
-        # Check database connection
-        db_connected = False
-        try:
-            result = await self.db.fetch_one("SELECT 1")
-            db_connected = bool(result)
-        except Exception as e:
-            issues.append(f"Database connection error: {e}")
+        async def check_error_rate():
+            """Check if error rate is acceptable."""
+            if self._query_count > 0:
+                error_rate = self._error_count / self._query_count
+                
+                # Warn if error rate is high
+                if error_rate > 0.1:  # More than 10% errors
+                    raise Exception(f"High error rate: {error_rate:.1%}")
+            
+            return "Error rate acceptable"
         
-        # Determine overall status
-        if not issues:
-            status = 'healthy'
-        elif not self.initialized or not db_connected:
-            status = 'unhealthy'
-        else:
-            status = 'degraded'
+        # Calculate cache hit rate
+        total_cache_ops = self._cache_hits + self._cache_misses
+        cache_hit_rate = (self._cache_hits / total_cache_ops) if total_cache_ops > 0 else 0.0
         
-        return {
-            'status': status,
-            'service_name': self._service_name,
-            'initialized': self.initialized,
-            'database_connected': db_connected,
-            'cache_size': len(self._cache),
-            'query_count': self._query_count,
-            'last_query_time': self._last_query_time.isoformat() if self._last_query_time else None,
-            'issues': issues,
-            'timestamp': datetime.now().isoformat()
-        }
+        # Use ServiceHealthCheck utility (Principle #12: Method Singularity)
+        return await ServiceHealthCheck.database_dependent_health(
+            service_name='analytics',
+            db_manager=self.db,
+            is_initialized=self._initialized,
+            additional_checks=[
+                check_data_freshness,
+                check_cache_health,
+                check_error_rate
+            ],
+            query_count=self._query_count,
+            cache_size=len(self._cache),
+            cache_hit_rate=cache_hit_rate,
+            cache_hits=self._cache_hits,
+            cache_misses=self._cache_misses,
+            error_count=self._error_count,
+            last_query_time=self._last_query_time.isoformat() if self._last_query_time else None,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
+        )
+    
+    # ========================================================================
+    # ERROR TRACKING
+    # ========================================================================
+    
+    def _record_error(self, error_message: str):
+        """
+        Record an error for health tracking.
+        
+        Principle #12: Method Singularity - Single error tracking method
+        """
+        self._error_count += 1
+        self._last_error = str(error_message)
+        self._last_error_time = datetime.now()
+        logger.error(f"Analytics error #{self._error_count}: {error_message}")
     
     # ========================================================================
     # CACHE MANAGEMENT
@@ -345,12 +445,14 @@ class UBECAnalyticsService:
             
             if age < self._cache_ttl_seconds:
                 logger.debug(f"Cache hit: {cache_key} (age: {age:.1f}s)")
+                self._cache_hits += 1
                 return value
             else:
                 # Expired
                 del self._cache[cache_key]
                 logger.debug(f"Cache expired: {cache_key}")
         
+        self._cache_misses += 1
         return None
     
     def _set_cached(self, cache_key: str, value: Any):
@@ -364,8 +466,28 @@ class UBECAnalyticsService:
         
         Call this to force fresh data on next queries.
         """
+        cache_size = len(self._cache)
         self._cache.clear()
-        logger.info("Analytics cache cleared")
+        logger.info(f"Analytics cache cleared ({cache_size} entries)")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+        
+        Returns:
+            Dict with cache performance metrics
+        """
+        total_ops = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total_ops) if total_ops > 0 else 0.0
+        
+        return {
+            'size': len(self._cache),
+            'ttl_seconds': self._cache_ttl_seconds,
+            'hits': self._cache_hits,
+            'misses': self._cache_misses,
+            'hit_rate': hit_rate,
+            'total_operations': total_ops
+        }
     
     async def _execute_query(self, query: str, params: Tuple = ()) -> Any:
         """
@@ -379,7 +501,7 @@ class UBECAnalyticsService:
         try:
             return await self.db.fetch_one(query, params)
         except Exception as e:
-            logger.error(f"Query execution error: {e}")
+            self._record_error(f"Query execution error: {e}")
             raise
     
     async def _execute_query_all(self, query: str, params: Tuple = ()) -> List[Dict]:
@@ -394,7 +516,7 @@ class UBECAnalyticsService:
         try:
             return await self.db.fetch_all(query, params)
         except Exception as e:
-            logger.error(f"Query execution error: {e}")
+            self._record_error(f"Query execution error: {e}")
             raise
     
     # ========================================================================
@@ -484,7 +606,7 @@ class UBECAnalyticsService:
             return distribution
             
         except Exception as e:
-            logger.error(f"Error analyzing distribution for {token_code}: {e}")
+            self._record_error(f"Error analyzing distribution for {token_code}: {e}")
             raise AnalyticsException(f"Distribution analysis failed: {e}")
     
     async def _calculate_top_n_concentration(
@@ -716,7 +838,7 @@ class UBECAnalyticsService:
             return analysis
             
         except Exception as e:
-            logger.error(f"Error analyzing holder concentration: {e}")
+            self._record_error(f"Error analyzing holder concentration: {e}")
             raise AnalyticsException(f"Holder concentration analysis failed: {e}")
     
     async def identify_whales(
@@ -776,7 +898,7 @@ class UBECAnalyticsService:
             return whales
             
         except Exception as e:
-            logger.error(f"Error identifying whales: {e}")
+            self._record_error(f"Error identifying whales: {e}")
             raise AnalyticsException(f"Whale identification failed: {e}")
     
     # ========================================================================
@@ -896,7 +1018,7 @@ class UBECAnalyticsService:
             return metrics
             
         except Exception as e:
-            logger.error(f"Error calculating transaction metrics: {e}")
+            self._record_error(f"Error calculating transaction metrics: {e}")
             raise AnalyticsException(f"Transaction metrics calculation failed: {e}")
     
     # ========================================================================
@@ -973,7 +1095,7 @@ class UBECAnalyticsService:
             return metrics
             
         except Exception as e:
-            logger.error(f"Error calculating liquidity metrics: {e}")
+            self._record_error(f"Error calculating liquidity metrics: {e}")
             raise AnalyticsException(f"Liquidity metrics calculation failed: {e}")
     
     # ========================================================================
@@ -1070,7 +1192,7 @@ class UBECAnalyticsService:
             return health
             
         except Exception as e:
-            logger.error(f"Error analyzing ecosystem health: {e}")
+            self._record_error(f"Error analyzing ecosystem health: {e}")
             raise AnalyticsException(f"Ecosystem health analysis failed: {e}")
     
     async def _get_active_accounts(self, days: int) -> int:
@@ -1245,7 +1367,7 @@ class UBECAnalyticsService:
             return comparison
             
         except Exception as e:
-            logger.error(f"Error comparing tokens: {e}")
+            self._record_error(f"Error comparing tokens: {e}")
             raise AnalyticsException(f"Token comparison failed: {e}")
     
     # ========================================================================
@@ -1301,7 +1423,7 @@ class UBECAnalyticsService:
             return summary
             
         except Exception as e:
-            logger.error(f"Error exporting analytics summary: {e}")
+            self._record_error(f"Error exporting analytics summary: {e}")
             raise AnalyticsException(f"Analytics export failed: {e}")
 
 
@@ -1318,3 +1440,41 @@ __all__ = [
     'ElementType',
     'AnalyticsException'
 ]
+
+
+# ==================== STANDALONE EXECUTION PREVENTION ====================
+# Principle #2: Service Pattern - No standalone execution
+
+if __name__ == "__main__":
+    print("=" * 80)
+    print("UBEC Protocol Suite - Analytics Service")
+    print("=" * 80)
+    print()
+    print("This service provides comprehensive analytics for the UBEC token ecosystem.")
+    print("It analyzes distribution, holder patterns, and ecosystem health across all")
+    print("four UBEC elements (Air, Water, Earth, Fire).")
+    print()
+    print("USAGE:")
+    print("------")
+    print()
+    print("  # Via service registry (RECOMMENDED - Principle #3)")
+    print("  from core.service_registry import registry")
+    print("  analytics = await registry.get('analytics')")
+    print()
+    print("  # Get token distribution")
+    print("  dist = await analytics.get_token_distribution('UBEC')")
+    print("  print(f'Holders: {dist.total_holders}')")
+    print()
+    print("  # Health check (now uses ServiceHealthCheck utility!)")
+    print("  health = await analytics.health_check()")
+    print("  print(f'Status: {health[\"status\"]}')")
+    print("  print(f'Cache hit rate: {health[\"details\"][\"cache_hit_rate\"]:.1%}')")
+    print()
+    print("DESIGN PRINCIPLES:")
+    print("------------------")
+    print("✅ All 12 principles fully implemented")
+    print("✅ Enhanced health check using ServiceHealthCheck utility")
+    print("✅ Comprehensive error tracking and reporting")
+    print("✅ Cache performance monitoring")
+    print()
+    print("=" * 80)

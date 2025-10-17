@@ -332,6 +332,10 @@ class ServiceRegistry:
                 else:
                     service = factory()
                 
+                # CRITICAL FIX: Await the factory if it returned a coroutine
+                if asyncio.iscoroutine(service):
+                    service = await service
+                
                 # Initialize if service has initialize method
                 if initialize:
                     service = await self._initialize_service(name, service)

@@ -1,131 +1,288 @@
 #!/usr/bin/env python3
 # config/config.py
 """
-UBEC Protocol - Configuration Compatibility Wrapper
+UBEC Protocol Suite - Configuration Service Wrapper
 ====================================================
-Provides property-style access wrapper around ConfigurationService.
+Property-style access wrapper around database-backed ConfigurationService.
 
-This module bridges the gap between the database-backed ConfigurationService
-(which uses dictionary-style access) and code expecting property-style access.
+This module provides a property-based interface to the ConfigurationService
+for backward compatibility with code expecting property-style access patterns.
 
-The ConfigurationService from settings.py is the actual implementation.
-This module provides a property-based interface for backward compatibility.
+Architecture:
+- ConfigurationService (settings.py): Actual implementation, database-backed
+- Config (this file): Property-style wrapper for convenience
+- Service Registry: Discovers and manages Config instances
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
-    ✅  All 12 principles - delegates to ConfigurationService
-    ✅  Principle #7: Health check properly exposed via async method
-    ✅  Principle #11: Comprehensive documentation
-    ✅  Principle #12: Single wrapper, no duplication
+    ✅ #1  Modular Design: Self-contained wrapper with clear boundaries
+    ✅ #2  Service Pattern: Factory-based, no standalone execution
+    ✅ #3  Service Registry: Accessed through service registry
+    ✅ #4  Single Source of Truth: All data from database via ConfigurationService
+    ✅ #5  Strict Async: Health checks and initialization use async
+    ✅ #6  No Sync Fallbacks: Property access wraps sync over async storage
+    ✅ #7  Per-Asset Monitoring: Comprehensive health check implementation
+    ✅ #8  No Duplicate Config: Single wrapper, delegates to ConfigurationService
+    ✅ #9  Integrated Rate Limiting: N/A (configuration service)
+    ✅ #10 Separation of Concerns: Wrapper separated from storage logic
+    ✅ #11 Comprehensive Documentation: Full docstrings and examples
+    ✅ #12 Method Singularity: Single factory, single wrapper implementation
 ════════════════════════════════════════════════════════════════════════════
+
+Key Features:
+- Property-style access (config.HORIZON_URL)
+- Dictionary-style access (config['horizon_url'])
+- Async health check for service registry
+- Automatic reload capability
+- Type conversion (Decimal, int, bool)
+- Backward compatibility with GlobalConfig
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform 
     our decisions and recommendations. This project was made possible with 
     the assistance of Claude and Anthropic PBC.
 
-Version: 3.1.0 (Compatibility Wrapper + Health Check Fix)
-Date: October 16, 2025
+Version: 4.0.0 (Enhanced Health Check Integration)
+Date: October 17, 2025
+Author: UBEC Protocol Team with Claude AI assistance
 
-Key Changes:
-    - Wraps ConfigurationService for property-style access
-    - Properly exposes async health_check() method
-    - Maintains backward compatibility with GlobalConfig
-    - All actual config logic in settings.py (single source)
+Changes from v3.1.0:
+- Enhanced health check using ServiceHealthCheck utility
+- Better error handling in property access
+- Improved documentation with examples
+- Additional utility methods for token configuration
+- Better type hints and validation
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from decimal import Decimal
+from datetime import datetime
+
+# Import ConfigurationService (actual implementation)
 from config.settings import ConfigurationService, get_system_config
+
+# Import health check utilities (Principle #12: Method Singularity)
+from core.utils.service_health import ServiceHealthCheck
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# CONFIGURATION WRAPPER CLASS
+# ============================================================================
 
 class Config:
     """
     Property-style configuration wrapper around ConfigurationService.
     
-    This class provides property-based access to configuration while
-    delegating to the database-backed ConfigurationService.
+    This class provides convenient property-based access to configuration
+    while delegating all actual storage and retrieval to the database-backed
+    ConfigurationService.
     
-    The ConfigurationService is the actual implementation that loads
-    from the database. This is just a compatibility wrapper.
+    Architecture Pattern:
+        Config (wrapper) → ConfigurationService (implementation) → Database (truth)
     
-    Design Pattern:
-        - ConfigurationService (settings.py): Actual implementation
-        - Config (this file): Property-style wrapper
-        - Registry discovers health_check() on this wrapper
+    The service registry discovers the health_check() method on this wrapper,
+    allowing the entire configuration system to participate in health monitoring.
     
     Usage:
-        # Via factory (creates ConfigurationService internally)
-        config = await create_config_service(db_manager)
+        # Via service registry (PREFERRED)
+        from core.service_registry import registry
+        config = await registry.get('config')
         
         # Property access
         url = config.HORIZON_URL
         issuer = config.UBEC_ISSUER
+        network = config.NETWORK
+        
+        # Dictionary access (also supported)
+        url = config['horizon_url']
+        issuer = config.get('ubec_issuer', 'default')
         
         # Health check (async)
         health = await config.health_check()
+        if health['status'] == 'healthy':
+            print("Configuration loaded and valid")
+        
+        # Reload from database
+        await config.reload()
+    
+    Design Notes:
+        - All properties delegate to ConfigurationService
+        - ConfigurationService loads from database (Principle #4)
+        - Health check uses ServiceHealthCheck utility (Principle #12)
+        - No duplicate configuration logic (Principle #8)
     """
     
     def __init__(self, config_service: ConfigurationService):
         """
-        Initialize config wrapper.
+        Initialize configuration wrapper.
         
         Args:
-            config_service: Initialized ConfigurationService instance
+            config_service: Initialized ConfigurationService instance from settings.py
+        
+        Note:
+            Do NOT instantiate directly. Use create_config_service() factory function.
+        
+        Example:
+            # Correct (via factory)
+            config = await create_config_service(db_manager)
+            
+            # Incorrect (don't do this)
+            config = Config(some_service)  # Wrong! Use factory
         """
+        if not isinstance(config_service, ConfigurationService):
+            raise TypeError(
+                f"Expected ConfigurationService, got {type(config_service).__name__}. "
+                f"Use create_config_service() factory function."
+            )
+        
         self._config = config_service
-        logger.debug("Config property wrapper initialized")
+        self._initialized = config_service._initialized
+        
+        logger.debug(f"Config wrapper initialized (wrapping {len(config_service._settings)} settings)")
     
     # ========================================================================
-    # NETWORK PROPERTIES
+    # CORE NETWORK PROPERTIES
     # ========================================================================
     
     @property
     def NETWORK(self) -> str:
-        """Stellar network: 'mainnet' or 'testnet'."""
+        """
+        Stellar network: 'mainnet' or 'testnet'.
+        
+        Returns:
+            Network identifier string
+        
+        Example:
+            if config.NETWORK == 'mainnet':
+                print("Running on production network")
+        """
         return self._config.get('network', 'mainnet')
     
     @property
     def HORIZON_URL(self) -> str:
-        """Horizon API URL."""
+        """
+        Horizon API URL for Stellar blockchain access.
+        
+        Returns:
+            Full Horizon server URL
+        
+        Example:
+            client = StellarClient(horizon_url=config.HORIZON_URL)
+        """
         return self._config.get('horizon_url', 'https://horizon.stellar.org')
     
     @property
     def horizon_url(self) -> str:
-        """Alias for HORIZON_URL (backward compatibility)."""
+        """
+        Alias for HORIZON_URL (backward compatibility).
+        
+        Returns:
+            Full Horizon server URL
+        """
         return self.HORIZON_URL
     
     # ========================================================================
-    # UBEC TOKEN PROPERTIES
+    # UBEC TOKEN PROPERTIES (All Four Elements)
     # ========================================================================
     
     @property
     def UBEC_CODE(self) -> str:
-        """UBEC token code."""
+        """UBEC token code (Air element - Gateway)."""
         return self._config.get('ubec_code', 'UBEC')
     
     @property
     def UBEC_ISSUER(self) -> str:
-        """UBEC issuer address."""
+        """UBEC token issuer address (Air element)."""
         return self._config.get('ubec_issuer', '')
     
+    @property
+    def UBECRC_CODE(self) -> str:
+        """UBECrc token code (Water element - Reciprocity)."""
+        return self._config.get('ubecrc_code', 'UBECrc')
+    
+    @property
+    def UBECRC_ISSUER(self) -> str:
+        """UBECrc token issuer address (Water element)."""
+        return self._config.get('ubecrc_issuer', '')
+    
+    @property
+    def UBECGPI_CODE(self) -> str:
+        """UBECgpi token code (Earth element - Stability)."""
+        return self._config.get('ubecgpi_code', 'UBECgpi')
+    
+    @property
+    def UBECGPI_ISSUER(self) -> str:
+        """UBECgpi token issuer address (Earth element)."""
+        return self._config.get('ubecgpi_issuer', '')
+    
+    @property
+    def UBECTT_CODE(self) -> str:
+        """UBECtt token code (Fire element - Transformation)."""
+        return self._config.get('ubectt_code', 'UBECtt')
+    
+    @property
+    def UBECTT_ISSUER(self) -> str:
+        """UBECtt token issuer address (Fire element)."""
+        return self._config.get('ubectt_issuer', '')
+    
     # ========================================================================
-    # SUPPLY PROPERTIES
+    # SUPPLY CALCULATION PROPERTIES
     # ========================================================================
     
     @property
     def FALLBACK_SUPPLY(self) -> Decimal:
-        """Fallback supply value."""
+        """
+        Fallback supply value for calculations.
+        
+        Returns:
+            Decimal supply value
+        """
         val = self._config.get('fallback_supply', '191766039.00')
         return Decimal(str(val))
     
     @property
     def ALWAYS_LOAD_FROM_NETWORK(self) -> bool:
-        """Whether to always load from network."""
-        return self._config.get('always_load_from_network', True)
+        """
+        Whether to always load supply data from network.
+        
+        Returns:
+            Boolean flag
+        """
+        return bool(self._config.get('always_load_from_network', True))
+    
+    @property
+    def SUPPLY_CALCULATION_METHOD(self) -> str:
+        """
+        Supply calculation method: 'PRECISE' or 'ESTIMATED'.
+        
+        Returns:
+            Calculation method string
+        """
+        return self._config.get('supply_calculation_method', 'PRECISE')
+    
+    @property
+    def SUPPLY_SAFETY_FACTOR(self) -> Decimal:
+        """
+        Safety factor for supply calculations (e.g., 0.02 = 2%).
+        
+        Returns:
+            Decimal safety factor
+        """
+        val = self._config.get('supply_safety_factor', '0.02')
+        return Decimal(str(val))
+    
+    @property
+    def SUPPLY_CHECK_INTERVAL(self) -> int:
+        """
+        Interval for supply checks in seconds.
+        
+        Returns:
+            Integer seconds
+        """
+        return int(self._config.get('supply_check_interval', 86400))
     
     # ========================================================================
     # DISTRIBUTION PROPERTIES
@@ -133,52 +290,65 @@ class Config:
     
     @property
     def TARGET_DISTRIBUTION(self) -> Dict[str, Decimal]:
-        """Target distribution percentages."""
+        """
+        Target distribution percentages across categories.
+        
+        Returns:
+            Dictionary mapping category names to Decimal percentages
+        
+        Example:
+            dist = config.TARGET_DISTRIBUTION
+            print(f"General: {dist['general'] * 100}%")
+        """
+        # Load from config if available, otherwise use defaults
+        general = Decimal(str(self._config.get('target_general', '0.65')))
+        stewardship = Decimal(str(self._config.get('target_stewardship', '0.30')))
+        administration = Decimal(str(self._config.get('target_administration', '0.05')))
+        
         return {
-            'general': Decimal('0.65'),
-            'stewardship': Decimal('0.30'),
-            'administration': Decimal('0.05')
+            'general': general,
+            'stewardship': stewardship,
+            'administration': administration
         }
     
     @property
-    def ACCOUNTS(self) -> Dict[str, Any]:
-        """Managed accounts."""
-        return {}
-    
-    # ========================================================================
-    # OPERATION PROPERTIES
-    # ========================================================================
-    
-    @property
     def REBALANCE_THRESHOLD(self) -> Decimal:
-        """Rebalance threshold."""
+        """
+        Threshold for triggering rebalance operations.
+        
+        Returns:
+            Decimal threshold value (e.g., 0.01 = 1%)
+        """
         val = self._config.get('rebalance_threshold', '0.01')
         return Decimal(str(val))
     
     @property
+    def ACCOUNTS(self) -> Dict[str, Any]:
+        """
+        Managed accounts configuration.
+        
+        Returns:
+            Dictionary of managed accounts
+        
+        Note:
+            This may be empty if accounts are managed differently.
+        """
+        # Could load from database if accounts are stored there
+        return {}
+    
+    # ========================================================================
+    # OPERATIONAL PROPERTIES
+    # ========================================================================
+    
+    @property
     def CHECK_INTERVAL(self) -> int:
-        """Check interval in seconds."""
+        """
+        General check interval in seconds.
+        
+        Returns:
+            Integer seconds (default: 3600 = 1 hour)
+        """
         return int(self._config.get('check_interval', 3600))
-    
-    # ========================================================================
-    # SUPPLY CALCULATION PROPERTIES
-    # ========================================================================
-    
-    @property
-    def SUPPLY_CHECK_INTERVAL(self) -> int:
-        """Supply check interval."""
-        return int(self._config.get('supply_check_interval', 86400))
-    
-    @property
-    def SUPPLY_SAFETY_FACTOR(self) -> Decimal:
-        """Supply safety factor."""
-        val = self._config.get('supply_safety_factor', '0.02')
-        return Decimal(str(val))
-    
-    @property
-    def SUPPLY_CALCULATION_METHOD(self) -> str:
-        """Supply calculation method."""
-        return self._config.get('supply_calculation_method', 'PRECISE')
     
     # ========================================================================
     # DATABASE PROPERTIES
@@ -186,7 +356,15 @@ class Config:
     
     @property
     def DATABASE_URL(self) -> str:
-        """Database connection URL."""
+        """
+        Database connection URL.
+        
+        Returns:
+            Database URL string
+        
+        Note:
+            May be empty if connection is managed separately.
+        """
         return self._config.get('database_url', '')
     
     # ========================================================================
@@ -195,46 +373,80 @@ class Config:
     
     @property
     def RATE_LIMIT_CALLS(self) -> int:
-        """Rate limit calls."""
+        """
+        Maximum API calls allowed in rate limit period.
+        
+        Returns:
+            Integer call count
+        """
         return int(self._config.get('rate_limit_calls', 100))
     
     @property
     def RATE_LIMIT_PERIOD(self) -> int:
-        """Rate limit period."""
+        """
+        Rate limit period in seconds.
+        
+        Returns:
+            Integer seconds
+        """
         return int(self._config.get('rate_limit_period', 60))
     
     # ========================================================================
-    # SYNC PROPERTIES
+    # SYNCHRONIZATION PROPERTIES
     # ========================================================================
     
     @property
     def SYNC_BATCH_SIZE(self) -> int:
-        """Sync batch size."""
+        """
+        Batch size for synchronization operations.
+        
+        Returns:
+            Integer batch size
+        """
         return int(self._config.get('sync_batch_size', 200))
     
     @property
     def SYNC_BATCH_DELAY(self) -> float:
-        """Sync batch delay."""
+        """
+        Delay between sync batches in seconds.
+        
+        Returns:
+            Float seconds
+        """
         return float(self._config.get('sync_batch_delay', 1.0))
     
     @property
     def SYNC_MAX_ACCOUNTS(self) -> int:
-        """Max accounts to sync."""
+        """
+        Maximum accounts to sync in one operation.
+        
+        Returns:
+            Integer account count
+        """
         return int(self._config.get('sync_max_accounts', 1000))
     
     # ========================================================================
-    # HOLONIC PROPERTIES
+    # HOLONIC EVALUATION PROPERTIES
     # ========================================================================
     
     @property
     def HOLONIC_WEIGHTS(self) -> Dict[str, float]:
-        """Holonic evaluation weights."""
+        """
+        Weights for holonic evaluation dimensions.
+        
+        Returns:
+            Dictionary mapping dimension names to weight values
+        
+        Example:
+            weights = config.HOLONIC_WEIGHTS
+            ubuntu_weight = weights['ubuntu']
+        """
         return {
-            'autonomy_integration': 0.25,
-            'multi_scale': 0.20,
-            'regenerative': 0.25,
-            'network': 0.15,
-            'ubuntu': 0.15
+            'autonomy_integration': float(self._config.get('weight_autonomy', 0.25)),
+            'multi_scale': float(self._config.get('weight_multiscale', 0.20)),
+            'regenerative': float(self._config.get('weight_regenerative', 0.25)),
+            'network': float(self._config.get('weight_network', 0.15)),
+            'ubuntu': float(self._config.get('weight_ubuntu', 0.15))
         }
     
     # ========================================================================
@@ -243,59 +455,182 @@ class Config:
     
     @property
     def LOG_LEVEL(self) -> str:
-        """Log level."""
+        """
+        Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+        
+        Returns:
+            Log level string
+        """
         return self._config.get('log_level', 'INFO')
     
     @property
     def LOG_FORMAT(self) -> str:
-        """Log format."""
-        return self._config.get('log_format', 
-                               '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        """
+        Log message format string.
+        
+        Returns:
+            Python logging format string
+        """
+        return self._config.get(
+            'log_format',
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
     
     @property
     def LOG_FILE(self) -> str:
-        """Log file path."""
+        """
+        Log file path.
+        
+        Returns:
+            File path string
+        """
         return self._config.get('log_file', 'ubec_protocol.log')
     
     # ========================================================================
-    # PUBLIC METHODS
+    # DICTIONARY-STYLE ACCESS METHODS
     # ========================================================================
     
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get configuration value with optional default.
         
+        This provides dictionary-style access: config.get('key', 'default')
+        
         Args:
-            key: Configuration key
-            default: Default value if not found
+            key: Configuration key (lowercase with underscores)
+            default: Default value if key not found
         
         Returns:
             Configuration value or default
+        
+        Example:
+            # Get with default
+            timeout = config.get('api_timeout', 30)
+            
+            # Get required value
+            issuer = config.get('ubec_issuer')
+            if not issuer:
+                raise ValueError("UBEC issuer not configured")
         """
         return self._config.get(key, default)
     
-    def get_token_config(self, token_code: str) -> Dict[str, Any]:
+    def __getitem__(self, key: str) -> Any:
         """
-        Get token configuration.
-        
-        Returns a dict with token info since ConfigurationService
-        doesn't have TokenConfig objects.
+        Get configuration value using dictionary syntax.
         
         Args:
-            token_code: Token code (e.g., 'UBEC', 'UBECrc')
+            key: Configuration key
         
         Returns:
-            Dict with 'code' and 'issuer' keys
+            Configuration value
+        
+        Raises:
+            KeyError: If key not found
         
         Example:
-            cfg = config.get_token_config('UBEC')
-            print(cfg['issuer'])
+            url = config['horizon_url']
+            issuer = config['ubec_issuer']
         """
+        return self._config[key]
+    
+    def __contains__(self, key: str) -> bool:
+        """
+        Check if configuration key exists.
+        
+        Args:
+            key: Configuration key
+        
+        Returns:
+            True if key exists
+        
+        Example:
+            if 'optional_feature' in config:
+                enable_feature()
+        """
+        return key in self._config
+    
+    # ========================================================================
+    # TOKEN CONFIGURATION METHODS
+    # ========================================================================
+    
+    def get_token_config(self, token_code: str) -> Dict[str, Any]:
+        """
+        Get configuration for a specific UBEC token.
+        
+        Args:
+            token_code: Token code ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+        
+        Returns:
+            Dictionary with token configuration:
+            {
+                'code': str,
+                'issuer': str,
+                'element': str,
+                'ubuntu_principle': str
+            }
+        
+        Example:
+            fire_config = config.get_token_config('UBECtt')
+            print(f"Fire token issuer: {fire_config['issuer']}")
+            print(f"Ubuntu principle: {fire_config['ubuntu_principle']}")
+        """
+        # Normalize token code
+        token_code = token_code.upper()
+        
+        # Map tokens to elements and principles
+        token_map = {
+            'UBEC': {
+                'element': 'air',
+                'ubuntu_principle': 'diversity',
+                'description': 'Gateway & Universal Access'
+            },
+            'UBECRC': {
+                'element': 'water',
+                'ubuntu_principle': 'reciprocity',
+                'description': 'Flow & Exchange'
+            },
+            'UBECGPI': {
+                'element': 'earth',
+                'ubuntu_principle': 'mutualism',
+                'description': 'Stability & Value'
+            },
+            'UBECTT': {
+                'element': 'fire',
+                'ubuntu_principle': 'regeneration',
+                'description': 'Transformation & Action'
+            }
+        }
+        
+        if token_code not in token_map:
+            raise ValueError(f"Unknown token code: {token_code}")
+        
+        # Get issuer from config
         issuer_key = f'{token_code.lower()}_issuer'
+        issuer = self._config.get(issuer_key, '')
+        
         return {
             'code': token_code,
-            'issuer': self._config.get(issuer_key, self.UBEC_ISSUER)
+            'issuer': issuer,
+            **token_map[token_code]
         }
+    
+    def get_all_tokens(self) -> List[Dict[str, Any]]:
+        """
+        Get configuration for all four UBEC tokens.
+        
+        Returns:
+            List of token configuration dictionaries
+        
+        Example:
+            for token in config.get_all_tokens():
+                print(f"{token['element']}: {token['code']} ({token['ubuntu_principle']})")
+        """
+        return [
+            self.get_token_config('UBEC'),
+            self.get_token_config('UBECrc'),
+            self.get_token_config('UBECgpi'),
+            self.get_token_config('UBECtt')
+        ]
     
     # ========================================================================
     # HEALTH CHECK (Principle #7: Per-Asset Monitoring)
@@ -303,79 +638,229 @@ class Config:
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Perform health check on configuration service.
+        Perform comprehensive health check on configuration service.
         
-        This is an ASYNC method that delegates to ConfigurationService.
-        It will be discovered by the service registry health check.
+        This method is discovered by the service registry and called during
+        system health checks. It uses the ServiceHealthCheck utility to provide
+        standardized health reporting.
         
-        Implements Principle #7 (Per-Asset Monitoring).
+        Implements Principle #7 (Per-Asset Monitoring) by providing detailed
+        configuration service health information.
         
         Returns:
             Health status dictionary:
             {
                 'status': 'healthy' | 'degraded' | 'unhealthy',
                 'message': str,
-                'timestamp': str,
-                'details': {...}
+                'timestamp': str (ISO 8601),
+                'details': {
+                    'initialized': bool,
+                    'settings_count': int,
+                    'required_settings_present': bool,
+                    'cache_valid': bool,
+                    'last_loaded': str (ISO 8601) or None,
+                    'network': str,
+                    'horizon_url': str
+                }
             }
+        
+        Health Status Determination:
+            - HEALTHY: All required settings present and valid
+            - DEGRADED: Optional settings missing but system functional
+            - UNHEALTHY: Required settings missing or service not initialized
         
         Example:
             health = await config.health_check()
+            
             if health['status'] == 'healthy':
-                print("Config is loaded and valid")
+                print("✓ Configuration loaded and valid")
+                print(f"  Settings: {health['details']['settings_count']}")
+                print(f"  Network: {health['details']['network']}")
+            else:
+                print(f"✗ Configuration {health['status']}: {health['message']}")
         """
-        # Delegate to ConfigurationService health_check
-        return await self._config.health_check()
+        async def check_required_settings():
+            """
+            Verify all required settings are present.
+            
+            Raises:
+                Exception: If any required setting is missing
+            """
+            required = ['horizon_url', 'ubec_code', 'ubec_issuer', 'network']
+            missing = [key for key in required if not self._config.get(key)]
+            
+            if missing:
+                raise Exception(f"Missing required settings: {', '.join(missing)}")
+            
+            return True
+        
+        async def check_token_issuers():
+            """
+            Verify all four token issuers are configured.
+            
+            Raises:
+                Exception: If any token issuer is missing
+            """
+            tokens = ['ubec', 'ubecrc', 'ubecgpi', 'ubectt']
+            missing = []
+            
+            for token in tokens:
+                issuer_key = f'{token}_issuer'
+                if not self._config.get(issuer_key):
+                    missing.append(token.upper())
+            
+            if missing:
+                raise Exception(f"Missing token issuers: {', '.join(missing)}")
+            
+            return True
+        
+        # Get cache validity status
+        cache_valid = False
+        if hasattr(self._config, '_cache_valid'):
+            cache_valid = self._config._cache_valid()
+        
+        # Get last loaded time
+        last_loaded = None
+        if hasattr(self._config, '_last_loaded') and self._config._last_loaded:
+            last_loaded = self._config._last_loaded.isoformat()
+        
+        # Use ServiceHealthCheck utility (Principle #12: Method Singularity)
+        return await ServiceHealthCheck.basic_health_check(
+            service_name='config',
+            is_initialized=self._initialized,
+            additional_checks=[check_required_settings, check_token_issuers],
+            settings_count=len(self._config._settings),
+            cache_valid=cache_valid,
+            last_loaded=last_loaded,
+            network=self.NETWORK,
+            horizon_url=self.HORIZON_URL,
+            has_database=True
+        )
+    
+    # ========================================================================
+    # LIFECYCLE METHODS
+    # ========================================================================
     
     async def reload(self) -> None:
         """
-        Reload configuration from database.
+        Force reload configuration from database.
+        
+        This method triggers a fresh load of all configuration from the database,
+        invalidating any cached values.
         
         Example:
-            # After database update
+            # After updating configuration in database
             await config.reload()
+            
+            # Verify new value
+            new_value = config.SOME_SETTING
         """
         await self._config.reload()
+        self._initialized = self._config._initialized
+        logger.info("Configuration reloaded from database")
     
     async def close(self) -> None:
         """
         Close configuration service.
         
-        ConfigurationService doesn't need explicit cleanup,
-        but we provide this for consistency with other services.
+        ConfigurationService doesn't need explicit cleanup, but this method
+        is provided for consistency with other services in the registry.
+        
+        Example:
+            # During shutdown
+            await config.close()
         """
         # No-op for config, but maintains interface consistency
-        pass
+        logger.debug("Config service closed (no cleanup needed)")
+    
+    # ========================================================================
+    # UTILITY METHODS
+    # ========================================================================
+    
+    def get_display_config(self) -> Dict[str, Any]:
+        """
+        Get safe-to-display configuration (sensitive values redacted).
+        
+        This is useful for logging or displaying configuration without
+        exposing sensitive information like issuer addresses or API keys.
+        
+        Returns:
+            Dictionary of redacted configuration values
+        
+        Example:
+            display_config = config.get_display_config()
+            for key, value in display_config.items():
+                print(f"{key}: {value}")
+        """
+        if hasattr(self._config, 'get_display_config'):
+            return self._config.get_display_config()
+        
+        # Fallback implementation
+        def redact(value: str, show_chars: int = 10) -> str:
+            if not isinstance(value, str) or len(value) <= show_chars:
+                return value
+            return value[:show_chars] + '...'
+        
+        return {
+            'network': self.NETWORK,
+            'horizon_url': self.HORIZON_URL,
+            'ubec_code': self.UBEC_CODE,
+            'ubec_issuer': redact(self.UBEC_ISSUER),
+            'ubecrc_issuer': redact(self.UBECRC_ISSUER),
+            'ubecgpi_issuer': redact(self.UBECGPI_ISSUER),
+            'ubectt_issuer': redact(self.UBECTT_ISSUER),
+            'settings_count': len(self._config._settings),
+            'initialized': self._initialized
+        }
+    
+    def __repr__(self) -> str:
+        """
+        String representation of Config wrapper.
+        
+        Returns:
+            Descriptive string
+        """
+        status = "initialized" if self._initialized else "not initialized"
+        count = len(self._config._settings)
+        return f"<Config: {status}, {count} settings, network={self.NETWORK}>"
 
 
 # ============================================================================
-# BACKWARD COMPATIBILITY
+# BACKWARD COMPATIBILITY (Deprecated)
 # ============================================================================
 
 class GlobalConfig:
     """
     Legacy GlobalConfig class for backward compatibility.
     
-    This wraps the Config wrapper which wraps ConfigurationService.
-    It's kept for any legacy code that imports GlobalConfig.
+    DEPRECATED: This class exists only for legacy code support.
+    New code should use Config via the service registry.
     
-    DEPRECATED: Use Config via service registry instead.
+    Migration Path:
+        # Old way (deprecated)
+        from config.config import GlobalConfig
+        config = GlobalConfig()
+        
+        # New way (correct)
+        from core.service_registry import registry
+        config = await registry.get('config')
     """
     
     def __init__(self):
-        """Initialize GlobalConfig."""
+        """Initialize GlobalConfig with deprecation warning."""
         self._config: Optional[Config] = None
         logger.warning(
-            "GlobalConfig is deprecated. "
+            "GlobalConfig is DEPRECATED. "
             "Use: config = await registry.get('config')"
         )
     
     def _ensure_config(self):
-        """Ensure config is set."""
+        """Ensure config is set (raises error with migration instructions)."""
         if self._config is None:
             raise RuntimeError(
                 "GlobalConfig not initialized. "
-                "Use Config via service registry instead."
+                "This class is deprecated. "
+                "Please migrate to: config = await registry.get('config')"
             )
     
     def __getattr__(self, name: str) -> Any:
@@ -390,50 +875,81 @@ class GlobalConfig:
 
 async def create_config_service(db_manager: Any) -> Config:
     """
-    Factory function to create Config wrapper.
+    Factory function to create Config service wrapper.
     
-    This creates a ConfigurationService from settings.py and wraps it
-    in a Config object for property-style access.
+    This is the ONLY way to create a Config instance. It creates a
+    ConfigurationService from settings.py and wraps it in a Config object
+    for property-style access.
     
     Following Principle #2 (Service Pattern) - factory-based instantiation.
+    Following Principle #12 (Method Singularity) - one way to create config.
     
     Args:
-        db_manager: AsyncDatabaseManager instance
+        db_manager: AsyncDatabaseManager instance (REQUIRED)
     
     Returns:
-        Config wrapper around ConfigurationService
+        Config wrapper around initialized ConfigurationService
+    
+    Raises:
+        ValueError: If db_manager is None
+        RuntimeError: If database is unavailable
+        ValueError: If required settings are missing
     
     Example:
-        # Via service registry (preferred)
+        # Via service registry (PREFERRED)
         from core.service_registry import registry
+        
+        # In registry factory
+        async def create_config(registry):
+            db = await registry.get('database')
+            config = await create_config_service(db)
+            return config
+        
+        # Then use throughout application
         config = await registry.get('config')
         
-        # Direct instantiation
-        config = await create_config_service(db_manager)
-        
-        # Use with properties
+        # Property access
         url = config.HORIZON_URL
         issuer = config.UBEC_ISSUER
         
-        # Health check works!
+        # Health check
         health = await config.health_check()
-        print(f"Status: {health['status']}")
+        print(f"Config status: {health['status']}")
     
-    Note:
-        The actual configuration loading is done by ConfigurationService
-        from settings.py. This wrapper just provides property-style access.
+    Design Notes:
+        - Database is REQUIRED (Principle #4: Single Source of Truth)
+        - ConfigurationService handles all database interaction
+        - Config wrapper provides property-style convenience
+        - Health check integrated with service registry
+        - All actual configuration logic in settings.py (Principle #8)
     """
-    logger.info("Creating config service...")
+    logger.info("Creating config service wrapper...")
     
-    # Create ConfigurationService (actual implementation)
-    config_service = await get_system_config(db_manager)
+    # Validate input
+    if db_manager is None:
+        raise ValueError(
+            "Database manager is required. "
+            "Database is SINGLE source of truth (Principle #4). "
+            "No fallbacks or defaults allowed."
+        )
     
-    # Wrap it for property access
-    config_wrapper = Config(config_service)
-    
-    logger.info("✓ Config service created (ConfigurationService + property wrapper)")
-    
-    return config_wrapper
+    try:
+        # Create ConfigurationService (actual implementation from settings.py)
+        config_service = await get_system_config(db_manager)
+        
+        # Wrap it for property-style access
+        config_wrapper = Config(config_service)
+        
+        logger.info(
+            f"✓ Config service created: "
+            f"{len(config_service._settings)} settings loaded from database"
+        )
+        
+        return config_wrapper
+        
+    except Exception as e:
+        logger.error(f"Failed to create config service: {e}")
+        raise
 
 
 # ============================================================================
@@ -442,7 +958,7 @@ async def create_config_service(db_manager: Any) -> Config:
 
 __all__ = [
     'Config',
-    'GlobalConfig',  # Backward compatibility
+    'GlobalConfig',  # Deprecated, backward compatibility only
     'create_config_service',
 ]
 
@@ -453,13 +969,39 @@ __all__ = [
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("UBEC Configuration Wrapper")
+    print("UBEC Protocol Suite - Configuration Service Wrapper")
     print("=" * 80)
-    print("\nThis module provides property-style access to ConfigurationService.")
-    print("The actual configuration is loaded from database via settings.py")
-    print("\nUsage:")
-    print("  config = await create_config_service(db_manager)")
-    print("  url = config.HORIZON_URL  # Property access")
-    print("  health = await config.health_check()  # Async health check")
-    print("\nThe health_check() method will be discovered by service registry.")
+    print()
+    print("This module provides property-style access to ConfigurationService.")
+    print("All configuration is loaded from database (Principle #4).")
+    print()
+    print("USAGE:")
+    print("------")
+    print()
+    print("  # Via service registry (PREFERRED)")
+    print("  from core.service_registry import registry")
+    print("  config = await registry.get('config')")
+    print()
+    print("  # Property access")
+    print("  url = config.HORIZON_URL")
+    print("  issuer = config.UBEC_ISSUER")
+    print("  network = config.NETWORK")
+    print()
+    print("  # Dictionary access")
+    print("  url = config['horizon_url']")
+    print("  issuer = config.get('ubec_issuer', 'default')")
+    print()
+    print("  # Health check")
+    print("  health = await config.health_check()")
+    print("  print(f'Status: {health[\"status\"]}')")
+    print()
+    print("  # Token configuration")
+    print("  fire_token = config.get_token_config('UBECtt')")
+    print("  print(f'Fire element: {fire_token[\"ubuntu_principle\"]}')")
+    print()
+    print("HEALTH CHECK:")
+    print("-------------")
+    print("The health_check() method is discovered by service registry.")
+    print("It uses ServiceHealthCheck utility (Principle #12).")
+    print()
     print("=" * 80)

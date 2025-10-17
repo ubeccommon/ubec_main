@@ -1,10 +1,5 @@
 """
-UBEC Protocol Configuration Package
-
-Root configuration for the UBEC protocol suite.
+UBEC Protocol Suite
 """
-
-from .config import UBECConfig
-from .logging import setup_logging, get_logger
-
-__all__ = ['UBECConfig', 'setup_logging', 'get_logger']
+__version__ = "7.0.0"
+__all__ = []

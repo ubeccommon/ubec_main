@@ -557,13 +557,12 @@ class ServiceRegistry:
         # Initialize graph
         for service in all_services:
             graph[service] = self._dependencies.get(service, [])
-            in_degree[service] = 0
         
-        # Calculate in-degrees
+        # Calculate in-degrees - FIXED!
+        # A service's in-degree is the number of dependencies it has
+        # Services with 0 dependencies can be initialized first
         for service in all_services:
-            for dep in graph[service]:
-                if dep in in_degree:
-                    in_degree[dep] += 1
+            in_degree[service] = len(graph[service])
         
         # Topological sort using Kahn's algorithm
         queue = [s for s in all_services if in_degree[s] == 0]

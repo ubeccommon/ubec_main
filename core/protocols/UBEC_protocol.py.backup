@@ -715,7 +715,7 @@ class UBECProtocolService:
 # ==================== SERVICE FACTORY ====================
 # Principle 2: Service Pattern - Factory for instantiation
 
-def create_ubec_service(
+async def create_ubec_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,

@@ -15,10 +15,10 @@ This module implements the service pattern with:
 - Database as single source of truth
 - Built-in rate limiting
 - In-memory caching with TTL
-- Comprehensive health monitoring
+- Comprehensive health monitoring using ServiceHealthCheck utility
 
 Design Principles Compliance:
-════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
     ✅ 1.  Modular Design: Self-contained service with clear boundaries
     ✅ 2.  Service Pattern: No standalone execution, factory-based instantiation
     ✅ 3.  Service Registry: Accessed through centralized registry
@@ -30,8 +30,8 @@ Design Principles Compliance:
     ✅ 9.  Rate Limiting: Built-in API rate limiting
     ✅ 10. Separation of Concerns: Order book logic separated from data access
     ✅ 11. Documentation: Comprehensive docstrings and inline comments
-    ✅ 12. Method Singularity: No duplicate methods
-════════════════════════════════════════════════════════════════════════════
+    ✅ 12. Method Singularity: No duplicate methods, uses ServiceHealthCheck utility
+══════════════════════════════════════════════════════════════════════════════
 
 Usage:
     from ubec_orderbook_service import create_orderbook_service
@@ -56,10 +56,17 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.1.0 (Enhanced Health Check Support)
-Date: October 16, 2025
+Version: 2.2.0 (Standardized Health Check Pattern)
+Date: October 17, 2025
 
 Changelog:
+    v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
+           - Implements Principle #12: Method Singularity with shared utility
+           - Removed custom health_check() implementation
+           - Now uses ServiceHealthCheck.api_dependent_health()
+           - Added enhanced background task monitoring
+           - Cleaner, more maintainable code with consistent patterns
+           - Full compliance with health check implementation guide
     v2.1.0 - Enhanced health_check() method for comprehensive monitoring
            - Implements Principle #7: Per-Asset Monitoring with detailed checks
            - Added initialization tracking
@@ -77,6 +84,9 @@ from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 import json
+
+# Import standardized health check utility (Principle #12: Method Singularity)
+from core.utils.service_health import ServiceHealthCheck
 
 # Configure precision for decimal calculations
 getcontext().prec = 10
@@ -286,6 +296,7 @@ class UBECOrderBookService:
         - Principle 4: Single Source of Truth - Database-driven
         - Principle 5: Strict Async - All I/O operations async
         - Principle 10: Separation of Concerns - Clear layer separation
+        - Principle 12: Method Singularity - Uses ServiceHealthCheck utility
     """
     
     def __init__(
@@ -410,190 +421,131 @@ class UBECOrderBookService:
     
     # ==================== HEALTH CHECK ====================
     # Principle 7: Per-Asset Monitoring with health checks
+    # Principle 12: Method Singularity - Uses standardized utility
     
     async def health_check(self) -> Dict[str, Any]:
         """
         Perform comprehensive health check on order book service.
         
-        Implements Principle #7: Per-Asset Monitoring with Execution Minimums.
+        Uses standardized ServiceHealthCheck utility for consistency across
+        all services, implementing Principle #12 (Method Singularity).
         
-        Checks:
-        - Service initialization status
-        - Database connectivity
-        - Stellar client connectivity
-        - Cache status and freshness
-        - Background sync task status
-        - Recent operation history
-        - Error tracking
-        - Configuration validity
+        This implementation follows the health check pattern guide:
+        - Uses ServiceHealthCheck.api_dependent_health() for API-based services
+        - Provides cache information with TTL tracking
+        - Includes service-specific context (background sync status)
+        - Tracks operation metrics and error rates
         
         Returns:
-            Health status dictionary with detailed metrics
+            Health status dictionary from ServiceHealthCheck utility:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy' | 'unknown',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {
+                    'initialized': bool,
+                    'has_rate_limiter': bool,
+                    'has_cache': bool,
+                    'rate_limiter': {...},
+                    'cache': {
+                        'size': int,
+                        'valid_entries': int,
+                        'expired_entries': int,
+                        'last_fetch': str (ISO timestamp),
+                        'status': str
+                    },
+                    'issuer': str,
+                    'background_sync_running': bool,
+                    'last_sync': str (ISO timestamp),
+                    'sync_count': int,
+                    'fetch_count': int,
+                    'analysis_count': int,
+                    'error_count': int,
+                    'last_error': str,
+                    'last_error_time': str (ISO timestamp)
+                }
+            }
         
         Example:
             >>> health = await service.health_check()
             >>> if health['status'] == 'healthy':
             ...     print("Order book service operational")
-        """
-        start_time = datetime.now()
+            ...     print(f"Cache: {health['details']['cache']['valid_entries']} entries")
+            >>> else:
+            ...     print(f"Issues detected: {health['message']}")
         
-        health_info = {
-            'status': 'unknown',
-            'message': '',
-            'details': {
-                'service': 'UBEC Order Book Analytics',
-                'initialized': self._initialized,
-                'database_connected': False,
-                'stellar_connected': False,
-                'cache_status': 'unknown',
-                'cache_size': len(self._cache),
-                'background_sync_running': False,
-                'last_sync': self._last_sync_time.isoformat() if self._last_sync_time else None,
-                'last_fetch': self._last_fetch_time.isoformat() if self._last_fetch_time else None,
-                'sync_count': self._sync_count,
-                'fetch_count': self._fetch_count,
-                'analysis_count': self._analysis_count,
-                'error_count': self._error_count,
-                'last_error': self._last_error,
-                'last_error_time': self._last_error_time.isoformat() if self._last_error_time else None,
-                'config_valid': False,
-                'response_time_ms': 0.0
-            }
+        Design Notes:
+            - Principle 7: Comprehensive per-service monitoring
+            - Principle 12: Delegates to ServiceHealthCheck utility (no duplication)
+        """
+        # Prepare cache information for health check
+        cache_info = {
+            'size': len(self._cache),
+            'last_fetch': self._last_fetch_time.isoformat() if self._last_fetch_time else None
         }
         
-        issues = []
+        # Analyze cache validity if cache exists
+        if self._cache:
+            now = datetime.now()
+            valid_entries = sum(
+                1 for _, (_, timestamp) in self._cache.items()
+                if now - timestamp < timedelta(seconds=self.cache_ttl)
+            )
+            expired_entries = len(self._cache) - valid_entries
+            
+            cache_info['valid_entries'] = valid_entries
+            cache_info['expired_entries'] = expired_entries
+            
+            # Determine cache status
+            if expired_entries == 0:
+                cache_info['status'] = 'fresh'
+            elif valid_entries > expired_entries:
+                cache_info['status'] = 'mostly_fresh'
+            elif valid_entries > 0:
+                cache_info['status'] = 'stale'
+            else:
+                cache_info['status'] = 'expired'
+        else:
+            cache_info['status'] = 'empty'
         
-        try:
-            # 1. Check initialization
-            if not self._initialized:
-                issues.append("Service not initialized")
+        # Check background sync task status
+        background_sync_running = False
+        sync_task_error = None
+        
+        if self._sync_task:
+            background_sync_running = not self._sync_task.done()
             
-            # 2. Check configuration validity
-            try:
-                self._validate_config()
-                health_info['details']['config_valid'] = True
-            except ValueError as e:
-                issues.append(f"Invalid configuration: {e}")
-            
-            # 3. Test database connection
-            try:
-                if hasattr(self.db_manager, 'health_check'):
-                    db_health = await self.db_manager.health_check()
-                    health_info['details']['database_connected'] = (
-                        db_health.get('status') == 'healthy'
-                    )
-                    if not health_info['details']['database_connected']:
-                        issues.append(f"Database unhealthy: {db_health.get('message')}")
-                else:
-                    # Fallback: try a simple query
-                    test_query = "SELECT 1 as test"
-                    result = await self.db_manager.fetch_one(test_query)
-                    health_info['details']['database_connected'] = (result is not None)
-            except Exception as e:
-                issues.append(f"Database connection failed: {e}")
-            
-            # 4. Test Stellar client connection
-            try:
-                # Apply rate limiting
-                await self.rate_limiter.acquire()
-                
-                # Try to get ledger info (lightweight operation)
-                ledger = await self.stellar_client.ledgers().order(desc=True).limit(1).call()
-                health_info['details']['stellar_connected'] = (ledger is not None)
-            except Exception as e:
-                issues.append(f"Stellar connection failed: {e}")
-            
-            # 5. Check cache status
-            if self._cache:
-                # Count valid cache entries
-                now = datetime.now()
-                valid_entries = sum(
-                    1 for _, (_, timestamp) in self._cache.items()
-                    if now - timestamp < timedelta(seconds=self.cache_ttl)
-                )
-                expired_entries = len(self._cache) - valid_entries
-                
-                health_info['details']['cache_status'] = 'active'
-                health_info['details']['valid_cache_entries'] = valid_entries
-                health_info['details']['expired_cache_entries'] = expired_entries
-                
-                if expired_entries > valid_entries:
-                    issues.append(f"Cache has {expired_entries} expired entries")
-            else:
-                health_info['details']['cache_status'] = 'empty'
-                if self._fetch_count > 0:
-                    issues.append("Cache is empty despite previous fetches")
-            
-            # 6. Check background sync task
-            if self._sync_task:
-                health_info['details']['background_sync_running'] = not self._sync_task.done()
-                
-                if self._sync_task.done():
-                    try:
-                        # Check if task failed
-                        exception = self._sync_task.exception()
-                        if exception:
-                            issues.append(f"Background sync failed: {exception}")
-                    except asyncio.InvalidStateError:
-                        pass
-            else:
-                if self._initialized:
-                    issues.append("Background sync task not running")
-            
-            # 7. Check operation recency
-            if self._last_sync_time:
-                sync_age = (datetime.now() - self._last_sync_time).total_seconds()
-                # Warn if no sync in last 2x sync interval
-                if sync_age > (self.sync_interval * 2):
-                    issues.append(f"No sync in {sync_age/60:.1f} minutes")
-            elif self._initialized and self._sync_count == 0:
-                issues.append("No successful syncs yet")
-            
-            # 8. Check error rate
-            if self._error_count > 0:
-                total_ops = self._sync_count + self._fetch_count + self._analysis_count
-                if total_ops > 0:
-                    error_rate = self._error_count / total_ops
-                    if error_rate > 0.1:  # More than 10% error rate
-                        issues.append(
-                            f"High error rate: {error_rate:.1%} "
-                            f"({self._error_count} errors in {total_ops} operations)"
-                        )
-            
-            # Calculate response time
-            end_time = datetime.now()
-            response_time = (end_time - start_time).total_seconds() * 1000
-            health_info['details']['response_time_ms'] = round(response_time, 2)
-            
-            # Determine overall status
-            critical_issues = [
-                issue for issue in issues 
-                if any(word in issue.lower() for word in [
-                    'database', 'stellar', 'configuration', 'initialized', 'not running'
-                ])
-            ]
-            
-            if len(critical_issues) > 0:
-                health_info['status'] = 'unhealthy'
-                health_info['message'] = f"Critical issues: {', '.join(critical_issues)}"
-            elif len(issues) > 0:
-                health_info['status'] = 'degraded'
-                health_info['message'] = f"Warnings: {', '.join(issues)}"
-            else:
-                health_info['status'] = 'healthy'
-                health_info['message'] = (
-                    f"Order book service operational "
-                    f"({self._sync_count} syncs, {self._fetch_count} fetches, "
-                    f"{len(self._cache)} cached entries)"
-                )
-            
-            return health_info
-            
-        except Exception as e:
-            self.logger.error(f"Health check failed: {e}", exc_info=True)
-            health_info['status'] = 'unhealthy'
-            health_info['message'] = f"Health check error: {str(e)}"
-            return health_info
+            if self._sync_task.done():
+                try:
+                    # Check if task failed
+                    exception = self._sync_task.exception()
+                    if exception:
+                        sync_task_error = str(exception)
+                except asyncio.InvalidStateError:
+                    pass
+        
+        # Use standardized health check utility (Principle #12: Method Singularity)
+        return await ServiceHealthCheck.api_dependent_health(
+            service_name='orderbook_analytics',
+            is_initialized=self._initialized,
+            rate_limiter=self.rate_limiter,
+            cache_info=cache_info,
+            # Service-specific context
+            issuer=self.issuer,
+            background_sync_running=background_sync_running,
+            sync_task_error=sync_task_error,
+            last_sync=self._last_sync_time.isoformat() if self._last_sync_time else None,
+            sync_interval=self.sync_interval,
+            cache_ttl=self.cache_ttl,
+            counter_assets=self._counter_assets,
+            # Operation statistics
+            sync_count=self._sync_count,
+            fetch_count=self._fetch_count,
+            analysis_count=self._analysis_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
+        )
     
     def _validate_config(self) -> None:
         """
@@ -1194,6 +1146,13 @@ if __name__ == "__main__":
         "  await service.initialize()\n"
         "  health = await service.health_check()\n"
         "  await service.close()\n\n"
+        "Version 2.2.0 - Standardized Health Check Pattern:\n"
+        "  - Uses ServiceHealthCheck.api_dependent_health() utility\n"
+        "  - Implements Principle #12: Method Singularity\n"
+        "  - Consistent health checks across all services\n"
+        "  - Enhanced background task monitoring\n"
+        "  - Cache validity tracking with TTL awareness\n"
+        "  - Cleaner, more maintainable code\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )
