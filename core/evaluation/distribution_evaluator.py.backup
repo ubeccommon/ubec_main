@@ -67,7 +67,7 @@ Changelog:
     v3.1.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
            - Implements Principle #12: Method Singularity with shared utility
            - Removed custom health_check() implementation (~250 lines)
-           - Now uses ServiceHealthCheck.database_dependent_health()
+           - Now uses ServiceHealthCheck.service_dependent_health()
            - Cleaner, more maintainable code with consistent patterns
            - Full compliance with health check implementation guide
     v3.0.0 - Enhanced health_check() method for comprehensive monitoring
@@ -179,7 +179,7 @@ class UBECDistributionEvaluator:
         all services, implementing Principle #12 (Method Singularity).
         
         This implementation follows the health check pattern guide:
-        - Uses ServiceHealthCheck.database_dependent_health() for composite services
+        - Uses ServiceHealthCheck.service_dependent_health() for composite services
         - Checks dependent services (distribution_service, audit_service)
         - Includes evaluation-specific context (operation counts, timing)
         - Tracks operation metrics and error rates
@@ -246,7 +246,7 @@ class UBECDistributionEvaluator:
             operation_context['last_evaluation_age_seconds'] = round(eval_age, 2)
         
         # Use standardized health check utility (Principle #12: Method Singularity)
-        return await ServiceHealthCheck.database_dependent_health(
+        return await ServiceHealthCheck.service_dependent_health(
             service_name='distribution_evaluator',
             is_initialized=self._initialized,
             db_manager=self.db_manager,
@@ -862,7 +862,7 @@ if __name__ == "__main__":
         "  report = await evaluator.evaluate_distribution()\n"
         "  await evaluator.close()\n\n"
         "Version 3.1.0 - Standardized Health Check Pattern:\n"
-        "  - Uses ServiceHealthCheck.database_dependent_health() utility\n"
+        "  - Uses ServiceHealthCheck.service_dependent_health() utility\n"
         "  - Implements Principle #12: Method Singularity\n"
         "  - Consistent health checks across all services\n"
         "  - Enhanced service dependency monitoring\n"

@@ -270,25 +270,25 @@ class UBECAuditService:
         supply_query = """
             SELECT COALESCE(SUM(balance), 0) as total_supply
             FROM ubec_main.ubec_balances
-            WHERE asset_code = $1
+            WHERE token_code = $1
         """
-        supply_result = await self.db.fetch_one(supply_query, self.ubec_code)
+        supply_result = await self.db.fetch_one(supply_query, (self.ubec_code,))
         total_supply = Decimal(str(supply_result['total_supply']))
         
         # Query admin balance
         admin_query = """
             SELECT COALESCE(balance, 0) as balance
             FROM ubec_main.ubec_balances
-            WHERE account_id = $1 AND asset_code = $2
+            WHERE account_id = $1 AND token_code = $2
         """
         admin_result = await self.db.fetch_one(
-            admin_query, self.admin_account, self.ubec_code
+            admin_query, (self.admin_account, self.ubec_code)
         )
         admin_balance = Decimal(str(admin_result['balance'])) if admin_result else Decimal('0')
         
         # Query steward balance
         steward_result = await self.db.fetch_one(
-            admin_query, self.steward_account, self.ubec_code
+            admin_query, (self.steward_account, self.ubec_code)
         )
         steward_balance = Decimal(str(steward_result['balance'])) if steward_result else Decimal('0')
         
@@ -525,16 +525,16 @@ class UBECAuditService:
             admin_query = """
                 SELECT account_id, balance
                 FROM ubec_main.ubec_balances
-                WHERE account_id = $1 AND asset_code = $2
+                WHERE account_id = $1 AND token_code = $2
             """
             
             # Check admin account
-            admin_result = await self.db.fetch_one(admin_query, self.admin_account, self.ubec_code)
+            admin_result = await self.db.fetch_one(admin_query, (self.admin_account, self.ubec_code))
             if not admin_result:
                 raise Exception(f"Administration account {self.admin_account[:8]}... not found in database")
             
             # Check steward account
-            steward_result = await self.db.fetch_one(admin_query, self.steward_account, self.ubec_code)
+            steward_result = await self.db.fetch_one(admin_query, (self.steward_account, self.ubec_code))
             if not steward_result:
                 raise Exception(f"Stewardship account {self.steward_account[:8]}... not found in database")
             

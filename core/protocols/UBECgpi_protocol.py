@@ -277,7 +277,7 @@ class UBECgpiProtocolService:
         self._cache_ttl = timedelta(minutes=5)
         
         # Operation tracking for health checks
-        self._initialized = False
+        self._initialized = True
         self._last_sync_time: Optional[datetime] = None
         self._sync_count = 0
         self._query_count = 0

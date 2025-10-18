@@ -569,14 +569,14 @@ def register_core_services():
     )
     
     # ========================================================================
-    # DISTRIBUTION EVALUATOR (Uses database_dependent_health())
+    # DISTRIBUTION EVALUATOR (Uses service_dependent_health())
     # ========================================================================
     
     async def create_dist_evaluator(registry: ServiceRegistry):
         """
         Create distribution evaluator service.
         
-        This service uses database_dependent_health() pattern.
+        This service uses service_dependent_health() pattern.
         It depends on distribution_service and audit_service.
         """
         from core.evaluation.distribution_evaluator import create_evaluator_service
@@ -626,7 +626,7 @@ async def run_health_check() -> Dict[str, Any]:
     All services now use standardized ServiceHealthCheck utility:
     - api_dependent_health() for protocols and orderbook
     - database_only_health() for holonic evaluator
-    - database_dependent_health() for distribution evaluator
+    - service_dependent_health() for distribution evaluator
     """
     logger.info("Performing system health check...")
     logger.info("All services use standardized ServiceHealthCheck utility")
@@ -650,119 +650,6 @@ async def run_health_check() -> Dict[str, Any]:
 
 
 # ==================== SYNC OPERATIONS ====================
-
-async def run_status() -> Dict[str, Any]:
-    """
-    Get comprehensive system status including service states and metrics.
-    
-    Returns detailed information about:
-    - Service initialization states
-    - Database connectivity
-    - Configuration status
-    - Element protocol states
-    - Recent operation metrics
-    
-    This is lighter weight than health check and focuses on current state.
-    """
-    logger.info("Gathering system status...")
-    
-    status = {
-        'success': True,
-        'timestamp': datetime.now().isoformat(),
-        'system': {
-            'name': 'UBEC Protocol Suite',
-            'version': '7.1.0',
-            'python_version': sys.version.split()[0],
-            'services_registered': len(registry._services),
-        },
-        'services': {},
-        'database': {},
-        'protocols': {},
-        'summary': {}
-    }
-    
-    try:
-        # Get service registry status
-        service_states = {}
-        for name in registry._services.keys():
-            try:
-                service = await registry.get(name)
-                service_states[name] = {
-                    'registered': True,
-                    'initialized': getattr(service, '_initialized', True),
-                    'type': type(service).__name__
-                }
-            except Exception as e:
-                service_states[name] = {
-                    'registered': True,
-                    'initialized': False,
-                    'error': str(e)
-                }
-        
-        status['services'] = service_states
-        
-        # Database status
-        try:
-            db = await registry.get('database')
-            if db:
-                # Test connection
-                test_query = "SELECT 1 as test"
-                result = await db.fetch_one(test_query, ())
-                status['database'] = {
-                    'connected': result is not None,
-                    'pool_size': f"{db.min_pool_size}-{db.max_pool_size}",
-                    'schemas': db.schema if hasattr(db, 'schema') else 'unknown'
-                }
-        except Exception as e:
-            status['database'] = {
-                'connected': False,
-                'error': str(e)
-            }
-        
-        # Protocol status (element protocols)
-        protocol_names = ['air', 'water', 'earth', 'fire']
-        for proto_name in protocol_names:
-            try:
-                proto = await registry.get(proto_name)
-                if proto:
-                    status['protocols'][proto_name] = {
-                        'element': {
-                            'air': 'Air (Gateway & Universal Access)',
-                            'water': 'Water (Flow & Reciprocity)',
-                            'earth': 'Earth (Stability & Mutualism)',
-                            'fire': 'Fire (Transformation & Catalytic Change)'
-                        }.get(proto_name, 'Unknown'),
-                        'asset_code': getattr(proto, 'asset_code', 'unknown'),
-                        'initialized': getattr(proto, '_initialized', False),
-                        'sync_count': getattr(proto, '_sync_count', 0),
-                        'error_count': getattr(proto, '_error_count', 0)
-                    }
-            except Exception as e:
-                status['protocols'][proto_name] = {
-                    'available': False,
-                    'error': str(e)
-                }
-        
-        # Summary
-        total_services = len(service_states)
-        initialized_services = sum(1 for s in service_states.values() if s.get('initialized'))
-        
-        status['summary'] = {
-            'total_services': total_services,
-            'initialized_services': initialized_services,
-            'database_connected': status['database'].get('connected', False),
-            'protocols_available': len([p for p in status['protocols'].values() if p.get('initialized')]),
-            'status': 'operational' if initialized_services == total_services else 'partial'
-        }
-        
-        logger.info(f"✓ Status gathered: {initialized_services}/{total_services} services initialized")
-        
-    except Exception as e:
-        logger.error(f"Error gathering status: {e}", exc_info=True)
-        status['success'] = False
-        status['error'] = str(e)
-    
-    return status
 
 async def run_sync(sync_type: str = 'all', asset_code: Optional[str] = None) -> Dict[str, Any]:
     """Run data synchronization"""
@@ -1000,15 +887,10 @@ async def main_async(args: argparse.Namespace) -> int:
                 result = await run_health_check()
             
             elif args.mode == 'sync':
-            
                 result = await run_sync(args.sync_type, args.asset_code)
             
-            elif args.mode == 'status':
-                result = await run_status()
-
             # NOTE: Other mode handlers would be added here
             # For brevity, showing just the critical modes
-
             # Full implementation would include all modes from original
             
             else:
@@ -1081,7 +963,7 @@ def main() -> int:
     logger.info("Health Check Patterns:")
     logger.info("  • api_dependent_health() - 5 services")
     logger.info("  • database_only_health() - 1 service")
-    logger.info("  • database_dependent_health() - 1 service")
+    logger.info("  • service_dependent_health() - 1 service")
     logger.info("=" * 70)
     
     # Run async main
