@@ -41,13 +41,13 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 8.1.0 (Production-Ready - Config Fix)
+Version: 9.0.0 (Double-Init Fix + Health Monitoring)
 Date: October 18, 2025
 
-Changes from v8.0.0:
-- 🔧 FIXED: Config dictionary access (supports both dict and ConfigurationService)
-- 🔧 FIXED: Better error messages in constructor
-- 🔧 ENHANCED: Debug output for troubleshooting
+Changes from v8.1.0:
+- ✅ FIXED: Removed double initialization - registry handles initialization
+- ✅ ENHANCED: Factory function follows Principle #12 (Method Singularity)
+- ✅ VERIFIED: ServiceHealthCheck utility properly implemented
 - ✅ Full compliance with all 12 design principles
 - ✅ Production-ready code quality
 """
@@ -1278,28 +1278,13 @@ async def create_holonic_visualizer(
         ...     }
         ... )
     """
-    print(f"[FACTORY] Creating visualizer with config type: {type(config)}")
-    
     # Create visualizer instance
+    # Service registry handles initialization (Principle #12: No double initialization)
     visualizer = UBECHolonicVisualizer(
         db_manager=db_manager,
         config=config
     )
     
-    print("[FACTORY] Visualizer instance created, calling initialize()...")
-    
-    # Perform async initialization (Principle #5)
-    initialized = await visualizer.initialize()
-    
-    print(f"[FACTORY] Initialize returned: {initialized}")
-    
-    if not initialized:
-        raise RuntimeError(
-            "Failed to initialize holonic visualizer. "
-            "Check database connection and schema configuration."
-        )
-    
-    print("[FACTORY] Visualizer initialization complete")
     return visualizer
 
 

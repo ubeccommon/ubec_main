@@ -6,7 +6,7 @@ UBECgpi Protocol - Earth Element (Stability & Mutualism)
 Service implementation for the Earth element of the UBEC four-element system.
 
 The Earth element represents:
-- 🌍 Stability: Grounding and sustained value
+- 🜃 Stability: Grounding and sustained value
 - Mutualism: Mutually beneficial relationships
 - Distribution: Fair allocation and compliance
 - Foundation: Solid base for the ecosystem
@@ -18,6 +18,7 @@ This module implements the service pattern with:
 - Built-in rate limiting
 - In-memory caching with TTL
 - Comprehensive health monitoring using ServiceHealthCheck utility
+- Complete element metadata exposure
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
@@ -55,10 +56,15 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.2.0 (Standardized Health Check Pattern)
-Date: October 17, 2025
+Version: 3.0.0 (Element Metadata + Health Check Standardization)
+Date: October 18, 2025
 
 Changelog:
+    v3.0.0 - ENHANCEMENT: Added complete element metadata exposure
+           - Added element, ubuntu_principle, element_description, symbol properties
+           - Ensures status output shows complete Earth element information
+           - Maintains all v2.2.0 features and improvements
+           - Full compatibility with main.py v10.x status output
     v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
            - Implements Principle #12: Method Singularity with shared utility
            - Removed custom health_check() implementation
@@ -212,6 +218,10 @@ class UBECgpiProtocolService:
         stellar_client: Async Stellar SDK client
         logger: Logger instance
         rate_limiter: API rate limiter
+        element: Element name ('earth')
+        ubuntu_principle: Associated Ubuntu principle ('mutualism')
+        element_description: Full element description
+        symbol: Alchemical symbol for earth ('🜃')
         
     Lifecycle:
         1. Instantiate via create_ubecgpi_service() factory
@@ -252,6 +262,12 @@ class UBECgpiProtocolService:
         self.asset_code = config.get('asset_code', 'UBECgpi')
         self.issuer = config.get('issuer')
         
+        # Element metadata (v3.0.0) - Essential for main.py status output
+        self.element = 'earth'
+        self.ubuntu_principle = 'mutualism'
+        self.element_description = 'Stability & Mutualism'
+        self.symbol = '🜃'  # Alchemical symbol for earth
+        
         # Distribution targets (official UBEC tokenomics)
         self.distribution_targets = {
             DistributionCategory.GENERAL: Decimal('0.65'),      # 65%
@@ -263,7 +279,7 @@ class UBECgpiProtocolService:
         self.logger = logging.getLogger(f'UBECProtocol.{self.asset_code}')
         self.logger.info(
             f"Earth Protocol Service initialized for {self.asset_code} "
-            f"(Element: Stability & Mutualism)"
+            f"(Element: {self.element}, Principle: {self.ubuntu_principle})"
         )
         
         # Rate limiting
@@ -275,6 +291,9 @@ class UBECgpiProtocolService:
         self._mutualism_cache: List[MutualismRelationship] = []
         self._cache_timestamp: Optional[datetime] = None
         self._cache_ttl = timedelta(minutes=5)
+        
+        # Account cache for monitoring
+        self._account_cache: Dict[str, Dict[str, Any]] = {}
         
         # Operation tracking for health checks
         self._initialized = True
@@ -317,6 +336,7 @@ class UBECgpiProtocolService:
         self._distribution_cache.clear()
         self._stability_cache = None
         self._mutualism_cache.clear()
+        self._account_cache.clear()
         self._cache_timestamp = None
     
     # ==================== CORE FUNCTIONALITY ====================
@@ -661,22 +681,15 @@ class UBECgpiProtocolService:
             >>> print(f"Initialized: {health['checks']['initialized']}")
         
         Design Notes:
-            - Principle 12: Uses ServiceHealthCheck.api_dependent_health()
+            - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
             - Principle 7: Comprehensive monitoring through standard checks
             - Principle 10: Separation of concerns - health logic in utility
         """
-        return await ServiceHealthCheck.api_dependent_health(
+        return await ServiceHealthCheck.element_protocol_health(
             service=self,
-            service_name="Earth Protocol (UBECgpi)",
-            required_attributes={
-                'db_manager': 'Database manager',
-                'config': 'Configuration',
-                'asset_code': 'Asset code',
-                'issuer': 'Issuer address'
-            },
-            optional_attributes={
-                'stellar_client': 'Stellar client'
-            }
+            element_name="Earth",
+            asset_code=self.asset_code,
+            ubuntu_principle=self.ubuntu_principle
         )
     
     # ==================== LIFECYCLE MANAGEMENT ====================
@@ -792,11 +805,12 @@ if __name__ == "__main__":
         "  service = create_ubecgpi_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
         "  await service.sync_stability_data()\n\n"
-        "Version 2.2.0 - Standardized Health Check Pattern:\n"
-        "  - Uses ServiceHealthCheck.api_dependent_health() utility\n"
+        "Version 3.0.0 - Element Metadata + Health Check:\n"
+        "  - Complete element metadata (earth, mutualism, 🜃)\n"
+        "  - Uses ServiceHealthCheck.element_protocol_health() utility\n"
         "  - Implements Principle #12: Method Singularity\n"
         "  - Consistent health checks across all services\n"
-        "  - Cleaner, more maintainable code\n\n"
+        "  - Full compatibility with main.py status output\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

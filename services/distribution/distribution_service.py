@@ -777,8 +777,7 @@ async def create_distribution_service(
     )
     
     # Perform async initialization (loads issuer from database if needed)
-    await service.initialize()
-    
+    # Service registry handles initialization
     return service
 
 

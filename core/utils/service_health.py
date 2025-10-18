@@ -543,6 +543,152 @@ class ServiceHealthCheck:
         )
     
     # ========================================================================
+    # STELLAR CLIENT HEALTH CHECK
+    # ========================================================================
+    
+    @staticmethod
+    async def stellar_client_health(
+        client: Any,
+        horizon_url: str,
+        initialized: bool,
+        request_count: int = 0,
+        error_count: int = 0,
+        last_error: Optional[str] = None,
+        last_error_time: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Health check for Stellar client service.
+        
+        Tests connectivity to Stellar Horizon API and tracks request/error metrics.
+        Follows Principle #7 (Per-Asset Monitoring) with execution minimums.
+        
+        Args:
+            client: StellarClientService instance
+            horizon_url: Horizon server URL
+            initialized: Whether client is initialized
+            request_count: Total API requests made
+            error_count: Total errors encountered
+            last_error: Most recent error message
+            last_error_time: Timestamp of last error
+            **kwargs: Additional context
+        
+        Returns:
+            Health status dictionary
+        
+        Example:
+            return await ServiceHealthCheck.stellar_client_health(
+                client=self,
+                horizon_url=self.horizon_url,
+                initialized=self._initialized,
+                request_count=self._request_count,
+                error_count=self._error_count,
+                last_error=self._last_error,
+                last_error_time=self._last_error_time
+            )
+        """
+        import time
+        
+        checks = []
+        details = {
+            'initialized': initialized,
+            'horizon_url': horizon_url,
+            'request_count': request_count,
+            'error_count': error_count,
+            'last_error': last_error,
+            'last_error_time': last_error_time,
+            **kwargs
+        }
+        
+        # Check 1: Initialization
+        if not initialized:
+            checks.append(('fail', 'Client not initialized'))
+            return {
+                'status': 'unhealthy',
+                'message': 'Stellar client not initialized',
+                'details': details,
+                'checks': checks
+            }
+        
+        checks.append(('pass', 'Client initialized'))
+        
+        # Check 2: Connectivity test
+        try:
+            start = time.time()
+            response = await client._client.root().call()
+            elapsed_ms = (time.time() - start) * 1000
+            
+            details['response_time_ms'] = round(elapsed_ms, 2)
+            details['network_passphrase'] = response.get('network_passphrase', 'unknown')
+            details['horizon_version'] = response.get('horizon_version', 'unknown')
+            details['core_version'] = response.get('core_version', 'unknown')
+            details['protocol_version'] = response.get('current_protocol_version', 'unknown')
+            
+            checks.append(('pass', f'Horizon API accessible ({elapsed_ms:.1f}ms)'))
+            
+        except Exception as e:
+            checks.append(('fail', f'Horizon API unreachable: {str(e)}'))
+            details['connection_error'] = str(e)
+            
+            return {
+                'status': 'unhealthy',
+                'message': f'Stellar API connection failed: {str(e)}',
+                'details': details,
+                'checks': checks,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Check 3: Error rate
+        if request_count > 0:
+            error_rate = error_count / request_count
+            details['error_rate'] = round(error_rate, 4)
+            
+            if error_rate > 0.1:  # >10% error rate
+                checks.append(('warn', f'High error rate: {error_rate:.1%}'))
+                status_msg = f'Stellar API degraded (error rate: {error_rate:.1%})'
+            else:
+                checks.append(('pass', f'Error rate acceptable: {error_rate:.2%}'))
+                status_msg = 'Stellar API operational'
+        else:
+            checks.append(('pass', 'No requests yet'))
+            status_msg = 'Stellar API operational'
+        
+        # Check 4: Recent errors
+        if last_error and last_error_time:
+            try:
+                last_error_dt = datetime.fromisoformat(last_error_time)
+                time_since_error = (datetime.now() - last_error_dt).total_seconds()
+                
+                if time_since_error < 60:  # Error within last minute
+                    checks.append(('warn', f'Recent error: {last_error}'))
+                else:
+                    checks.append(('pass', f'Last error {int(time_since_error)}s ago'))
+            except:
+                pass
+        
+        # Determine overall status
+        has_failures = any(status == 'fail' for status, _ in checks)
+        has_warnings = any(status == 'warn' for status, _ in checks)
+        
+        if has_failures:
+            overall_status = 'unhealthy'
+        elif has_warnings:
+            overall_status = 'degraded'
+        else:
+            overall_status = 'healthy'
+        
+        return {
+            'status': overall_status,
+            'message': status_msg,
+            'details': details,
+            'checks': checks,
+            'checks_passed': sum(1 for s, _ in checks if s == 'pass'),
+            'checks_failed': sum(1 for s, _ in checks if s == 'fail'),
+            'checks_warned': sum(1 for s, _ in checks if s == 'warn'),
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    # ========================================================================
     # SYNCHRONOUS HEALTH CHECK (for config-like services)
     # ========================================================================
     

@@ -952,8 +952,7 @@ async def create_holonic_evaluator(
     
     # Create and initialize service
     evaluator = UBECHolonicEvaluator(db_manager=db_manager, config=config)
-    await evaluator.initialize()
-    
+    # Service registry handles initialization
     return evaluator
 
 
