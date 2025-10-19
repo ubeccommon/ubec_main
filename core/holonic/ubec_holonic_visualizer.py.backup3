@@ -353,8 +353,8 @@ class HolonicVisualizer:
             for account in accounts:
                 categories[account['holonic_category']] += 1
             
-            # Calculate percentiles - convert Decimal to float for numpy
-            composite_scores = [float(acc['composite_score']) for acc in accounts]
+            # Calculate percentiles
+            composite_scores = [acc['composite_score'] for acc in accounts]
             percentile_25 = np.percentile(composite_scores, 25) if composite_scores else 0.0
             percentile_75 = np.percentile(composite_scores, 75) if composite_scores else 0.0
             
@@ -405,8 +405,7 @@ class HolonicVisualizer:
         
         stats = {}
         for dim in dimensions:
-            # Convert Decimal to float for consistent handling
-            values = [float(acc[dim]) for acc in accounts if acc.get(dim) is not None]
+            values = [acc[dim] for acc in accounts if acc.get(dim) is not None]
             if values:
                 stats[dim.replace('_score', '')] = {
                     'mean': statistics.mean(values),
@@ -494,8 +493,8 @@ class HolonicVisualizer:
                 self.logger.warning("No data available for score distribution")
                 return None
             
-            # Extract composite scores - convert Decimal to float for matplotlib/numpy
-            scores = [float(acc['composite_score']) for acc in self.report_data['accounts']]
+            # Extract composite scores
+            scores = [acc['composite_score'] for acc in self.report_data['accounts']]
             
             # Create figure
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -690,13 +689,12 @@ class HolonicVisualizer:
             colors = plt.cm.viridis(np.linspace(0, 1, top_n))
             
             for idx, account in enumerate(top_accounts):
-                # Convert Decimal to float for matplotlib
                 values = [
-                    float(account['autonomy_score']),
-                    float(account['multiscale_score']),
-                    float(account['regenerative_score']),
-                    float(account['network_score']),
-                    float(account['ubuntu_score'])
+                    account['autonomy_score'],
+                    account['multiscale_score'],
+                    account['regenerative_score'],
+                    account['network_score'],
+                    account['ubuntu_score']
                 ]
                 values += values[:1]  # Complete the circle
                 
@@ -705,7 +703,7 @@ class HolonicVisualizer:
                     values,
                     'o-',
                     linewidth=2,
-                    label=f"{account['account_id'][:8]}... ({float(account['composite_score']):.3f})",
+                    label=f"{account['account_id'][:8]}... ({account['composite_score']:.3f})",
                     color=colors[idx],
                     alpha=0.7
                 )
@@ -776,14 +774,14 @@ class HolonicVisualizer:
                 self.logger.warning("No data available for correlation matrix")
                 return None
             
-            # Extract dimension scores - convert Decimal to float for pandas/numpy
+            # Extract dimension scores
             dimensions = {
-                'Autonomy': [float(acc['autonomy_score']) for acc in self.report_data['accounts']],
-                'Multi-Scale': [float(acc['multiscale_score']) for acc in self.report_data['accounts']],
-                'Regenerative': [float(acc['regenerative_score']) for acc in self.report_data['accounts']],
-                'Network': [float(acc['network_score']) for acc in self.report_data['accounts']],
-                'Ubuntu': [float(acc['ubuntu_score']) for acc in self.report_data['accounts']],
-                'Composite': [float(acc['composite_score']) for acc in self.report_data['accounts']]
+                'Autonomy': [acc['autonomy_score'] for acc in self.report_data['accounts']],
+                'Multi-Scale': [acc['multiscale_score'] for acc in self.report_data['accounts']],
+                'Regenerative': [acc['regenerative_score'] for acc in self.report_data['accounts']],
+                'Network': [acc['network_score'] for acc in self.report_data['accounts']],
+                'Ubuntu': [acc['ubuntu_score'] for acc in self.report_data['accounts']],
+                'Composite': [acc['composite_score'] for acc in self.report_data['accounts']]
             }
             
             # Calculate correlation matrix
@@ -928,12 +926,11 @@ class HolonicVisualizer:
             
             for account in self.report_data['accounts']:
                 category = account['holonic_category']
-                # Convert Decimal to float for matplotlib compatibility
-                category_averages[category]['autonomy'].append(float(account['autonomy_score']))
-                category_averages[category]['multiscale'].append(float(account['multiscale_score']))
-                category_averages[category]['regenerative'].append(float(account['regenerative_score']))
-                category_averages[category]['network'].append(float(account['network_score']))
-                category_averages[category]['ubuntu'].append(float(account['ubuntu_score']))
+                category_averages[category]['autonomy'].append(account['autonomy_score'])
+                category_averages[category]['multiscale'].append(account['multiscale_score'])
+                category_averages[category]['regenerative'].append(account['regenerative_score'])
+                category_averages[category]['network'].append(account['network_score'])
+                category_averages[category]['ubuntu'].append(account['ubuntu_score'])
             
             # Calculate means
             category_means = {}
@@ -1101,7 +1098,7 @@ class HolonicVisualizer:
                 G.add_node(
                     account['account_id'],
                     category=account['holonic_category'],
-                    score=float(account['composite_score'])  # Convert Decimal to float
+                    score=account['composite_score']
                 )
             
             # Add edges from transactions
