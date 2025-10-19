@@ -41,8 +41,15 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 10.0.0 (Table Reference Fix - holonic_metrics)
+Version: 10.1.0 (Table Reference Fix + main.py Compatibility)
 Date: October 19, 2025
+
+Changes from v10.0.0:
+- ➕ ADDED: generate_report() wrapper for main.py compatibility
+- ➕ ADDED: generate_chart() wrapper for main.py compatibility
+- ➕ ADDED: generate_all() for comprehensive visualization generation
+- ✅ Principle #12: All wrappers delegate to existing methods (no duplication)
+- ✅ Full backward compatibility with main.py interface
 
 Changes from v9.0.0:
 - 🔧 FIXED: Changed table reference from 'holonic_evaluation' to 'holonic_metrics'
@@ -921,10 +928,180 @@ class UBECHolonicVisualizer:
             self.logger.error(f"Error creating time-series chart: {e}", exc_info=True)
             return None
     
+    async def generate_chart(
+        self,
+        chart_type: str,
+        format: str = 'png',
+        output_dir: str = 'visualizations'
+    ) -> Optional[str]:
+        """
+        Generate a specific chart type (wrapper for main.py compatibility).
+        
+        Principle #12: Method Singularity - Routes to existing chart methods
+        without duplicating logic.
+        
+        Args:
+            chart_type: Type of chart ('score_dist', 'radar', 'category_dist', 
+                       'correlation', 'time_series')
+            format: Output format (only 'png' supported currently)
+            output_dir: Directory to save chart
+            
+        Returns:
+            Path to generated chart file
+            
+        Raises:
+            ValueError: If unsupported chart type or format specified
+        """
+        if format.lower() not in ['png', 'svg']:
+            self.logger.warning(f"Format {format} not fully supported, using png")
+            format = 'png'
+        
+        # Create output directory
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_file = Path(output_dir) / f"{chart_type}_{timestamp}.{format}"
+        
+        # Route to appropriate chart method
+        chart_map = {
+            'score_dist': self.create_score_distribution_chart,
+            'score_distribution': self.create_score_distribution_chart,
+            'radar': self.create_radar_chart,
+            'category_dist': self.create_category_distribution_chart,
+            'category_distribution': self.create_category_distribution_chart,
+            'correlation': self.create_correlation_matrix,
+            'correlation_matrix': self.create_correlation_matrix,
+            'time_series': self.create_time_series_chart,
+            'trend': self.create_time_series_chart
+        }
+        
+        chart_method = chart_map.get(chart_type.lower())
+        
+        if not chart_method:
+            raise ValueError(
+                f"Unsupported chart type: {chart_type}. "
+                f"Supported types: {', '.join(chart_map.keys())}"
+            )
+        
+        try:
+            result = await chart_method(output_file=str(output_file))
+            
+            if result and result.startswith('data:image'):
+                # Base64 result - save to file
+                import base64
+                img_data = result.split(',', 1)[1]
+                img_bytes = base64.b64decode(img_data)
+                
+                async with aiofiles.open(output_file, 'wb') as f:
+                    await f.write(img_bytes)
+                
+                self.logger.info(f"✓ Chart saved to {output_file}")
+                return str(output_file)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error generating chart {chart_type}: {e}", exc_info=True)
+            raise
+    
+    async def generate_all(
+        self,
+        output_dir: str = 'visualizations'
+    ) -> Dict[str, Any]:
+        """
+        Generate all visualizations and report.
+        
+        Args:
+            output_dir: Directory for outputs
+            
+        Returns:
+            Dictionary with paths to all generated files
+        """
+        try:
+            self.logger.info("Generating all visualizations...")
+            
+            results = {
+                'charts': {},
+                'report': None,
+                'success': True,
+                'errors': []
+            }
+            
+            # Create directories
+            charts_dir = Path(output_dir) / 'charts'
+            reports_dir = Path(output_dir) / 'reports'
+            charts_dir.mkdir(parents=True, exist_ok=True)
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate all charts
+            chart_types = ['score_dist', 'radar', 'category_dist', 'correlation', 'time_series']
+            
+            for chart_type in chart_types:
+                try:
+                    chart_path = await self.generate_chart(
+                        chart_type=chart_type,
+                        output_dir=str(charts_dir)
+                    )
+                    results['charts'][chart_type] = chart_path
+                except Exception as e:
+                    self.logger.error(f"Failed to generate {chart_type}: {e}")
+                    results['errors'].append(f"{chart_type}: {str(e)}")
+            
+            # Generate HTML report
+            try:
+                report_path = await self.generate_html_report(output_dir=str(reports_dir))
+                results['report'] = report_path
+            except Exception as e:
+                self.logger.error(f"Failed to generate report: {e}")
+                results['errors'].append(f"report: {str(e)}")
+            
+            results['success'] = len(results['errors']) == 0
+            
+            self.logger.info(f"✓ Generated {len(results['charts'])} charts and report")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error in generate_all: {e}", exc_info=True)
+            return {
+                'charts': {},
+                'report': None,
+                'success': False,
+                'errors': [str(e)]
+            }
+    
     # ========================================================================
     # HTML REPORT GENERATION
     # Principle #5: Strict Async - Async file operations
     # ========================================================================
+    
+    async def generate_report(
+        self,
+        format: str = 'html',
+        output_dir: str = './reports',
+        include_advanced: bool = False
+    ) -> Optional[str]:
+        """
+        Generate report (wrapper for main.py compatibility).
+        
+        Principle #12: Method Singularity - Wraps generate_html_report()
+        without duplicating logic.
+        
+        Args:
+            format: Output format ('html' only supported currently)
+            output_dir: Directory to save report
+            include_advanced: Include advanced analytics (reserved for future use)
+            
+        Returns:
+            Path to generated report file
+            
+        Raises:
+            ValueError: If unsupported format specified
+        """
+        if format.lower() != 'html':
+            raise ValueError(f"Unsupported format: {format}. Only 'html' is currently supported.")
+        
+        return await self.generate_html_report(output_dir=output_dir)
     
     async def generate_html_report(
         self,
@@ -1410,6 +1587,13 @@ if __name__ == "__main__":
     print("Settings loaded from system_settings table:")
     print("  - db_schema: Database schema name (default: 'ubec_main')")
     print("  - element_mode: Enable 4-element features (default: false)")
+    print()
+    print("FIXES IN v10.1.0:")
+    print("-----------------")
+    print("  ➕ Added generate_report() wrapper for main.py compatibility")
+    print("  ➕ Added generate_chart() wrapper for main.py compatibility")
+    print("  ➕ Added generate_all() for comprehensive generation")
+    print("  ✅ All wrappers follow Principle #12 (delegate, don't duplicate)")
     print()
     print("FIXES IN v10.0.0:")
     print("-----------------")
