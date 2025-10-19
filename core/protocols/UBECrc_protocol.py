@@ -19,6 +19,7 @@ This module implements the service pattern with:
 - In-memory caching with TTL
 - Comprehensive health monitoring using ServiceHealthCheck utility
 - Complete element metadata exposure
+- Explicit initialization pattern matching other protocols
 
 Design Principles Compliance:
 ══════════════════════════════════════════════════════════════════════════════
@@ -46,6 +47,7 @@ Usage:
     )
     
     # All methods are async
+    await service.initialize()  # Explicit initialization required
     await service.sync_flow_data()
     flows = await service.get_flow_metrics()
     balance = await service.get_reciprocity_balance(account_id)
@@ -56,10 +58,29 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.0.0 (Element Metadata + Health Check Standardization)
-Date: October 18, 2025
+Version: 3.3.0 (Enhanced Health Monitoring - DRY Compliance)
+Date: October 19, 2025
 
 Changelog:
+    v3.3.0 - ENHANCEMENT: Improved health check with DRY compliance
+           - ENHANCED: Uses instance variables instead of hardcoded strings
+           - ADDED: Comprehensive error tracking (last_error, last_error_time)
+           - ADDED: Issuer information in health check output
+           - IMPROVED: Full DRY principle compliance (Principle #12)
+           - ALIGNED: Now matches Air protocol's superior pattern
+           - MAINTAINED: All functionality from v3.2.0
+           - Updated to use self.element, self.ubuntu_principle, self.symbol
+           - Added missing last_error and issuer parameters
+           - Enhanced maintainability and consistency
+    v3.1.0 - CRITICAL FIX: Added explicit initialize() method
+           - Fixed missing initialization causing "initialized": false in logs
+           - Constructor now sets _initialized = False (not True)
+           - Added initialize() method with database validation
+           - Added _ensure_initialized() helper for lazy initialization
+           - Validates configuration during initialization
+           - Matches pattern used by Air/Earth/Fire protocols
+           - Resolves critical issue identified in log review
+           - Enhanced error tracking and logging consistency
     v3.0.0 - ENHANCEMENT: Added complete element metadata exposure
            - Added element, ubuntu_principle, element_description, symbol properties
            - Ensures status output shows complete Water element information
@@ -69,7 +90,7 @@ Changelog:
     v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
            - Implements Principle #12: Method Singularity with shared utility
            - Removed custom health_check() implementation
-           - Now uses ServiceHealthCheck.api_dependent_health()
+           - Now uses ServiceHealthCheck.element_protocol_health()
            - Added enhanced cache status tracking with dual caches
            - Cleaner, more maintainable code with consistent patterns
            - Full compliance with health check implementation guide
@@ -219,8 +240,9 @@ class UBECrcProtocolService:
         
     Lifecycle:
         1. Instantiate via create_ubecrc_service() factory
-        2. Service auto-initializes on first use
-        3. Cleanup via close() method
+        2. Call initialize() to complete setup (REQUIRED)
+        3. Service operations are now available
+        4. Cleanup via close() method
         
     Design Principles:
         - Principle 1: Modular - Clear boundaries and single responsibility
@@ -241,6 +263,7 @@ class UBECrcProtocolService:
         Initialize UBECrc Water protocol service.
         
         DO NOT call directly - use create_ubecrc_service() factory instead.
+        After construction, call initialize() to complete setup.
         
         Args:
             db_manager: Database manager with async support
@@ -253,6 +276,7 @@ class UBECrcProtocolService:
         self.stellar_client = stellar_client
         self.asset_code = config.get('asset_code', 'UBECrc')
         self.issuer = config.get('issuer', '')
+        self.db_schema = config.get('db_schema', 'ubec_main')
         
         # Element metadata (v3.0.0) - Essential for main.py status output
         self.element = 'water'
@@ -260,8 +284,8 @@ class UBECrcProtocolService:
         self.element_description = 'Flow & Reciprocity'
         self.symbol = '🜄'  # Alchemical symbol for water
         
-        # Setup logging
-        self.logger = logging.getLogger(f'UBECrcProtocol.{self.asset_code}')
+        # Setup logging with consistent naming pattern
+        self.logger = logging.getLogger(f'UBECProtocol.{self.asset_code}')
         
         # Rate limiting (Principle 9: Integrated Rate Limiting)
         self.rate_limiter = RateLimiter(rate_limit_calls_per_second)
@@ -276,7 +300,8 @@ class UBECrcProtocolService:
         self._account_cache: Dict[str, Dict[str, Any]] = {}
         
         # Initialization and operation tracking (for health checks)
-        self._initialized = True  # Service is ready after construction
+        # CRITICAL: Set to False, must call initialize() explicitly
+        self._initialized = False
         self._last_sync_time: Optional[datetime] = None
         self._last_query_time: Optional[datetime] = None
         self._sync_count = 0
@@ -287,9 +312,78 @@ class UBECrcProtocolService:
         self._last_error_time: Optional[datetime] = None
         
         self.logger.info(
-            f"Water Protocol Service initialized for {self.asset_code} "
-            f"(Element: {self.element}, Principle: {self.ubuntu_principle})"
+            f"Water Protocol Service constructed for {self.asset_code} "
+            f"(Element: {self.element}, Principle: {self.ubuntu_principle}) - "
+            f"call initialize() to complete setup"
         )
+    
+    # ==================== INITIALIZATION ====================
+    # Principle 2: Service Pattern - Explicit initialization lifecycle
+    
+    async def initialize(self) -> None:
+        """
+        Initialize the Water protocol service.
+        
+        This method MUST be called after construction and before using the service.
+        It validates configuration and establishes database connectivity.
+        
+        This method is idempotent - calling it multiple times is safe.
+        
+        Raises:
+            ValueError: If configuration is invalid
+            Exception: If database connection fails
+        
+        Design Notes:
+            - Principle 5: Async initialization
+            - Principle 4: Verifies database connection (single source of truth)
+            - Principle 11: Comprehensive validation and logging
+        """
+        if self._initialized:
+            self.logger.warning("Water protocol service already initialized")
+            return
+        
+        self.logger.info("Initializing Water protocol service...")
+        
+        try:
+            # Validate configuration
+            self._validate_config()
+            self.logger.debug("✓ Configuration validated")
+            
+            # Verify database connection
+            result = await self.db_manager.execute("SELECT 1 as test")
+            if result or result is None:  # Either returns result or None for successful execute
+                self.logger.debug("✓ Database connection verified")
+            
+            # Mark as initialized
+            self._initialized = True
+            
+            self.logger.info(
+                f"✓ Water protocol service initialized successfully\n"
+                f"  Asset: {self.asset_code}\n"
+                f"  Issuer: {self.issuer[:12]}...\n"
+                f"  Element: {self.element} ({self.symbol})\n"
+                f"  Principle: {self.ubuntu_principle}\n"
+                f"  Schema: {self.db_schema}"
+            )
+            
+        except Exception as e:
+            self._error_count += 1
+            self._last_error = str(e)
+            self._last_error_time = datetime.now()
+            self.logger.error(f"Failed to initialize Water protocol: {e}")
+            raise
+    
+    async def _ensure_initialized(self) -> None:
+        """
+        Ensure service is initialized before operations.
+        
+        This provides lazy initialization - if initialize() wasn't called
+        explicitly, it will be called automatically on first use.
+        
+        Principle 5: Async helper method
+        """
+        if not self._initialized:
+            await self.initialize()
     
     # ==================== HEALTH CHECK ====================
     # Principle 7: Per-Asset Monitoring with health checks
@@ -304,11 +398,44 @@ class UBECrcProtocolService:
         health check logic.
         
         Returns:
-            Health status dictionary with standardized format
+            Health status dictionary with standardized format:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy' | 'unknown',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {
+                    'initialized': bool,
+                    'has_db': bool,
+                    'db_connection': bool,
+                    'db_response_time_ms': float,
+                    'cache': {
+                        'transactions_size': int,
+                        'reciprocity_size': int,
+                        'last_sync': str,
+                        'age_seconds': float,
+                        'status': str
+                    },
+                    'stats': {
+                        'sync_count': int,
+                        'query_count': int,
+                        'calculation_count': int,
+                        'error_count': int,
+                        'last_sync': str,
+                        'last_query': str,
+                        'last_error': str,
+                        'last_error_time': str
+                    },
+                    'asset_code': str,
+                    'element': str,
+                    'ubuntu_principle': str,
+                    'reciprocity_health': float
+                }
+            }
             
         Example:
             >>> health = await service.health_check()
             >>> print(f"Status: {health['status']}")
+            >>> print(f"Initialized: {health['details']['initialized']}")
             >>> print(f"Reciprocity Health: {health['details']['reciprocity_health']}")
         
         Design Notes:
@@ -317,15 +444,30 @@ class UBECrcProtocolService:
             - Principle 10: Separation of concerns - health logic in utility
         """
         return await ServiceHealthCheck.element_protocol_health(
-            service=self,
-            element_name="Water",
-            asset_code=self.asset_code,
-            ubuntu_principle=self.ubuntu_principle
+            element_name=self.element,
+            token_code=self.asset_code,
+            db_manager=self.db_manager,
+            is_initialized=self._initialized,
+            last_sync=self._last_sync_time,
+            cached_accounts=len(self._account_cache),
+            ubuntu_principle=self.ubuntu_principle,
+            # Additional context for comprehensive monitoring
+            element_description=self.element_description,
+            symbol=self.symbol,
+            issuer=self.issuer[:12] + '...' if len(self.issuer) > 12 else self.issuer,
+            sync_count=self._sync_count,
+            query_count=self._query_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
         )
     
     def _validate_config(self) -> None:
         """
         Validate service configuration.
+        
+        Called during initialization to ensure all required configuration
+        parameters are present and valid.
         
         Raises:
             ValueError: If configuration is invalid
@@ -341,6 +483,10 @@ class UBECrcProtocolService:
         # Validate issuer format (Stellar public key)
         if not self.issuer.startswith('G') or len(self.issuer) != 56:
             raise ValueError(f"Invalid issuer address format: {self.issuer}")
+        
+        # Validate schema
+        if not self.db_schema:
+            raise ValueError("db_schema not configured")
     
     # ==================== CACHE MANAGEMENT ====================
     # Principle 10: Clear Separation - Cache management separated
@@ -367,13 +513,11 @@ class UBECrcProtocolService:
             Exception: If database query fails
         """
         try:
-            # Ensure connection is established
-            if hasattr(self.db_manager, 'conn') and self.db_manager.conn is None:
-                await self.db_manager.connect()
+            await self._ensure_initialized()
             
             # Query recent transactions
             # Principle 4: Database is single source of truth
-            query_txs = """
+            query_txs = f"""
                 SELECT 
                     transaction_id,
                     from_account,
@@ -381,7 +525,7 @@ class UBECrcProtocolService:
                     amount,
                     created_at,
                     memo
-                FROM ubec_main.flow_transactions
+                FROM {self.db_schema}.flow_transactions
                 WHERE asset_code = $1
                   AND created_at >= NOW() - INTERVAL '7 days'
                 ORDER BY created_at DESC
@@ -424,6 +568,15 @@ class UBECrcProtocolService:
         Calculate reciprocity balances for all accounts.
         
         Principle 12: Single implementation of reciprocity calculation.
+        This method is called only from _load_from_database(), ensuring
+        no duplicate calculation logic exists.
+        
+        Design Notes:
+            - Iterates through transaction cache
+            - Groups by account
+            - Calculates sent/received totals
+            - Computes reciprocity ratios
+            - Identifies unique trading partners
         """
         try:
             self._calculation_count += 1
@@ -520,6 +673,8 @@ class UBECrcProtocolService:
             - Principle 11: Comprehensive logging
         """
         try:
+            await self._ensure_initialized()
+            
             self.logger.info("Starting Water (UBECrc) flow data synchronization...")
             
             # Track operation for health checks
@@ -580,6 +735,8 @@ class UBECrcProtocolService:
             - Principle 12: Single implementation of metrics calculation
         """
         try:
+            await self._ensure_initialized()
+            
             # Track operation for health checks
             self._last_query_time = datetime.now()
             self._query_count += 1
@@ -682,6 +839,8 @@ class UBECrcProtocolService:
             - Principle 7: Per-asset monitoring
         """
         try:
+            await self._ensure_initialized()
+            
             # Track operation for health checks
             self._last_query_time = datetime.now()
             self._query_count += 1
@@ -727,6 +886,8 @@ class UBECrcProtocolService:
             - Principle 7: Per-asset monitoring with filtering
         """
         try:
+            await self._ensure_initialized()
+            
             # Track operation for health checks
             self._last_query_time = datetime.now()
             self._query_count += 1
@@ -797,7 +958,7 @@ async def create_ubecrc_service(
     Factory function to create UBECrc Water protocol service instance.
     
     This is the proper way to instantiate the service for use in the service registry.
-    Changed to async to allow for future async initialization if needed.
+    The service is returned ready for initialization - call initialize() before use.
     
     Principle 2: Service pattern with factory function.
     Principle 3: Dependencies injected via service registry.
@@ -807,11 +968,12 @@ async def create_ubecrc_service(
         config: Configuration dictionary with:
             - asset_code: UBECrc token code (required)
             - issuer: Issuer address (required)
+            - db_schema: Database schema name (optional, default: ubec_main)
         stellar_client: Optional Stellar async client
         **kwargs: Additional configuration options
     
     Returns:
-        UBECrcProtocolService: Initialized service instance
+        UBECrcProtocolService: Constructed service instance (call initialize() next)
         
     Raises:
         ValueError: If required config parameters are missing
@@ -823,6 +985,7 @@ async def create_ubecrc_service(
         ...     config={'asset_code': 'UBECrc', 'issuer': 'GDPNB7S3...'},
         ...     stellar_client=stellar
         ... )
+        >>> await service.initialize()  # REQUIRED before use
         >>> health = await service.health_check()
         >>> flows = await service.get_flow_metrics()
     """
@@ -841,8 +1004,8 @@ async def create_ubecrc_service(
         rate_limit_calls_per_second=kwargs.get('rate_limit_calls_per_second', 10.0)
     )
     
-    # Note: No async initialization needed currently
-    # Pattern allows for future async initialization if needed
+    # Note: Service construction complete, but initialize() must be called separately
+    # This pattern matches Air/Earth/Fire protocols and enables proper lifecycle management
     
     return service
 
@@ -878,16 +1041,25 @@ if __name__ == "__main__":
         "Example usage:\n"
         "  from UBECrc_protocol import create_ubecrc_service\n"
         "  service = await create_ubecrc_service(db_manager, config, stellar_client)\n"
+        "  await service.initialize()  # REQUIRED - new in v3.1.0\n"
         "  health = await service.health_check()\n"
         "  await service.sync_flow_data()\n\n"
-        "Version 3.0.0 - Element Metadata + Health Check:\n"
-        "  - Complete element metadata (water, reciprocity, 🜄)\n"
-        "  - Uses ServiceHealthCheck.element_protocol_health() utility\n"
-        "  - Implements Principle #12: Method Singularity\n"
-        "  - Consistent health checks across all services\n"
-        "  - Enhanced flow and reciprocity metrics tracking\n"
-        "  - Dual cache monitoring (transactions + reciprocity)\n"
-        "  - Full compatibility with main.py status output\n\n"
+        "Version 3.1.0 - Critical Initialization Fix:\n"
+        "  - FIXED: Added explicit initialize() method (prevents 'initialized': false)\n"
+        "  - FIXED: Constructor now sets _initialized = False (was incorrectly True)\n"
+        "  - ADDED: _ensure_initialized() helper for lazy initialization\n"
+        "  - ADDED: Configuration validation during initialization\n"
+        "  - ADDED: Database connection verification\n"
+        "  - IMPROVED: Consistent logging with other protocols\n"
+        "  - ENHANCED: Better error tracking and reporting\n"
+        "  - Now matches Air/Earth/Fire initialization patterns\n"
+        "  - Resolves critical issue from log review analysis\n\n"
+        "Key Changes:\n"
+        "  - __init__: Sets _initialized = False (not True)\n"
+        "  - initialize(): New async method, validates config and DB\n"
+        "  - All operations: Now call _ensure_initialized() first\n"
+        "  - Logger name: Changed to UBECProtocol.{asset_code} pattern\n"
+        "  - Config: Added db_schema parameter support\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

@@ -56,10 +56,20 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.0.0 (Element Metadata + Health Check Standardization)
-Date: October 18, 2025
+Version: 3.1.0 (Enhanced Health Monitoring - DRY Compliance)
+Date: October 19, 2025
 
 Changelog:
+    v3.1.0 - ENHANCEMENT: Improved health check with DRY compliance
+           - ENHANCED: Uses instance variables instead of hardcoded strings
+           - ADDED: Comprehensive error tracking (last_error, last_error_time)
+           - ADDED: Issuer information in health check output
+           - IMPROVED: Full DRY principle compliance (Principle #12)
+           - ALIGNED: Now matches Air protocol's superior pattern
+           - MAINTAINED: All functionality from v3.0.0
+           - Updated to use self.element, self.ubuntu_principle, self.symbol
+           - Added missing last_error and issuer parameters
+           - Enhanced maintainability and consistency
     v3.0.0 - ENHANCEMENT: Added complete element metadata exposure
            - Added element, ubuntu_principle, element_description, symbol properties
            - Ensures status output shows complete Earth element information
@@ -686,10 +696,22 @@ class UBECgpiProtocolService:
             - Principle 10: Separation of concerns - health logic in utility
         """
         return await ServiceHealthCheck.element_protocol_health(
-            service=self,
-            element_name="Earth",
-            asset_code=self.asset_code,
-            ubuntu_principle=self.ubuntu_principle
+            element_name=self.element,
+            token_code=self.asset_code,
+            db_manager=self.db_manager,
+            is_initialized=self._initialized,
+            last_sync=self._last_sync_time,
+            cached_accounts=len(self._account_cache),
+            ubuntu_principle=self.ubuntu_principle,
+            # Additional context for comprehensive monitoring
+            element_description=self.element_description,
+            symbol=self.symbol,
+            issuer=self.issuer[:12] + '...' if len(self.issuer) > 12 else self.issuer,
+            sync_count=self._sync_count,
+            query_count=self._query_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
         )
     
     # ==================== LIFECYCLE MANAGEMENT ====================
