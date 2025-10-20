@@ -12,8 +12,8 @@ Integrated Services:
     - Stellar Client (Blockchain interaction)
     - Data Synchronizer (Blockchain sync + liquidity pools)
     - Analytics Service (Token distribution and metrics)
-    - Distribution Service (Token balance management)
-    - Distribution Evaluator (Compliance checking)
+    - UBEC Distribution Service (Token balance management)
+    - UBEC Distribution Evaluator (Compliance checking)
     - Holonic Evaluator (Ubuntu principles evaluation)
     - Visualizer (Charts & reports generation)
     - Audit Service (Tokenomics compliance & auditing)
@@ -498,12 +498,12 @@ def register_core_services():
         return analytics
     
     registry.register_factory(
-        'analytics',
+        'ubec_analytics_service',
         create_analytics,
         dependencies=['database', 'config'],
         config={'cache_ttl': 300}
     )
-    logger.info("✓ Registered: analytics (depends on: database, config)")
+    logger.info("✓ Registered: ubec_analytics_service (depends on: database, config)")
     
     # ========================================================================
     # AUDIT SERVICE
@@ -570,20 +570,20 @@ def register_core_services():
         )
     
     registry.register_factory(
-        'audit',
+        'ubec_audit_service',
         create_audit,
         dependencies=['database', 'config'],
         config={'snapshot_interval': 86400}
     )
-    logger.info("✓ Registered: audit (depends on: database, config)")
+    logger.info("✓ Registered: ubec_audit_service (depends on: database, config)")
     
     # ========================================================================
-    # DISTRIBUTION SERVICE
+    # UBEC DISTRIBUTION SERVICE
     # ========================================================================
     
     async def create_distribution(registry: ServiceRegistry):
         """
-        Create distribution service.
+        Create UBEC distribution service.
         
         CRITICAL FIX v12.5.1: Now explicitly calls await service.initialize()
         to ensure service is fully initialized before returning.
@@ -595,9 +595,9 @@ def register_core_services():
         db = await registry.get('database')
         config = await registry.get('config')
         stellar = await registry.get('stellar_client')
-        audit = await registry.get('audit')
+        audit = await registry.get('ubec_audit_service')
         
-        logger.info("  ├─ Distribution: Token balance management")
+        logger.info("  ├─ UBEC Distribution Service: Token balance management")
         
         # Create service instance using factory
         service = await create_distribution_service(
@@ -623,28 +623,28 @@ def register_core_services():
         return service
     
     registry.register_factory(
-        'distribution',
+        'ubec_distribution_service',
         create_distribution,
-        dependencies=['database', 'config', 'stellar_client', 'audit'],
+        dependencies=['database', 'config', 'stellar_client', 'ubec_audit_service'],
         config={'distribution_interval': 86400}
     )
-    logger.info("✓ Registered: distribution (depends on: database, config, stellar_client, audit)")
+    logger.info("✓ Registered: ubec_distribution_service (depends on: database, config, stellar_client, ubec_audit_service)")
    
     # ========================================================================
-    # DISTRIBUTION EVALUATOR
+    # UBEC DISTRIBUTION EVALUATOR
     # ========================================================================
     
     async def create_distribution_evaluator(registry: ServiceRegistry):
         """
-        Create distribution evaluator service.
+        Create UBEC distribution evaluator service.
         
         ENHANCED: Implements comprehensive health checking.
         """
-        from core.evaluation.distribution_evaluator import create_evaluator_service as factory
+        from core.evaluation.ubec_distribution_evaluator import create_evaluator_service as factory
         
         db = await registry.get('database')
-        distribution = await registry.get('distribution')
-        audit = await registry.get('audit')
+        distribution = await registry.get('ubec_distribution_service')
+        audit = await registry.get('ubec_audit_service')
         
         logger.info("  ├─ Distribution Evaluator: Compliance checking")
         
@@ -655,12 +655,12 @@ def register_core_services():
         )
     
     registry.register_factory(
-        'distribution_evaluator',
+        'ubec_distribution_evaluator',
         create_distribution_evaluator,
-        dependencies=['database', 'distribution', 'audit'],
+        dependencies=['database', 'ubec_distribution_service', 'ubec_audit_service'],
         config={'evaluation_interval': 3600}
     )
-    logger.info("✓ Registered: distribution_evaluator (depends on: database, distribution, audit)")
+    logger.info("✓ Registered: ubec_distribution_evaluator (depends on: database, ubec_distribution_service, ubec_audi_service)")
     
     # ========================================================================
     # HOLONIC EVALUATOR
@@ -700,12 +700,12 @@ def register_core_services():
         return evaluator
     
     registry.register_factory(
-        'holonic_evaluator',
+        'ubec_holonic_evaluator',
         create_holonic_evaluator,
         dependencies=['database', 'config'],
         config={'evaluation_interval': 3600}
     )
-    logger.info("✓ Registered: holonic_evaluator (depends on: database, config)")
+    logger.info("✓ Registered: ubec_holonic_evaluator (depends on: database, config)")
    
     # ========================================================================
     # VISUALIZER SERVICE
@@ -756,9 +756,9 @@ def validate_service_registration():
     required_services = [
         'database', 'config', 'stellar_client',
         'air', 'water', 'earth', 'fire',
-        'synchronizer', 'analytics', 'distribution',
-        'distribution_evaluator', 'holonic_evaluator',
-        'visualizer', 'audit'
+        'synchronizer', 'ubec_analytics_service', 'ubec_distribution_service',
+        'ubec_distribution_evaluator', 'ubec_holonic_evaluator',
+        'visualizer', 'ubec_audit_service'
     ]
     
     # Check if service is registered (either as instance or factory)
@@ -821,8 +821,8 @@ async def run_health_check() -> Dict[str, Any]:
         service_categories = {
             'core': ['database', 'config', 'stellar_client'],
             'protocols': ['air', 'water', 'earth', 'fire'],
-            'services': ['synchronizer', 'analytics', 'distribution', 'audit'],
-            'utilities': ['distribution_evaluator', 'holonic_evaluator', 'visualizer']
+            'services': ['synchronizer', 'ubec_analytics_service', 'ubec_distribution_service', 'ubec_audit_service'],
+            'utilities': ['ubec_distribution_evaluator', 'ubec_holonic_evaluator', 'visualizer']
         }
         
         # Flatten all services
@@ -1022,7 +1022,7 @@ async def run_status() -> Dict[str, Any]:
                 }
         
         # Other services using health checks
-        for service_name in ['analytics', 'distribution', 'holonic_evaluator', 'visualizer']:
+        for service_name in ['ubec_analytics_service', 'ubec_distribution_service', 'ubec_holonic_evaluator', 'visualizer']:
             try:
                 service = await registry.get(service_name)
                 if hasattr(service, 'health_check'):
@@ -1155,17 +1155,17 @@ async def run_distribution(
     logger.info(f"\nRunning distribution operation: {action or 'default'} (dry_run={dry_run})")
     
     try:
-        audit = await registry.get('audit')
+        audit = await registry.get('ubec_audit_service')
         
         if action == 'check-compliance' or action is None:
-            if hasattr(audit, 'check_distribution_compliance'):
-                result = await audit.check_distribution_compliance()
+            if hasattr(ubec_audit_service, 'check_distribution_compliance'):
+                result = await ubec_audit_service.check_distribution_compliance()
             else:
                 return create_response(False, 
                                      error="check_distribution_compliance method not available")
-        elif action == 'audit':
-            if hasattr(audit, 'run_comprehensive_audit'):
-                result = await audit.run_comprehensive_audit()
+        elif action == 'ubec_audit_service':
+            if hasattr(ubec_audit_service, 'run_comprehensive_audit'):
+                result = await ubec_audit_service.run_comprehensive_audit()
             else:
                 return create_response(False, 
                                      error="run_comprehensive_audit method not available")
@@ -1446,7 +1446,7 @@ async def main_async(args):
                 )
             
             # Analytics
-            elif args.mode == 'analytics':
+            elif args.mode == 'ubec_analytics_service':
                 result = await run_analytics(
                     analysis_type=args.analysis_type
                 )
