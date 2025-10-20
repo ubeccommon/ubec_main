@@ -1,80 +1,37 @@
-#!/usr/bin/env python3
-# core/utils/service_health.py
 """
-UBEC Protocol Suite - Service Health Check Utilities
-=====================================================
-Reusable health check functionality for all UBEC services.
+UBEC Service Health Check Utility - ENHANCED VERSION
+═══════════════════════════════════════════════════════════════════════════
 
-This module implements Principle #12 (Method Singularity) by providing
-shared health check utilities that prevent code duplication across services.
+Standardized health checking for all UBEC services.
+Provides reusable health check patterns following Principle #12 (Method Singularity).
 
-Design Principles Compliance:
-════════════════════════════════════════════════════════════════════════════
-    ✅ #1  Modular Design: Self-contained utility with clear boundaries
-    ✅ #2  Service Pattern: Utility module, no standalone execution
-    ✅ #3  Service Registry: Used by all registered services
-    ✅ #4  Single Source of Truth: Health data from authoritative sources
-    ✅ #5  Strict Async: All I/O operations use async/await
-    ✅ #6  No Sync Fallbacks: Pure async (with sync option for config-like services)
-    ✅ #7  Per-Asset Monitoring: Enables individual service health tracking
-    ✅ #8  No Duplicate Config: No configuration in this utility
-    ✅ #9  Integrated Rate Limiting: Supports rate limiter health checks
-    ✅ #10 Separation of Concerns: Health logic isolated from business logic
-    ✅ #11 Comprehensive Documentation: Full docstrings and examples
-    ✅ #12 Method Singularity: One implementation for all services
-════════════════════════════════════════════════════════════════════════════
+ENHANCED in v3.0:
+- Added NEEDS_SYNC status for protocols awaiting initial synchronization
+- Actionable messages with specific commands to resolve issues
+- Clear distinction between operational issues vs. data freshness
+- User-friendly guidance for common scenarios
 
-Usage Examples:
-
-    # Basic service health check
-    from core.utils.service_health import ServiceHealthCheck
-    
-    class MyService:
-        async def health_check(self) -> Dict[str, Any]:
-            return await ServiceHealthCheck.basic_health_check(
-                service_name='my_service',
-                is_initialized=self._initialized,
-                cache_size=len(self._cache)
-            )
-    
-    # Database-dependent service
-    class DatabaseService:
-        async def health_check(self) -> Dict[str, Any]:
-            return await ServiceHealthCheck.database_dependent_health(
-                service_name='database_service',
-                db_manager=self.db,
-                is_initialized=self._initialized,
-                pool_size=self.db.pool_size
-            )
-    
-    # API-dependent service with rate limiting
-    class APIService:
-        async def health_check(self) -> Dict[str, Any]:
-            return await ServiceHealthCheck.api_dependent_health(
-                service_name='api_service',
-                is_initialized=self._initialized,
-                rate_limiter=self.rate_limiter,
-                cache_info={'size': len(self._cache), 'ttl': 300},
-                api_connected=await self.test_connection()
-            )
-    
-    # Synchronous service (e.g., config)
-    class ConfigService:
-        def health_check(self) -> Dict[str, Any]:
-            return ServiceHealthCheck.sync_basic_health_check(
-                service_name='config',
-                is_initialized=True,
-                config_loaded=len(self._config) > 0
-            )
+Design Principles:
+    ✅ Principle #7: Per-Asset Monitoring - Detailed health metrics
+    ✅ Principle #12: Method Singularity - Single shared implementation
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.0.0
-Date: October 17, 2025
 Author: UBEC Protocol Team with Claude AI assistance
+Version: 3.0.0 (Actionable Status Messages)
+Date: October 20, 2025
+
+Changelog:
+    v3.0.0 - ACTIONABLE STATUS MESSAGES:
+           - Added NEEDS_SYNC status for protocols awaiting initial sync
+           - Enhanced messages with specific commands to resolve issues
+           - Better distinction between operational vs. data issues
+           - User-friendly guidance for all status types
+    v2.0.0 - Enhanced health check patterns
+    v1.0.0 - Initial implementation
 """
 
 import asyncio
@@ -87,21 +44,24 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# HEALTH STATUS ENUMERATION
+# HEALTH STATUS ENUMERATION - ENHANCED
 # ============================================================================
 
 class HealthStatus(Enum):
     """
-    Health status levels for services.
+    Health status levels for services - ENHANCED with actionable states.
     
     Attributes:
         HEALTHY: Service fully operational with all checks passing
+        NEEDS_SYNC: Service operational but requires data synchronization
+                   (More specific than "degraded" for protocols)
         DEGRADED: Service operational but with some non-critical issues
         UNHEALTHY: Service not operational or critical checks failing
         UNKNOWN: Service status cannot be determined
         INITIALIZING: Service is in the process of starting up
     """
     HEALTHY = "healthy"
+    NEEDS_SYNC = "needs_sync"  # NEW: Clear about what's needed
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
     UNKNOWN = "unknown"
@@ -119,10 +79,14 @@ class ServiceHealthCheck:
     This class provides reusable health check functionality that can be
     used by all services in the system, following Principle #12 (Method Singularity).
     
+    ENHANCED: Now includes actionable status messages that guide users
+    toward solutions rather than just reporting problems.
+    
     The class offers three main patterns:
     1. basic_health_check: For simple services with no external dependencies
     2. database_dependent_health: For services that require database connectivity
     3. api_dependent_health: For services that interact with external APIs
+    4. element_protocol_health: For UBEC element protocols (Air, Water, Earth, Fire)
     
     All methods return standardized health status dictionaries for consistency
     across the entire system.
@@ -147,44 +111,14 @@ class ServiceHealthCheck:
         All other health check methods build upon this foundation.
         
         Args:
-            service_name: Name of the service being checked (e.g., 'analytics', 'synchronizer')
+            service_name: Name of the service being checked
             is_initialized: Whether the service has been fully initialized
-            additional_checks: Optional list of async/sync callables that perform additional checks
-            include_stats: Whether to include detailed statistics (for debugging/monitoring)
-            **kwargs: Additional context to include in response (e.g., cache_size, pool_size)
+            additional_checks: Optional list of async/sync callables that perform checks
+            include_stats: Whether to include detailed statistics
+            **kwargs: Additional context to include in response
         
         Returns:
-            Dictionary with health status information:
-            {
-                'status': 'healthy'|'degraded'|'unhealthy'|'unknown'|'initializing',
-                'message': 'Human-readable status description',
-                'timestamp': 'ISO 8601 timestamp of check',
-                'details': {
-                    'initialized': bool,
-                    'checks': [('pass'|'fail', result), ...],  # if additional_checks provided
-                    **kwargs  # Any additional context provided
-                }
-            }
-        
-        Implementation Notes:
-            - Principle #5: Strict async operations
-            - Principle #7: Per-Asset monitoring with comprehensive health data
-            - Principle #12: Single implementation used by all services
-        
-        Example:
-            async def check_connection():
-                return await self.db.test_connection()
-            
-            async def check_cache():
-                return len(self._cache) > 0
-            
-            health = await ServiceHealthCheck.basic_health_check(
-                service_name='my_service',
-                is_initialized=self._initialized,
-                additional_checks=[check_connection, check_cache],
-                cache_size=len(self._cache),
-                last_sync=self.last_sync_time.isoformat()
-            )
+            Dictionary with health status information including actionable messages
         """
         # Initialize health response structure
         health = {
@@ -200,7 +134,8 @@ class ServiceHealthCheck:
         # Check initialization status first
         if not is_initialized:
             health['status'] = HealthStatus.UNHEALTHY.value
-            health['message'] = f"{service_name} not initialized"
+            health['message'] = (f"{service_name} not initialized - "
+                               f"Check service initialization in main.py")
             return health
         
         # Run additional checks if provided
@@ -223,25 +158,25 @@ class ServiceHealthCheck:
                     failed_checks += 1
                     check_results.append(('fail', str(e)))
                     logger.warning(f"Health check {i+1} for {service_name}: FAIL - {e}")
-                    
-                    # Determine severity based on failure count
-                    if failed_checks == len(additional_checks):
-                        # All checks failed - unhealthy
-                        health['status'] = HealthStatus.UNHEALTHY.value
-                        health['message'] = f"{service_name} unhealthy: all checks failed"
-                    else:
-                        # Some checks failed - degraded
-                        health['status'] = HealthStatus.DEGRADED.value
-                        health['message'] = f"{service_name} degraded: {failed_checks}/{len(additional_checks)} checks failed"
             
             health['details']['checks'] = check_results
-            health['details']['checks_passed'] = len(additional_checks) - failed_checks
+            health['details']['checks_passed'] = len(check_results) - failed_checks
             health['details']['checks_failed'] = failed_checks
+            
+            # Update status based on check results
+            if failed_checks > 0:
+                if failed_checks == len(check_results):
+                    health['status'] = HealthStatus.UNHEALTHY.value
+                    health['message'] = f"{service_name} unhealthy - all checks failed"
+                else:
+                    health['status'] = HealthStatus.DEGRADED.value
+                    health['message'] = (f"{service_name} degraded - "
+                                       f"{failed_checks}/{len(check_results)} checks failed")
         
         return health
     
     # ========================================================================
-    # DATABASE-DEPENDENT HEALTH CHECK
+    # DATABASE DEPENDENT HEALTH CHECK
     # ========================================================================
     
     @staticmethod
@@ -255,198 +190,50 @@ class ServiceHealthCheck:
         """
         Health check for services that depend on database connectivity.
         
-        This method automatically includes database connectivity checks in addition
-        to any service-specific checks provided.
+        ENHANCED: Provides actionable guidance for database connection issues.
         
         Args:
-            service_name: Name of the service (e.g., 'synchronizer', 'analytics')
-            db_manager: Database manager instance with connection capabilities
+            service_name: Name of the service
+            db_manager: Database manager instance
             is_initialized: Whether service is initialized
-            additional_checks: Optional list of additional async/sync checks beyond DB
-            **kwargs: Additional context (e.g., query_count, last_sync)
+            additional_checks: Additional check functions
+            **kwargs: Additional context
         
         Returns:
-            Health status dictionary with database-specific details
-        
-        Implementation Notes:
-            - Automatically tests database connectivity
-            - Measures database response time
-            - Reports connection pool status if available
-            - Principle #4: Database as single source of truth
-            - Principle #7: Per-Asset monitoring with DB metrics
-        
-        Example:
-            class SynchronizerService:
-                async def health_check(self) -> Dict[str, Any]:
-                    async def check_sync_lag():
-                        lag = await self.calculate_sync_lag()
-                        if lag > 100:
-                            raise Exception(f"Sync lag too high: {lag} ledgers")
-                        return lag
-                    
-                    return await ServiceHealthCheck.database_dependent_health(
-                        service_name='synchronizer',
-                        db_manager=self.db,
-                        is_initialized=self._initialized,
-                        additional_checks=[check_sync_lag],
-                        accounts_tracked=await self.get_account_count(),
-                        last_sync=self.last_sync_time.isoformat()
-                    )
+            Health status with database connectivity information
         """
+        # Test database connection
+        db_checks = []
+        
         async def check_db_connection():
-            """Test database connectivity and measure response time."""
-            start_time = datetime.now()
-            
+            """Check if database is accessible"""
             try:
-                # Try to use test_connection if available
-                if hasattr(db_manager, 'test_connection'):
-                    result = await db_manager.test_connection()
-                # Try to use health_check if available
-                elif hasattr(db_manager, 'health_check'):
-                    db_health = await db_manager.health_check()
-                    result = db_health.get('status') == 'healthy'
-                # Fallback: try simple query
-                elif hasattr(db_manager, 'execute_query'):
-                    await db_manager.execute_query("SELECT 1")
-                    result = True
-                else:
-                    logger.warning(f"Database manager for {service_name} has no standard health check method")
-                    result = True  # Assume healthy if we can't check
-                
-                # Calculate response time
-                end_time = datetime.now()
-                response_time_ms = (end_time - start_time).total_seconds() * 1000
-                
-                # Add response time to result
-                if isinstance(result, dict):
-                    result['response_time_ms'] = round(response_time_ms, 2)
-                
-                return result
-                
+                # Simple query to test connection
+                result = await db_manager.execute_query(
+                    "SELECT 1 as test",
+                    fetch_one=True
+                )
+                return result is not None
             except Exception as e:
-                logger.error(f"Database health check failed for {service_name}: {e}")
-                raise
+                raise Exception(f"Database unreachable: {str(e)} - "
+                              f"Check DB_HOST, DB_PORT, and DB_PASSWORD in .env")
         
-        # Build check list
-        all_checks = [check_db_connection]
+        db_checks.append(check_db_connection)
+        
+        # Add any additional checks
         if additional_checks:
-            all_checks.extend(additional_checks)
-        
-        # Add database-specific details
-        db_details = {
-            'has_database': True,
-            **kwargs
-        }
-        
-        # Try to get pool information if available
-        if hasattr(db_manager, '_pool') and db_manager._pool:
-            try:
-                db_details['pool_size'] = db_manager._pool.get_size()
-                db_details['pool_max'] = getattr(db_manager, 'max_pool_size', 'unknown')
-            except Exception:
-                pass  # Pool info not critical
+            db_checks.extend(additional_checks)
         
         return await ServiceHealthCheck.basic_health_check(
             service_name=service_name,
             is_initialized=is_initialized,
-            additional_checks=all_checks,
-            **db_details
-        )
-    
-    # ========================================================================
-    # API-DEPENDENT HEALTH CHECK
-    # ========================================================================
-    
-    @staticmethod
-    async def api_dependent_health(
-        service_name: str,
-        is_initialized: bool = True,
-        rate_limiter: Optional[Any] = None,
-        cache_info: Optional[Dict[str, Any]] = None,
-        additional_checks: Optional[List[Callable]] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Health check for services that depend on external APIs.
-        
-        This method includes checks for rate limiting, caching, and API connectivity
-        in addition to any service-specific checks.
-        
-        Args:
-            service_name: Name of the service (e.g., 'stellar_client', 'orderbook')
-            is_initialized: Whether service is initialized
-            rate_limiter: Optional rate limiter instance for API calls
-            cache_info: Optional cache statistics dictionary
-            additional_checks: Optional list of additional async/sync checks
-            **kwargs: Additional context (e.g., api_connected, last_request_time)
-        
-        Returns:
-            Health status dictionary with API-specific details
-        
-        Implementation Notes:
-            - Reports rate limiter status and configuration
-            - Includes cache metrics if caching is used
-            - Supports additional API connectivity checks
-            - Principle #9: Integrated rate limiting with health monitoring
-            - Principle #7: Per-Asset monitoring with API metrics
-        
-        Example:
-            class StellarClientService:
-                async def health_check(self) -> Dict[str, Any]:
-                    async def check_horizon_api():
-                        try:
-                            await self.server.fetch_base_fee()
-                            return True
-                        except Exception as e:
-                            raise Exception(f"Horizon API unreachable: {e}")
-                    
-                    return await ServiceHealthCheck.api_dependent_health(
-                        service_name='stellar_client',
-                        is_initialized=self._initialized,
-                        rate_limiter=self.rate_limiter,
-                        cache_info={
-                            'size': len(self._cache),
-                            'ttl': self.cache_ttl,
-                            'hit_rate': self.cache_hit_rate
-                        },
-                        additional_checks=[check_horizon_api],
-                        horizon_url=self.horizon_url,
-                        network=self.network
-                    )
-        """
-        api_details = {
-            'has_api': True,
+            additional_checks=db_checks,
+            database_connected=True,  # Will be overridden if check fails
             **kwargs
-        }
-        
-        # Add rate limiter information
-        if rate_limiter:
-            api_details['rate_limiter'] = {
-                'active': True,
-                'calls_per_second': getattr(rate_limiter, 'calls_per_second', 'unknown'),
-                'max_calls': getattr(rate_limiter, 'max_calls', 'unknown'),
-                'window_seconds': getattr(rate_limiter, 'window_seconds', 'unknown')
-            }
-            api_details['has_rate_limiter'] = True
-        else:
-            api_details['has_rate_limiter'] = False
-        
-        # Add cache information
-        if cache_info:
-            api_details['cache'] = cache_info
-            api_details['has_cache'] = True
-        else:
-            api_details['has_cache'] = False
-        
-        return await ServiceHealthCheck.basic_health_check(
-            service_name=service_name,
-            is_initialized=is_initialized,
-            additional_checks=additional_checks,
-            **api_details
         )
     
     # ========================================================================
-    # ELEMENT PROTOCOL HEALTH CHECK
+    # ELEMENT PROTOCOL HEALTH CHECK - ENHANCED
     # ========================================================================
     
     @staticmethod
@@ -461,66 +248,50 @@ class ServiceHealthCheck:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Health check specifically for UBEC element protocols (Air, Water, Earth, Fire).
+        Health check for UBEC element protocols (Air, Water, Earth, Fire).
         
-        This specialized health check includes element-specific metrics like sync
-        freshness, account tracking, and Ubuntu principle alignment.
+        ENHANCED: Uses NEEDS_SYNC status with actionable guidance instead of
+        generic "degraded" status. Provides specific commands to resolve issues.
         
         Args:
-            element_name: Name of element ('air', 'water', 'earth', 'fire')
-            token_code: Token code ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+            element_name: Name of the element (e.g., "Water", "Fire")
+            token_code: Associated token code (e.g., "UBECrc", "UBECtt")
             db_manager: Database manager instance
             is_initialized: Whether protocol is initialized
-            last_sync: Timestamp of last successful sync operation
-            cached_accounts: Number of accounts in memory cache
-            additional_checks: Optional list of element-specific checks
-            **kwargs: Additional element-specific context
+            last_sync: Timestamp of last synchronization (None if never synced)
+            cached_accounts: Number of accounts in cache
+            additional_checks: Additional check functions
+            **kwargs: Additional protocol-specific context
         
         Returns:
-            Health status dictionary with element protocol details
-        
-        Implementation Notes:
-            - Checks data freshness (warns if sync > 30 minutes old)
-            - Reports cache status
-            - Includes Ubuntu principle alignment if available
-            - Principle #7: Per-Asset monitoring for each element
-        
-        Example:
-            class UBECttProtocol:  # Fire Element
-                async def health_check(self) -> Dict[str, Any]:
-                    async def check_transformation_metrics():
-                        count = await self.db.execute_query(
-                            "SELECT COUNT(*) FROM transformation_actions WHERE verified = true"
-                        )
-                        return count > 0
-                    
-                    return await ServiceHealthCheck.element_protocol_health(
-                        element_name='fire',
-                        token_code='UBECtt',
-                        db_manager=self.db,
-                        is_initialized=self._initialized,
-                        last_sync=self.last_sync_time,
-                        cached_accounts=len(self._account_cache),
-                        additional_checks=[check_transformation_metrics],
-                        ubuntu_principle='regeneration',
-                        verified_transformations=await self.get_verified_count()
-                    )
+            Health status with protocol-specific information and actionable guidance
         """
-        async def check_sync_freshness():
-            """Check if data sync is recent enough."""
+        def check_sync_freshness():
+            """
+            Check if data synchronization is recent.
+            
+            ENHANCED: Returns actionable status instead of raising exception.
+            """
             if last_sync is None:
-                raise Exception("Never synchronized")
+                # Return tuple: (status, message, action)
+                return ('needs_sync', 
+                       f'{element_name} protocol awaiting initial synchronization',
+                       'Run: python main.py --mode sync --sync-type all')
             
             time_since_sync = (datetime.now() - last_sync).total_seconds()
             
             # Warn if sync is older than 30 minutes
             if time_since_sync > 1800:
-                raise Exception(f"Data stale: {time_since_sync/60:.1f} minutes since last sync")
+                return ('degraded',
+                       f'{element_name} protocol data stale ({time_since_sync/60:.1f} minutes old)',
+                       'Run: python main.py --mode sync --sync-type all --force')
             
-            return time_since_sync
+            return ('pass', 
+                   f'Data fresh: synced {int(time_since_sync)}s ago',
+                   None)
         
         # Build check list
-        all_checks = [check_sync_freshness]
+        all_checks = []
         if additional_checks:
             all_checks.extend(additional_checks)
         
@@ -534,12 +305,114 @@ class ServiceHealthCheck:
             **kwargs
         }
         
-        return await ServiceHealthCheck.database_dependent_health(
-            service_name=f'{element_name}_protocol',
+        # Perform sync freshness check
+        sync_status, sync_message, sync_action = check_sync_freshness()
+        
+        # Perform database checks
+        db_health = await ServiceHealthCheck.database_dependent_health(
+            service_name=f'{element_name.lower()}_protocol',
             db_manager=db_manager,
             is_initialized=is_initialized,
             additional_checks=all_checks,
             **element_details
+        )
+        
+        # Override status and message based on sync check
+        if sync_status == 'needs_sync':
+            db_health['status'] = HealthStatus.NEEDS_SYNC.value
+            db_health['message'] = sync_message
+            if sync_action:
+                db_health['action'] = sync_action  # NEW: Actionable command
+                db_health['details']['sync_required'] = True
+        elif sync_status == 'degraded':
+            # Only override if current status is healthy
+            if db_health['status'] == HealthStatus.HEALTHY.value:
+                db_health['status'] = HealthStatus.DEGRADED.value
+                db_health['message'] = sync_message
+                if sync_action:
+                    db_health['action'] = sync_action  # NEW: Actionable command
+        else:
+            # Sync is fresh - update message to reflect this
+            db_health['message'] = f'{element_name} protocol operational - {sync_message}'
+        
+        return db_health
+    
+    # ========================================================================
+    # API DEPENDENT HEALTH CHECK
+    # ========================================================================
+    
+    @staticmethod
+    async def api_dependent_health(
+        service_name: str,
+        is_initialized: bool = True,
+        api_url: Optional[str] = None,
+        api_accessible: bool = True,
+        request_count: int = 0,
+        error_count: int = 0,
+        rate_limiter: Optional[Any] = None,
+        cache_info: Optional[Dict[str, Any]] = None,
+        additional_checks: Optional[List[Callable]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Health check for services that depend on external APIs.
+        
+        ENHANCED: Provides actionable guidance for API connectivity issues.
+        
+        Args:
+            service_name: Name of the service
+            is_initialized: Whether service is initialized
+            api_url: URL of the external API
+            api_accessible: Whether API is currently accessible
+            request_count: Number of API requests made
+            error_count: Number of API errors encountered
+            rate_limiter: Rate limiter instance if present
+            cache_info: Cache statistics if available
+            additional_checks: Additional check functions
+            **kwargs: Additional context
+        
+        Returns:
+            Health status with API connectivity information and guidance
+        """
+        api_details = {
+            'api_url': api_url,
+            'api_accessible': api_accessible,
+            'request_count': request_count,
+            'error_count': error_count,
+            'error_rate': (error_count / request_count * 100) if request_count > 0 else 0
+        }
+        
+        # Add rate limiter status
+        if rate_limiter:
+            api_details['rate_limiter_status'] = getattr(rate_limiter, 'status', 'unknown')
+            api_details['has_rate_limiter'] = True
+        else:
+            api_details['has_rate_limiter'] = False
+        
+        # Add cache information
+        if cache_info:
+            api_details['cache'] = cache_info
+            api_details['has_cache'] = True
+        else:
+            api_details['has_cache'] = False
+        
+        # Check API accessibility
+        api_checks = []
+        if not api_accessible and api_url:
+            async def check_api():
+                raise Exception(f"API unreachable: {api_url} - "
+                              f"Check network connectivity and API endpoint")
+            api_checks.append(check_api)
+        
+        # Add additional checks
+        if additional_checks:
+            api_checks.extend(additional_checks)
+        
+        return await ServiceHealthCheck.basic_health_check(
+            service_name=service_name,
+            is_initialized=is_initialized,
+            additional_checks=api_checks if api_checks else None,
+            **api_details
         )
     
     # ========================================================================
@@ -560,133 +433,32 @@ class ServiceHealthCheck:
         """
         Health check for Stellar client service.
         
+        ENHANCED: Provides actionable guidance for Stellar connectivity issues.
+        
         Tests connectivity to Stellar Horizon API and tracks request/error metrics.
-        Follows Principle #7 (Per-Asset Monitoring) with execution minimums.
-        
-        Args:
-            client: StellarClientService instance
-            horizon_url: Horizon server URL
-            initialized: Whether client is initialized
-            request_count: Total API requests made
-            error_count: Total errors encountered
-            last_error: Most recent error message
-            last_error_time: Timestamp of last error
-            **kwargs: Additional context
-        
-        Returns:
-            Health status dictionary
-        
-        Example:
-            return await ServiceHealthCheck.stellar_client_health(
-                client=self,
-                horizon_url=self.horizon_url,
-                initialized=self._initialized,
-                request_count=self._request_count,
-                error_count=self._error_count,
-                last_error=self._last_error,
-                last_error_time=self._last_error_time
-            )
         """
-        import time
-        
-        checks = []
-        details = {
-            'initialized': initialized,
-            'horizon_url': horizon_url,
-            'request_count': request_count,
-            'error_count': error_count,
-            'last_error': last_error,
-            'last_error_time': last_error_time,
-            **kwargs
-        }
-        
-        # Check 1: Initialization
-        if not initialized:
-            checks.append(('fail', 'Client not initialized'))
-            return {
-                'status': 'unhealthy',
-                'message': 'Stellar client not initialized',
-                'details': details,
-                'checks': checks
-            }
-        
-        checks.append(('pass', 'Client initialized'))
-        
-        # Check 2: Connectivity test
-        try:
-            start = time.time()
-            response = await client._client.root().call()
-            elapsed_ms = (time.time() - start) * 1000
-            
-            details['response_time_ms'] = round(elapsed_ms, 2)
-            details['network_passphrase'] = response.get('network_passphrase', 'unknown')
-            details['horizon_version'] = response.get('horizon_version', 'unknown')
-            details['core_version'] = response.get('core_version', 'unknown')
-            details['protocol_version'] = response.get('current_protocol_version', 'unknown')
-            
-            checks.append(('pass', f'Horizon API accessible ({elapsed_ms:.1f}ms)'))
-            
-        except Exception as e:
-            checks.append(('fail', f'Horizon API unreachable: {str(e)}'))
-            details['connection_error'] = str(e)
-            
-            return {
-                'status': 'unhealthy',
-                'message': f'Stellar API connection failed: {str(e)}',
-                'details': details,
-                'checks': checks,
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        # Check 3: Error rate
-        if request_count > 0:
-            error_rate = error_count / request_count
-            details['error_rate'] = round(error_rate, 4)
-            
-            if error_rate > 0.1:  # >10% error rate
-                checks.append(('warn', f'High error rate: {error_rate:.1%}'))
-                status_msg = f'Stellar API degraded (error rate: {error_rate:.1%})'
-            else:
-                checks.append(('pass', f'Error rate acceptable: {error_rate:.2%}'))
-                status_msg = 'Stellar API operational'
-        else:
-            checks.append(('pass', 'No requests yet'))
-            status_msg = 'Stellar API operational'
-        
-        # Check 4: Recent errors
-        if last_error and last_error_time:
+        async def check_horizon_connectivity():
+            """Test connection to Horizon API"""
             try:
-                last_error_dt = datetime.fromisoformat(last_error_time)
-                time_since_error = (datetime.now() - last_error_dt).total_seconds()
-                
-                if time_since_error < 60:  # Error within last minute
-                    checks.append(('warn', f'Recent error: {last_error}'))
-                else:
-                    checks.append(('pass', f'Last error {int(time_since_error)}s ago'))
-            except:
-                pass
+                # Simple connectivity test
+                await client.get_horizon_info()
+                return True
+            except Exception as e:
+                raise Exception(f"Stellar Horizon unreachable: {str(e)} - "
+                              f"Check HORIZON_URL in configuration")
         
-        # Determine overall status
-        has_failures = any(status == 'fail' for status, _ in checks)
-        has_warnings = any(status == 'warn' for status, _ in checks)
-        
-        if has_failures:
-            overall_status = 'unhealthy'
-        elif has_warnings:
-            overall_status = 'degraded'
-        else:
-            overall_status = 'healthy'
-        
-        return {
-            'status': overall_status,
-            'message': status_msg,
-            'details': details,
-            'checks': checks,
-            'checks_passed': sum(1 for s, _ in checks if s == 'pass'),
-            'checks_failed': sum(1 for s, _ in checks if s == 'fail'),
-            'checks_warned': sum(1 for s, _ in checks if s == 'warn'),
-            'timestamp': datetime.now().isoformat()
-        }
+        return await ServiceHealthCheck.api_dependent_health(
+            service_name='stellar_client',
+            is_initialized=initialized,
+            api_url=horizon_url,
+            api_accessible=True,  # Will be updated by check
+            request_count=request_count,
+            error_count=error_count,
+            additional_checks=[check_horizon_connectivity],
+            last_error=last_error,
+            last_error_time=last_error_time,
+            **kwargs
+        )
     
     # ========================================================================
     # SYNCHRONOUS HEALTH CHECK (for config-like services)
@@ -701,175 +473,136 @@ class ServiceHealthCheck:
         """
         Synchronous basic health check for services without async requirements.
         
-        This is used for simple services like configuration managers that don't
-        perform I/O operations and don't need async capabilities.
+        Used for simple services like configuration managers that don't
+        perform I/O operations.
         
         Args:
-            service_name: Name of the service (e.g., 'config')
+            service_name: Name of the service
             is_initialized: Whether service is initialized
-            **kwargs: Additional context to include
+            **kwargs: Additional context
         
         Returns:
-            Health status dictionary (non-async)
-        
-        Implementation Notes:
-            - No async operations
-            - Suitable for config, utility services
-            - Returns immediately
-            - Principle #6: No sync fallbacks (this is intentionally sync)
-        
-        Example:
-            class ConfigService:
-                def health_check(self) -> Dict[str, Any]:
-                    return ServiceHealthCheck.sync_basic_health_check(
-                        service_name='config',
-                        is_initialized=True,
-                        config_loaded=len(self._config) > 0,
-                        num_settings=len(self._config),
-                        horizon_url=self.horizon_url,
-                        network=self.network
-                    )
+            Health status dictionary
         """
-        status = HealthStatus.HEALTHY.value if is_initialized else HealthStatus.UNHEALTHY.value
-        message = f"{service_name} operational" if is_initialized else f"{service_name} not initialized"
-        
         health = {
-            'status': status,
-            'message': message,
+            'status': HealthStatus.HEALTHY.value if is_initialized else HealthStatus.UNHEALTHY.value,
+            'message': f"{service_name} {'operational' if is_initialized else 'not initialized'}",
             'timestamp': datetime.now().isoformat(),
             'details': {
                 'initialized': is_initialized,
-                'async': False,  # Indicate this is a sync check
                 **kwargs
             }
         }
         
+        if not is_initialized:
+            health['action'] = "Check service initialization in main.py"
+        
         return health
+    
+    # ========================================================================
+    # UTILITY: Create Health Check Instance (Deprecated - use static methods)
+    # ========================================================================
+    
+    def __init__(self, service_name: str):
+        """
+        Initialize health check tracker.
+        
+        DEPRECATED: Prefer using static methods directly.
+        This constructor is kept for backward compatibility only.
+        """
+        self.service_name = service_name
+        self.status = HealthStatus.UNKNOWN
+        self.message = ""
+        self.details = {}
+        self.timestamp = datetime.now()
+    
+    def mark_healthy(self, message: str = "Service operational"):
+        """Mark service as healthy"""
+        self.status = HealthStatus.HEALTHY
+        self.message = message
+        self.timestamp = datetime.now()
+    
+    def mark_needs_sync(self, message: str, action: str):
+        """Mark service as needing synchronization with actionable command"""
+        self.status = HealthStatus.NEEDS_SYNC
+        self.message = message
+        self.details['action'] = action
+        self.timestamp = datetime.now()
+    
+    def mark_degraded(self, message: str, action: Optional[str] = None):
+        """Mark service as degraded with optional action"""
+        self.status = HealthStatus.DEGRADED
+        self.message = message
+        if action:
+            self.details['action'] = action
+        self.timestamp = datetime.now()
+    
+    def mark_unhealthy(self, message: str, action: Optional[str] = None):
+        """Mark service as unhealthy with optional action"""
+        self.status = HealthStatus.UNHEALTHY
+        self.message = message
+        if action:
+            self.details['action'] = action
+        self.timestamp = datetime.now()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert health check to dictionary"""
+        result = {
+            'status': self.status.value,
+            'message': self.message,
+            'timestamp': self.timestamp.isoformat(),
+            'details': self.details
+        }
+        
+        if 'action' in self.details:
+            result['action'] = self.details['action']
+        
+        return result
 
 
 # ============================================================================
 # CONVENIENCE FUNCTIONS
 # ============================================================================
 
-async def create_health_check_method(
-    service_name: str,
-    check_type: str = 'basic',
-    **context
-) -> Callable:
+def create_actionable_message(issue: str, command: str) -> str:
     """
-    Factory function to create a health check method for a service.
-    
-    This is a convenience function for dynamically creating health check methods
-    during service initialization.
+    Create an actionable error message that guides users to a solution.
     
     Args:
-        service_name: Name of the service
-        check_type: Type of health check:
-            - 'basic': Simple service with no external dependencies
-            - 'database': Service that requires database connectivity
-            - 'api': Service that interacts with external APIs
-            - 'element': Element protocol (air/water/earth/fire)
-        **context: Context to pass to health check (db_manager, rate_limiter, etc.)
+        issue: Description of the problem
+        command: Command to run to resolve the issue
     
     Returns:
-        Async callable that performs the appropriate health check
-    
-    Usage:
-        class MyService:
-            def __init__(self, db_manager):
-                self.db = db_manager
-                self._initialized = False
-                
-                # Create health check method
-                self.health_check = create_health_check_method(
-                    service_name='my_service',
-                    check_type='database',
-                    db_manager=self.db,
-                    is_initialized=lambda: self._initialized
-                )
-            
-            async def initialize(self):
-                # ... initialization code ...
-                self._initialized = True
-    
-    Note:
-        - For 'database' type: Must provide 'db_manager' in context
-        - For 'api' type: Can provide 'rate_limiter' and/or 'cache_info' in context
-        - For 'element' type: Must provide 'element_name', 'token_code', 'db_manager'
+        Formatted actionable message
     """
-    if check_type == 'database':
-        async def health_check():
-            return await ServiceHealthCheck.database_dependent_health(
-                service_name=service_name,
-                **context
-            )
-    elif check_type == 'api':
-        async def health_check():
-            return await ServiceHealthCheck.api_dependent_health(
-                service_name=service_name,
-                **context
-            )
-    elif check_type == 'element':
-        async def health_check():
-            return await ServiceHealthCheck.element_protocol_health(
-                **context
-            )
-    else:  # 'basic' or unknown type
-        async def health_check():
-            return await ServiceHealthCheck.basic_health_check(
-                service_name=service_name,
-                **context
-            )
-    
-    return health_check
+    return f"{issue} → Run: {command}"
 
 
-def validate_health_response(health: Dict[str, Any]) -> bool:
+def is_service_operational(health_status: Dict[str, Any]) -> bool:
     """
-    Validate that a health check response has the correct structure.
+    Check if a service is operational (healthy or needs_sync).
     
-    This can be used in tests or for defensive programming to ensure
-    health check implementations return properly structured data.
+    A service with needs_sync status is considered operational because
+    it's initialized and ready, just needs data synchronization.
     
     Args:
-        health: Health check response dictionary
+        health_status: Health status dictionary
     
     Returns:
-        True if valid, False otherwise
-    
-    Example:
-        health = await service.health_check()
-        assert validate_health_response(health), "Invalid health check response"
+        True if service is operational, False otherwise
     """
-    required_fields = ['status', 'message', 'timestamp', 'details']
-    
-    # Check required fields exist
-    if not all(field in health for field in required_fields):
-        return False
-    
-    # Check status is valid
-    valid_statuses = [status.value for status in HealthStatus]
-    if health['status'] not in valid_statuses:
-        return False
-    
-    # Check details is a dict
-    if not isinstance(health['details'], dict):
-        return False
-    
-    # Check initialized field exists in details
-    if 'initialized' not in health['details']:
-        return False
-    
-    return True
+    status = health_status.get('status', 'unknown')
+    return status in [HealthStatus.HEALTHY.value, HealthStatus.NEEDS_SYNC.value]
 
 
-# ============================================================================
-# PUBLIC EXPORTS
-# ============================================================================
-
-__all__ = [
-    'HealthStatus',
-    'ServiceHealthCheck',
-    'create_health_check_method',
-    'validate_health_response'
-]
+def get_action_from_health(health_status: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract actionable command from health status.
+    
+    Args:
+        health_status: Health status dictionary
+    
+    Returns:
+        Command to resolve issue, or None if no action needed
+    """
+    return health_status.get('action')

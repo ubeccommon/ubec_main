@@ -1799,7 +1799,7 @@ class HolonicVisualizer:
     <div class="container">
         <header>
             <h1>🌿 UBEC Holonic Evaluation Report</h1>
-            <p class="subtitle">Ubuntu Bioregional Economic Commons • Dynamic Pastel Earth Tones v13.0.0</p>
+            <p class="subtitle">Ubuntu Bioregional Economic Commons • Ubuntu EcoCoin Protocol Suite v13.0.0</p>
             <p class="subtitle">Comprehensive Analysis of Holonic Metrics & Community Performance</p>
         </header>
         
