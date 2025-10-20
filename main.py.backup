@@ -585,12 +585,9 @@ def register_core_services():
         """
         Create distribution service.
         
-        CRITICAL FIX v12.5.1: Now explicitly calls await service.initialize()
-        to ensure service is fully initialized before returning.
-        
-        ENHANCED: Implements comprehensive health checking.
+        ENHANCED: Proper health monitoring implementation.
         """
-        from services.distribution.ubec_distribution_service import create_distribution_service
+        from services.distribution.distribution_service import create_distribution_service
         
         db = await registry.get('database')
         config = await registry.get('config')
@@ -599,8 +596,7 @@ def register_core_services():
         
         logger.info("  ├─ Distribution: Token balance management")
         
-        # Create service instance using factory
-        service = await create_distribution_service(
+        return await create_distribution_service(
             db_manager=db,
             config={
                 'ubec_code': getattr(config, 'UBEC_CODE', 'UBEC'),
@@ -615,12 +611,6 @@ def register_core_services():
             stellar_client=stellar,
             audit_service=audit
         )
-        
-        # CRITICAL FIX v12.5.1: Explicitly call initialize() to complete service setup
-        # This loads the issuer from database and sets _initialized = True
-        await service.initialize()
-        
-        return service
     
     registry.register_factory(
         'distribution',
@@ -629,7 +619,7 @@ def register_core_services():
         config={'distribution_interval': 86400}
     )
     logger.info("✓ Registered: distribution (depends on: database, config, stellar_client, audit)")
-   
+    
     # ========================================================================
     # DISTRIBUTION EVALUATOR
     # ========================================================================
@@ -670,9 +660,6 @@ def register_core_services():
         """
         Create holonic evaluator service.
         
-        CRITICAL FIX v12.5.1: Now explicitly calls await evaluator.initialize()
-        to ensure schema detection and proper initialization.
-        
         ENHANCED: Proper health check implementation.
         """
         from core.holonic.ubec_holonic_evaluator import create_holonic_evaluator as factory
@@ -690,14 +677,7 @@ def register_core_services():
             'ubec_issuer': getattr(config, 'UBEC_ISSUER', '')
         }
         
-        # Create evaluator instance using factory
-        evaluator = await factory(db_manager=db, config=evaluator_config)
-        
-        # CRITICAL FIX v12.5.1: Explicitly call initialize() to detect schema
-        # This sets _schema_detected = True and _initialized = True
-        await evaluator.initialize()
-        
-        return evaluator
+        return await factory(db_manager=db, config=evaluator_config)
     
     registry.register_factory(
         'holonic_evaluator',
@@ -706,7 +686,7 @@ def register_core_services():
         config={'evaluation_interval': 3600}
     )
     logger.info("✓ Registered: holonic_evaluator (depends on: database, config)")
-   
+    
     # ========================================================================
     # VISUALIZER SERVICE
     # ========================================================================
