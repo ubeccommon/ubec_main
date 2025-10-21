@@ -41,20 +41,11 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 12.5.1 (Critical Fixes & Enhanced Health Monitoring)
-Date: October 21, 2025
+Version: 12.5.0 (Comprehensive Health Monitoring)
+Date: October 20, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
 Changelog:
-    v12.5.1 - CRITICAL FIXES:
-            - 🔧 Fixed variable naming error in run_distribution (audit vs ubec_audit_service)
-            - 🔧 Fixed service name in run_analytics (ubec_analytics_service vs analytics)
-            - 🔧 Fixed mode argument inconsistency (analytics vs ubec_analytics_service)
-            - ✅ Enhanced error handling and validation throughout
-            - ✅ Improved logging clarity for all service initializations
-            - 📊 Comprehensive validation of all service registrations
-            - 🎯 Full compliance with all 12 design principles
-            - 📝 Clearer error messages and diagnostics
     v12.5.0 - COMPREHENSIVE HEALTH MONITORING:
             - 🔧 Implemented standardized ServiceHealthCheck utility throughout
             - ✅ All services now properly implement health_check() methods
@@ -312,8 +303,6 @@ def register_core_services():
         )
         
         # Air protocol factory handles initialization internally
-        logger.info(f"    ✓ Air protocol service created: {service.__class__.__name__}")
-        
         return service
     
     registry.register_factory(
@@ -355,7 +344,6 @@ def register_core_services():
         
         # Water protocol requires explicit initialize() call
         await service.initialize()
-        logger.info(f"    ✓ Water protocol service initialized")
         
         return service
     
@@ -397,8 +385,6 @@ def register_core_services():
         )
         
         # Earth protocol factory handles initialization internally
-        logger.info(f"    ✓ Earth protocol service created: {service.__class__.__name__}")
-        
         return service
     
     registry.register_factory(
@@ -439,8 +425,6 @@ def register_core_services():
         )
         
         # Fire protocol factory handles initialization internally
-        logger.info(f"    ✓ Fire protocol service created: {service.__class__.__name__}")
-        
         return service
     
     registry.register_factory(
@@ -817,7 +801,7 @@ async def run_health_check() -> Dict[str, Any]:
             'system': {
                 'status': 'unknown',
                 'timestamp': datetime.now().isoformat(),
-                'version': '12.5.1',
+                'version': '12.5.0',
                 'services_checked': 0,
                 'services_healthy': 0,
                 'services_degraded': 0,
@@ -1132,14 +1116,11 @@ async def run_analytics(analysis_type: str = 'summary') -> Dict[str, Any]:
         analysis_type: Type of analysis ('summary', 'distribution', 'holders')
         
     Principle #5: Async operations
-    
-    CRITICAL FIX v12.5.1: Corrected service name from 'analytics' to 'ubec_analytics_service'
     """
     logger.info(f"\nRunning analytics: type={analysis_type}")
     
     try:
-        # FIXED: Use correct service name from registry
-        analytics = await registry.get('ubec_analytics_service')
+        analytics = await registry.get('analytics')
         
         if analysis_type == 'summary':
             result = await analytics.get_token_summary()
@@ -1170,24 +1151,21 @@ async def run_distribution(
         dry_run: Simulate without making changes
         
     Principle #5: Async operations
-    
-    CRITICAL FIX v12.5.1: Corrected variable name from 'ubec_audit_service' to 'audit'
     """
     logger.info(f"\nRunning distribution operation: {action or 'default'} (dry_run={dry_run})")
     
     try:
-        # FIXED: Use correct variable name 'audit' (matches line 1158)
         audit = await registry.get('ubec_audit_service')
         
         if action == 'check-compliance' or action is None:
-            if hasattr(audit, 'check_distribution_compliance'):
-                result = await audit.check_distribution_compliance()
+            if hasattr(ubec_audit_service, 'check_distribution_compliance'):
+                result = await ubec_audit_service.check_distribution_compliance()
             else:
                 return create_response(False, 
                                      error="check_distribution_compliance method not available")
-        elif action == 'audit':
-            if hasattr(audit, 'run_comprehensive_audit'):
-                result = await audit.run_comprehensive_audit()
+        elif action == 'ubec_audit_service':
+            if hasattr(ubec_audit_service, 'run_comprehensive_audit'):
+                result = await ubec_audit_service.run_comprehensive_audit()
             else:
                 return create_response(False, 
                                      error="run_comprehensive_audit method not available")
@@ -1423,7 +1401,7 @@ async def main_async(args):
     logger.info("UBEC PROTOCOL SYSTEM STARTING")
     logger.info("=" * 70)
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 12.5.1 (Critical Fixes & Enhanced Health Monitoring)")
+    logger.info(f"Version: 12.5.0 (Comprehensive Health Monitoring)")
     logger.info("=" * 70)
     
     try:
@@ -1467,8 +1445,8 @@ async def main_async(args):
                     max_accounts=args.max_accounts or 100
                 )
             
-            # Analytics - FIXED: Use correct mode name
-            elif args.mode == 'analytics':
+            # Analytics
+            elif args.mode == 'ubec_analytics_service':
                 result = await run_analytics(
                     analysis_type=args.analysis_type
                 )
