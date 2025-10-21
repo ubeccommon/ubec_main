@@ -40,7 +40,10 @@ Usage:
     # Sync specific account
     await sync.sync_account('GACCOUNT...', asset_code='UBEC')
     
-    # Sync all data
+    # Sync all data (standardized method name)
+    results = await sync.sync_all()
+    
+    # Sync all tokens (legacy method name)
     results = await sync.sync_all_tokens()
     
     # Health check
@@ -53,16 +56,19 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 2.0.0 (Complete Async + Enhanced Health Check)
-Date: October 17, 2025
+Version: 3.0.0 (Registry Integration + Method Standardization)
+Date: October 21, 2025
 
 Changelog:
+    v3.0.0 - Added register_factory pattern for service registry
+           - Added sync_all() method (standardized interface)
+           - Complete implementation of all methods
+           - Enhanced error handling and logging
+           - Full ServiceHealthCheck integration
     v2.0.0 - Complete async implementation with enhanced health check
            - Implements all 12 design principles
            - Uses ServiceHealthCheck utility (Principle #12)
            - Added rate limiting with circuit breaker (Principle #9)
-           - Database configuration single source (Principle #4 & #8)
-           - Per-asset monitoring and tracking (Principle #7)
     v1.0.0 - Initial synchronizer implementation
 """
 
@@ -102,6 +108,9 @@ except ImportError as e:
 
 # Project imports (Principle #3: Service Registry access)
 from core.utils.service_health import ServiceHealthCheck  # Principle #12
+
+# Configure module logger
+logger = logging.getLogger('UBECDataSynchronizer')
 
 
 # ==================== RATE LIMITER WITH CIRCUIT BREAKER ====================
@@ -213,26 +222,29 @@ class RateLimiterWithCircuitBreaker:
             self.tokens -= 1.0
             self.metrics.total_requests += 1
             self.metrics.current_remaining = int(self.tokens)
-            self.metrics.circuit_breaker_state = self.circuit_state
-            self.metrics.circuit_breaker_failures = self.failure_count
     
     def record_success(self) -> None:
-        """Record successful API call"""
+        """Record successful API call (resets circuit breaker)"""
         if self.circuit_state == 'half_open':
             self.circuit_state = 'closed'
             self.failure_count = 0
+            logger.info("Circuit breaker closed after successful call")
+        
         self.metrics.circuit_breaker_state = self.circuit_state
     
     def record_failure(self) -> None:
-        """Record failed API call"""
+        """Record failed API call (may open circuit breaker)"""
         self.failure_count += 1
         self.last_failure_time = datetime.now()
+        self.metrics.circuit_breaker_failures = self.failure_count
         
         if self.failure_count >= self.circuit_breaker_threshold:
             self.circuit_state = 'open'
-        
-        self.metrics.circuit_breaker_state = self.circuit_state
-        self.metrics.circuit_breaker_failures = self.failure_count
+            self.metrics.circuit_breaker_state = 'open'
+            logger.error(
+                f"Circuit breaker OPENED after {self.failure_count} failures. "
+                f"Will retry in {self.circuit_breaker_timeout}s"
+            )
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get current rate limiter metrics"""
@@ -247,366 +259,356 @@ class RateLimiterWithCircuitBreaker:
         }
 
 
-# ==================== DATA SYNCHRONIZER ====================
+# ==================== UBEC DATA SYNCHRONIZER ====================
+# Principle #1: Modular Design with clear boundaries
 
 class UBECDataSynchronizer:
     """
-    UBEC Data Synchronizer - Async Stellar Blockchain Integration
+    UBEC Data Synchronizer - Blockchain to Database Synchronization.
     
-    Synchronizes UBEC token family data from Stellar blockchain to PostgreSQL.
-    Handles account discovery, balance tracking, transaction history, and
-    operation monitoring for all four UBEC protocol tokens.
-    
-    Token-Element Mapping:
-        - UBEC → Air (Gateway & Universal Access)
-        - UBECrc → Water (Flow & Exchange)
-        - UBECgpi → Earth (Stability & Mutualism)
-        - UBECtt → Fire (Transformation & Catalysis)
+    Synchronizes UBEC token family data from Stellar blockchain to PostgreSQL,
+    implementing all 12 design principles with comprehensive health monitoring.
     
     Attributes:
-        db: Async database manager
-        server: Stellar Horizon ServerAsync
-        rate_limiter: Rate limiter with circuit breaker
-        settings: Configuration from database
-        initialized: Initialization status
+        db: AsyncDatabaseManager instance (Principle #4: Single Source of Truth)
+        settings: Database-backed configuration (Principle #8: No Duplicate Config)
+        rate_limiter: Rate limiter with circuit breaker (Principle #9)
+        server: Stellar Horizon server client (Principle #5: Async operations)
     
-    Lifecycle:
-        1. Instantiate via create_synchronizer_service() factory
-        2. Auto-initializes on first use
-        3. Cleanup via close() method
-    
-    Design Principles:
-        - Principle 1: Modular with clear boundaries
-        - Principle 4: Database as single source of truth
-        - Principle 5: Pure async operations
-        - Principle 9: Built-in rate limiting
-        - Principle 12: Uses ServiceHealthCheck utility
+    Principle Compliance:
+        - #1: Self-contained module with clear boundaries
+        - #2: Factory-based instantiation only
+        - #3: Accessed through service registry
+        - #4: Database is single source of truth
+        - #5: All operations are async/await
+        - #6: No sync fallbacks anywhere
+        - #7: Per-asset monitoring and tracking
+        - #8: Configuration from database only
+        - #9: Integrated rate limiting with circuit breaker
+        - #10: Clear separation of sync logic from data access
+        - #11: Comprehensive documentation throughout
+        - #12: Uses ServiceHealthCheck utility
     """
     
-    # Valid UBEC token codes (Principle #8: Single definition)
-    VALID_UBEC_TOKENS = {'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'}
-    
-    # Element mapping for tokens
+    # UBEC token family configuration
+    VALID_UBEC_TOKENS = ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']
     ELEMENT_MAP = {
-        'UBEC': 'air',
-        'UBECrc': 'water',
-        'UBECgpi': 'earth',
-        'UBECtt': 'fire'
+        'UBEC': 'Air',
+        'UBECrc': 'Water',
+        'UBECgpi': 'Earth',
+        'UBECtt': 'Fire'
     }
     
-    def __init__(self, db_manager, rate_limit_per_second: float = 10.0):
+    def __init__(
+        self,
+        db_manager,
+        rate_limit_per_second: float = 10.0
+    ):
         """
-        Initialize UBEC data synchronizer.
-        
-        DO NOT call directly - use create_synchronizer_service() factory instead.
+        Initialize UBEC Data Synchronizer.
         
         Args:
-            db_manager: Async database manager
-            rate_limit_per_second: API rate limit (default: 10/sec)
-        """
-        # Check if Stellar SDK is available
-        if not STELLAR_SDK_AVAILABLE:
-            raise ImportError(
-                f"Stellar SDK not available: {STELLAR_SDK_IMPORT_ERROR}\n\n"
-                "Please install the Stellar SDK with async support:\n"
-                "  pip install stellar-sdk[aiohttp]\n\n"
-                "Or if already installed, you may need to upgrade:\n"
-                "  pip install --upgrade stellar-sdk[aiohttp]"
-            )
+            db_manager: AsyncDatabaseManager instance
+            rate_limit_per_second: Stellar API rate limit (default: 10/sec)
         
+        Note:
+            Call initialize() after instantiation to complete setup.
+            
+        Principle #2: Service Pattern - Use factory function, not direct instantiation
+        Principle #5: Async initialization pattern
+        """
         self.db = db_manager
-        self.server: Optional[ServerAsync] = None
+        self.logger = logger
+        
+        # Initialization state
+        self.initialized = False
+        self.settings: Dict[str, Any] = {}
+        
+        # Rate limiting (Principle #9)
         self.rate_limiter = RateLimiterWithCircuitBreaker(
-            calls_per_second=rate_limit_per_second
+            calls_per_second=rate_limit_per_second,
+            burst_size=int(rate_limit_per_second * 2),
+            circuit_breaker_threshold=10,
+            circuit_breaker_timeout=300
         )
         
-        # Configuration (Principle #4: Database as single source)
-        self.settings: Dict[str, Any] = {}
+        # Stellar API client (Principle #5: Async)
+        self.server: Optional[ServerAsync] = None
         self.horizon_url: Optional[str] = None
         self.network: Optional[str] = None
-        self.ubec_issuer: Optional[str] = None
         
-        # Logging
-        self.logger = logging.getLogger('UBECDataSynchronizer')
-        
-        # Operation tracking (for health checks - Principle #7)
-        self.initialized = False
+        # Monitoring metrics (Principle #7: Per-Asset Monitoring)
         self._sync_operations_count = 0
         self._last_sync_time: Optional[datetime] = None
         self._error_count = 0
         self._last_error: Optional[str] = None
         self._last_error_time: Optional[datetime] = None
         
-        self.logger.info("UBEC Data Synchronizer created (awaiting initialization)")
+        # Per-token metrics
+        self._token_metrics: Dict[str, Dict[str, Any]] = {
+            token: {
+                'accounts_synced': 0,
+                'last_sync': None,
+                'errors': 0,
+                'last_error': None
+            }
+            for token in self.VALID_UBEC_TOKENS
+        }
     
     # ==================== INITIALIZATION ====================
+    # Principle #5: Strict Async Operations
     
-    async def initialize(self, stellar_client=None) -> None:
+    async def initialize(self) -> None:
         """
-        Initialize synchronizer: load settings and connect to Stellar.
+        Initialize synchronizer with database configuration.
         
-        Principle #4: Settings loaded from database (single source of truth).
-        Principle #5: Async operation.
+        Loads settings from database and creates Stellar API client.
         
-        Args:
-            stellar_client: Optional pre-configured Stellar client (for testing/compatibility)
+        Principle #4: Single Source of Truth - database configuration
+        Principle #5: Strict Async - all operations use async/await
+        Principle #8: No Duplicate Config - settings from database only
         
         Raises:
-            Exception: If initialization fails
+            Exception: If Stellar SDK not available or initialization fails
         """
         if self.initialized:
             self.logger.warning("Synchronizer already initialized")
             return
         
-        try:
-            self.logger.info("Initializing UBEC Data Synchronizer...")
-            
-            # Load settings from database (Principle #4: Single source of truth)
-            await self._load_settings()
-            
-            # Initialize Stellar connection (Principle #5: Async)
-            # Use provided client or create new one
-            if stellar_client:
-                self.logger.info("Using provided Stellar client")
-                self.server = stellar_client
-            else:
-                await self._connect_stellar()
-            
-            self.initialized = True
-            self.logger.info(
-                f"✓ UBEC Data Synchronizer initialized\n"
-                f"  Horizon: {self.horizon_url}\n"
-                f"  Network: {self.network}\n"
-                f"  Issuer: {self.ubec_issuer[:8]}..."
+        # Check Stellar SDK availability
+        if not STELLAR_SDK_AVAILABLE:
+            raise Exception(
+                f"Stellar SDK not available: {STELLAR_SDK_IMPORT_ERROR}. "
+                "Install with: pip install stellar-sdk"
             )
-            
-        except Exception as e:
-            self._error_count += 1
-            self._last_error = str(e)
-            self._last_error_time = datetime.now()
-            self.logger.error(f"Failed to initialize synchronizer: {e}")
-            raise
-    
-    async def _load_settings(self) -> None:
-        """
-        Load configuration settings from database.
         
-        Principle #4: Database is single source of truth.
-        Principle #8: No duplicate configuration.
-        """
-        query = """
-            SELECT setting_key, setting_value
-            FROM ubec_main.system_settings
-            WHERE setting_key IN (
-                'horizon_url',
-                'network_passphrase', 
-                'ubec_issuer',
-                'ubecrc_issuer',
-                'ubecgpi_issuer',
-                'ubectt_issuer'
-            )
-        """
-        
-        rows = await self.db.fetch_all(query)
-        
-        self.settings = {row['setting_key']: row['setting_value'] for row in rows}
+        # Load settings from database (Principle #4 & #8)
+        self.settings = await self._load_settings_from_database()
         
         # Extract critical settings
         self.horizon_url = self.settings.get('horizon_url')
-        self.network = self.settings.get('network_passphrase')
-        self.ubec_issuer = self.settings.get('ubec_issuer')
+        self.network = self.settings.get('network', 'public')
         
-        # Validate
         if not self.horizon_url:
-            raise ValueError("horizon_url not found in system_settings")
-        if not self.ubec_issuer:
-            raise ValueError("ubec_issuer not found in system_settings")
+            raise ValueError("horizon_url not found in database configuration")
         
-        self.logger.info(f"✓ Loaded {len(self.settings)} settings from database")
-    
-    async def _connect_stellar(self) -> None:
-        """
-        Connect to Stellar Horizon API.
-        
-        Principle #5: Uses ServerAsync for async operations.
-        """
+        # Initialize Stellar client (Principle #5: Async)
         self.server = ServerAsync(
             horizon_url=self.horizon_url,
             client=AiohttpClient()
         )
         
-        # Test connection
-        await self._stellar_api_call(
-            self.server.ledgers().limit(1).call
-        )
-        
-        self.logger.info(f"✓ Connected to Stellar Horizon: {self.horizon_url}")
+        self.initialized = True
+        self.logger.info(f"✓ Synchronizer initialized: {self.horizon_url}")
     
-    async def _stellar_api_call(self, api_callable):
+    async def _load_settings_from_database(self) -> Dict[str, Any]:
         """
-        Wrapper for Stellar API calls with rate limiting and error handling.
+        Load configuration settings from database.
         
-        Principle #9: Rate limiting applied to all API calls.
-        Principle #5: Async operation with proper error handling.
+        Principle #4: Single Source of Truth
+        Principle #8: No Duplicate Configuration
+        
+        Returns:
+            Dictionary of configuration settings
+        """
+        query = """
+            SELECT setting_key, setting_value, setting_type
+            FROM system_settings
+            WHERE setting_key IN ('horizon_url', 'network', 'ubec_issuer')
+            AND is_active = TRUE
+        """
+        
+        rows = await self.db.fetch_all(query, ())
+        
+        settings = {}
+        for row in rows:
+            key = row['setting_key']
+            value = row['setting_value']
+            value_type = row.get('setting_type', 'string')
+            
+            # Convert value based on type
+            if value_type == 'integer':
+                settings[key] = int(value)
+            elif value_type == 'float' or value_type == 'decimal':
+                settings[key] = float(value)
+            elif value_type == 'boolean':
+                settings[key] = value.lower() in ('true', '1', 'yes')
+            else:
+                settings[key] = value
+        
+        return settings
+    
+    # ==================== STELLAR API OPERATIONS ====================
+    # Principle #9: Rate Limited API Calls
+    
+    async def _stellar_api_call(self, api_call, max_retries: int = 3):
+        """
+        Execute Stellar API call with rate limiting and circuit breaker.
+        
+        Principle #5: Async operations
+        Principle #9: Rate limiting with circuit breaker
         
         Args:
-            api_callable: Async callable for the API operation
+            api_call: Async callable that performs the API request
+            max_retries: Maximum retry attempts
             
         Returns:
-            API response
+            API call result
             
         Raises:
-            Exception: If API call fails after retries
+            Exception: If all retries fail or circuit breaker is open
         """
-        max_retries = 3
-        retry_delay = 1.0
-        
         for attempt in range(max_retries):
             try:
-                # Acquire rate limit permission
+                # Acquire rate limit token (Principle #9)
                 await self.rate_limiter.acquire()
                 
-                # Make API call
-                result = await api_callable()
+                # Execute API call (Principle #5: Async)
+                result = await api_call()
                 
-                # Record success for circuit breaker
+                # Record success
                 self.rate_limiter.record_success()
                 
                 return result
                 
             except Exception as e:
-                # Record failure for circuit breaker
+                # Record failure
                 self.rate_limiter.record_failure()
+                self._error_count += 1
+                self._last_error = str(e)
+                self._last_error_time = datetime.now()
                 
+                # Log and potentially retry
                 if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
                     self.logger.warning(
-                        f"Stellar API call failed (attempt {attempt + 1}/{max_retries}): {e}"
+                        f"API call failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {wait_time}s..."
                     )
-                    await asyncio.sleep(retry_delay * (attempt + 1))
-                    self.rate_limiter.metrics.retry_attempts += 1
+                    await asyncio.sleep(wait_time)
                 else:
-                    self.logger.error(f"Stellar API call failed after {max_retries} attempts: {e}")
+                    self.logger.error(f"API call failed after {max_retries} attempts: {e}")
                     raise
     
     # ==================== ACCOUNT DISCOVERY ====================
+    # Principle #7: Per-Asset Monitoring
     
     async def discover_accounts(
         self,
         asset_code: str,
-        max_accounts: int = 1000
+        max_accounts: int = 200
     ) -> int:
         """
-        Discover and sync all accounts holding a specific UBEC token.
+        Discover and sync accounts holding a specific UBEC token.
+        
+        Queries Stellar Horizon for all accounts holding the specified asset,
+        then syncs their balances to the database.
+        
+        Note: Stellar Horizon API has a maximum limit of 200 accounts per request.
+        For larger requests, this method automatically paginates through results.
         
         Args:
-            asset_code: Token code (UBEC, UBECrc, UBECgpi, or UBECtt)
-            max_accounts: Maximum accounts to discover (default: 1000)
+            asset_code: UBEC token code (UBEC, UBECrc, UBECgpi, UBECtt)
+            max_accounts: Maximum accounts to discover (default: 200, Stellar API limit)
             
         Returns:
-            int: Number of accounts discovered and synced
+            Number of accounts discovered and synced
+            
+        Raises:
+            ValueError: If asset_code is invalid
             
         Example:
-            >>> count = await sync.discover_accounts('UBEC', max_accounts=500)
-            >>> print(f"Discovered {count} UBEC holders")
-        
-        Principle #5: Async operation
-        Principle #7: Per-asset tracking
+            >>> count = await sync.discover_accounts('UBEC', max_accounts=100)
+            >>> print(f"Synced {count} UBEC holders")
+            
+        Principle #5: Async operations throughout
+        Principle #7: Per-asset monitoring and tracking
         """
-        if asset_code not in self.VALID_UBEC_TOKENS:
-            raise ValueError(f"Invalid asset code: {asset_code}")
-        
         if not self.initialized:
             await self.initialize()
         
+        # Validate asset code
+        if asset_code not in self.VALID_UBEC_TOKENS:
+            raise ValueError(
+                f"Invalid asset code: {asset_code}. "
+                f"Must be one of: {self.VALID_UBEC_TOKENS}"
+            )
+        
+        issuer = self.settings.get('ubec_issuer')
+        if not issuer:
+            raise ValueError("ubec_issuer not found in database configuration")
+        
+        # Create Stellar asset
+        asset = Asset(asset_code, issuer)
+        
+        # Stellar API limit is 200 per request
+        STELLAR_API_LIMIT = 200
+        limit_per_request = min(max_accounts, STELLAR_API_LIMIT)
+        
         try:
-            self.logger.info(f"Discovering {asset_code} holders (max: {max_accounts})...")
-            
-            # Get issuer for this token
-            issuer_key = f"{asset_code.lower()}_issuer"
-            issuer = self.settings.get(issuer_key, self.ubec_issuer)
-            
-            # Create asset
-            asset = Asset(asset_code, issuer)
-            
-            # Query accounts
-            accounts_call = self.server.accounts().for_asset(asset).limit(200)
-            
-            account_count = 0
+            synced_count = 0
             cursor = None
             
-            while account_count < max_accounts:
-                if cursor:
-                    accounts_call = accounts_call.cursor(cursor)
+            # Paginate through results if needed
+            while synced_count < max_accounts:
+                # Calculate how many more accounts we need
+                remaining = max_accounts - synced_count
+                current_limit = min(remaining, STELLAR_API_LIMIT)
                 
-                # Make API call with rate limiting
-                response = await self._stellar_api_call(accounts_call.call)
+                # Build query
+                accounts_query = self.server.accounts().for_asset(asset).limit(current_limit)
+                
+                # Add cursor for pagination if not first request
+                if cursor:
+                    accounts_query = accounts_query.cursor(cursor)
+                
+                # Execute query
+                accounts_call = lambda q=accounts_query: q.call()
+                response = await self._stellar_api_call(accounts_call)
                 
                 accounts = response.get('_embedded', {}).get('records', [])
+                
+                # If no accounts returned, we're done
                 if not accounts:
                     break
                 
-                # Sync each account
+                # Sync each account (Principle #5: Async operations)
                 for account_data in accounts:
-                    account_id = account_data['id']
-                    await self._store_account(account_id, asset_code, account_data)
-                    account_count += 1
-                    
-                    if account_count >= max_accounts:
-                        break
+                    account_id = account_data.get('id')
+                    if account_id:
+                        try:
+                            await self.sync_account(account_id, asset_code)
+                            synced_count += 1
+                        except Exception as e:
+                            self.logger.error(f"Failed to sync account {account_id}: {e}")
+                            self._token_metrics[asset_code]['errors'] += 1
+                            self._token_metrics[asset_code]['last_error'] = str(e)
                 
-                # Update cursor for pagination
-                cursor = accounts[-1].get('paging_token')
-                
-                if len(accounts) < 200:  # Last page
+                # Check if there are more pages
+                next_link = response.get('_links', {}).get('next')
+                if not next_link or synced_count >= max_accounts:
                     break
+                
+                # Update cursor for next page
+                cursor = accounts[-1].get('paging_token') if accounts else None
             
-            self.logger.info(f"✓ Discovered {account_count} {asset_code} holders")
-            return account_count
+            # Update metrics (Principle #7)
+            self._token_metrics[asset_code]['accounts_synced'] += synced_count
+            self._token_metrics[asset_code]['last_sync'] = datetime.now().isoformat()
+            self._sync_operations_count += 1
+            self._last_sync_time = datetime.now()
+            
+            self.logger.info(f"✓ Discovered {synced_count} {asset_code} holders")
+            
+            return synced_count
             
         except Exception as e:
-            self._error_count += 1
-            self._last_error = str(e)
-            self._last_error_time = datetime.now()
-            self.logger.error(f"Error discovering accounts: {e}")
+            self._token_metrics[asset_code]['errors'] += 1
+            self._token_metrics[asset_code]['last_error'] = str(e)
+            self.logger.error(f"Failed to discover {asset_code} accounts: {e}")
             raise
     
-    async def _store_account(
-        self,
-        account_id: str,
-        asset_code: str,
-        account_data: Dict
-    ) -> None:
-        """
-        Store account data in database.
-        
-        Principle #4: Database as single source of truth.
-        """
-        # Extract balance for this asset
-        balance = Decimal('0')
-        for bal in account_data.get('balances', []):
-            if bal.get('asset_code') == asset_code:
-                balance = Decimal(str(bal.get('balance', '0')))
-                break
-        
-        # Store account
-        account_query = """
-            INSERT INTO ubec_main.stellar_accounts (account_id, created_at, updated_at)
-            VALUES ($1, NOW(), NOW())
-            ON CONFLICT (account_id) DO UPDATE SET updated_at = NOW()
-        """
-        await self.db.execute(account_query, (account_id,))
-        
-        # Store balance
-        balance_query = """
-            INSERT INTO ubec_main.ubec_balances 
-            (account_id, asset_code, balance, last_updated)
-            VALUES ($1, $2, $3, NOW())
-            ON CONFLICT (account_id, asset_code) 
-            DO UPDATE SET balance = $3, last_updated = NOW()
-        """
-        await self.db.execute(balance_query, (account_id, asset_code, float(balance)))
-    
-    # ==================== ACCOUNT SYNC ====================
+    # ==================== ACCOUNT SYNCHRONIZATION ====================
     
     async def sync_account(
         self,
@@ -614,75 +616,181 @@ class UBECDataSynchronizer:
         asset_code: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Sync specific account data from Stellar.
+        Sync a specific account's balances to database.
+        
+        Retrieves account data from Stellar and updates database with current
+        balances for all UBEC tokens held.
         
         Args:
-            account_id: Stellar account ID
-            asset_code: Optional specific token to sync, or None for all
+            account_id: Stellar account ID (G... address)
+            asset_code: Optional - sync specific asset only
             
         Returns:
-            Dict with sync results
-        
+            Dictionary with sync results
+            
         Example:
-            >>> result = await sync.sync_account('GXXX...', asset_code='UBEC')
-            >>> print(f"Synced balance: {result['balance']}")
+            >>> result = await sync.sync_account('GACCOUNT...', 'UBEC')
+            >>> print(f"Balance: {result['UBEC']['balance']}")
+            
+        Principle #4: Database is single source of truth
+        Principle #5: Async operations
         """
         if not self.initialized:
             await self.initialize()
         
+        issuer = self.settings.get('ubec_issuer')
+        
         try:
-            self._sync_operations_count += 1
-            self._last_sync_time = datetime.now()
+            # Fetch account from Stellar (Principle #5: Async)
+            account_call = lambda: self.server.accounts().account_id(account_id).call()
+            account_data = await self._stellar_api_call(account_call)
             
-            # Fetch account data from Stellar
-            account_call = self.server.accounts().account_id(account_id)
-            account_data = await self._stellar_api_call(account_call.call)
+            balances = account_data.get('balances', [])
+            results = {}
             
-            # Update account record
-            await self._store_account(account_id, asset_code or 'UBEC', account_data)
+            # Process each balance
+            for balance in balances:
+                asset_type = balance.get('asset_type')
+                
+                # Skip native (XLM) balances
+                if asset_type == 'native':
+                    continue
+                
+                code = balance.get('asset_code')
+                balance_issuer = balance.get('asset_issuer')
+                
+                # Only process UBEC tokens from correct issuer
+                if (code in self.VALID_UBEC_TOKENS and 
+                    balance_issuer == issuer and
+                    (asset_code is None or code == asset_code)):
+                    
+                    amount = Decimal(balance.get('balance', '0'))
+                    
+                    # Store in database (Principle #4: Single Source of Truth)
+                    await self._store_account_balance(
+                        account_id=account_id,
+                        asset_code=code,
+                        balance=amount
+                    )
+                    
+                    results[code] = {
+                        'balance': str(amount),
+                        'element': self.ELEMENT_MAP[code]
+                    }
             
-            # Sync balances for all UBEC tokens
-            balances_synced = {}
-            for bal in account_data.get('balances', []):
-                token = bal.get('asset_code')
-                if token in self.VALID_UBEC_TOKENS:
-                    if asset_code is None or token == asset_code:
-                        balance = Decimal(str(bal.get('balance', '0')))
-                        await self._store_account(account_id, token, account_data)
-                        balances_synced[token] = float(balance)
-            
-            return {
-                'account_id': account_id,
-                'balances': balances_synced,
-                'timestamp': datetime.now().isoformat()
-            }
+            return results
             
         except NotFoundError:
             self.logger.warning(f"Account not found: {account_id}")
-            return {'account_id': account_id, 'error': 'not_found'}
+            return {}
         except Exception as e:
-            self._error_count += 1
-            self._last_error = str(e)
-            self._last_error_time = datetime.now()
-            self.logger.error(f"Error syncing account: {e}")
+            self.logger.error(f"Failed to sync account {account_id}: {e}")
             raise
     
-    # ==================== BATCH SYNC ====================
-    
-    async def sync_all_tokens(self, max_accounts_per_token: int = 500) -> Dict[str, Any]:
+    async def _store_account_balance(
+        self,
+        account_id: str,
+        asset_code: str,
+        balance: Decimal
+    ) -> None:
         """
-        Sync data for all UBEC tokens.
+        Store account balance in database.
+        
+        Principle #4: Database is single source of truth
+        Principle #5: Async database operation
         
         Args:
-            max_accounts_per_token: Max accounts to sync per token
+            account_id: Stellar account ID
+            asset_code: UBEC token code (parameter name for API compatibility)
+            balance: Token balance
+            
+        Note:
+            The ubec_balances table uses 'token_code' column, not 'asset_code'.
+        """
+        # Map asset_code to element for the element column
+        element_map = {
+            'UBEC': 'air',
+            'UBECrc': 'water',
+            'UBECgpi': 'earth',
+            'UBECtt': 'fire'
+        }
+        element = element_map.get(asset_code, 'air')
+        
+        query = """
+            INSERT INTO ubec_balances 
+                (account_id, token_code, element, balance, last_modified_at)
+            VALUES ($1, $2::token_code, $3::element_type, $4, NOW())
+            ON CONFLICT (account_id, token_code) 
+            DO UPDATE SET 
+                balance = EXCLUDED.balance,
+                last_modified_at = EXCLUDED.last_modified_at
+        """
+        
+        await self.db.execute(query, (account_id, asset_code, element, balance))
+    
+    # ==================== BULK SYNCHRONIZATION ====================
+    # Principle #12: Method Singularity
+    
+    async def sync_all_tokens(
+        self,
+        max_accounts_per_token: int = 200
+    ) -> Dict[str, Any]:
+        """
+        Synchronize all UBEC tokens (legacy method name).
+        
+        Discovers and syncs accounts for all four UBEC tokens:
+        UBEC (Air), UBECrc (Water), UBECgpi (Earth), UBECtt (Fire).
+        
+        Note: Stellar Horizon API limits to 200 accounts per request.
+        
+        Args:
+            max_accounts_per_token: Max accounts to discover per token (default: 200)
             
         Returns:
             Dict with sync results for each token
-        
+            
         Example:
             >>> results = await sync.sync_all_tokens(max_accounts_per_token=100)
-            >>> for token, count in results.items():
-            ...     print(f"{token}: {count} accounts")
+            >>> for token, data in results.items():
+            ...     print(f"{token}: {data['accounts']} accounts")
+            
+        Note:
+            This is the legacy method name. Use sync_all() for standardized interface.
+            
+        Principle #7: Per-asset monitoring
+        Principle #12: Method singularity - delegates to sync_all()
+        """
+        return await self.sync_all(max_accounts_per_token=max_accounts_per_token)
+    
+    async def sync_all(
+        self,
+        force: bool = False,
+        max_accounts_per_token: int = 200
+    ) -> Dict[str, Any]:
+        """
+        Synchronize all UBEC tokens (standardized method name).
+        
+        This is the PRIMARY method for full synchronization, called by main.py.
+        Discovers and syncs accounts for all four UBEC tokens.
+        
+        Note: Stellar Horizon API limits to 200 accounts per request. This method
+        will paginate automatically if you request more than 200 accounts.
+        
+        Args:
+            force: Force sync even if recently synced (currently ignored)
+            max_accounts_per_token: Max accounts to discover per token (default: 200)
+            
+        Returns:
+            Dict with sync results for each token
+            
+        Example:
+            >>> results = await sync.sync_all(max_accounts_per_token=100)
+            >>> for token, data in results.items():
+            ...     print(f"{token} ({data['element']}): {data['accounts']} accounts")
+            
+        Principle #5: Async operations
+        Principle #7: Per-asset monitoring
+        Principle #12: Method singularity - single implementation
         """
         if not self.initialized:
             await self.initialize()
@@ -719,13 +827,15 @@ class UBECDataSynchronizer:
         
         Returns:
             Health status dictionary with standardized format
-        
+            
         Example:
             >>> health = await sync.health_check()
             >>> if health['status'] == 'healthy':
             ...     print("✓ Synchronizer operational")
             >>> else:
             ...     print(f"✗ Issues: {health['message']}")
+            
+        Principle #12: Uses ServiceHealthCheck utility (method singularity)
         """
         async def check_stellar_connectivity():
             """Verify Stellar API connectivity"""
@@ -734,7 +844,7 @@ class UBECDataSynchronizer:
             
             try:
                 await self._stellar_api_call(
-                    self.server.ledgers().limit(1).call
+                    lambda: self.server.ledgers().limit(1).call()
                 )
                 return "Stellar API accessible"
             except Exception as e:
@@ -801,7 +911,8 @@ class UBECDataSynchronizer:
             network=self.network,
             error_count=self._error_count,
             last_error=self._last_error,
-            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None,
+            token_metrics=self._token_metrics
         )
     
     # ==================== LIFECYCLE ====================
@@ -829,8 +940,8 @@ def create_synchronizer_service(db_manager, **kwargs):
     """
     Factory function to create UBEC Data Synchronizer service.
     
-    This is the proper way to instantiate the service for use in the
-    service registry.
+    This is a convenience function for creating the service.
+    For service registry integration, use register_factory instead.
     
     Principle #2: Service pattern with factory function.
     Principle #3: Dependencies injected via service registry.
@@ -841,14 +952,13 @@ def create_synchronizer_service(db_manager, **kwargs):
             - rate_limit_per_second: API rate limit (default: 10.0)
     
     Returns:
-        UBECDataSynchronizer: Service instance
+        UBECDataSynchronizer: Service instance (not initialized)
+        
+    Note:
+        Call initialize() on the returned instance before use.
     
     Example:
-        >>> # In service registry
-        >>> sync = create_synchronizer_service(
-        ...     db_manager=db,
-        ...     rate_limit_per_second=10.0
-        ... )
+        >>> sync = create_synchronizer_service(db_manager, rate_limit_per_second=10.0)
         >>> await sync.initialize()
         >>> health = await sync.health_check()
     """
@@ -858,12 +968,85 @@ def create_synchronizer_service(db_manager, **kwargs):
     )
 
 
+# ==================== SERVICE REGISTRY INTEGRATION ====================
+# Principle #3: Service Registry for Dependencies
+
+async def register_factory(database, config, stellar_client):
+    """
+    Factory function for service registry integration.
+    
+    This is the STANDARD way to create and register the synchronizer service
+    with the service registry.
+    
+    Principle #2: Service Pattern with centralized execution
+    Principle #3: Service Registry for Dependencies
+    Principle #4: Single Source of Truth (config from database)
+    Principle #5: Async initialization
+    
+    Dependencies:
+        database: Database manager service (provides data persistence)
+        config: Configuration service (provides database-backed settings)
+        stellar_client: Stellar client service (for API access)
+    
+    Args:
+        database: AsyncDatabaseManager from registry
+        config: Config service from registry (currently unused, but available)
+        stellar_client: Stellar client from registry (currently unused, but available)
+    
+    Returns:
+        Fully initialized UBECDataSynchronizer instance
+        
+    Raises:
+        Exception: If initialization fails
+    
+    Usage (by service registry):
+        registry.register(
+            "synchronizer",
+            register_factory,
+            dependencies=["database", "config", "stellar_client"]
+        )
+        
+        # Later, in application code:
+        sync = await registry.get("synchronizer")
+        results = await sync.sync_all()
+    
+    Example:
+        >>> # In main.py service registration
+        >>> from services.sync.ubec_data_synchronizer import register_factory
+        >>> 
+        >>> registry.register_factory(
+        ...     'synchronizer',
+        ...     register_factory,
+        ...     dependencies=['database', 'config', 'stellar_client']
+        ... )
+        >>> 
+        >>> # Later in code
+        >>> sync = await registry.get('synchronizer')
+        >>> health = await sync.health_check()
+    """
+    logger.info("Creating UBEC Data Synchronizer via factory...")
+    
+    # Create service instance
+    service = UBECDataSynchronizer(
+        db_manager=database,
+        rate_limit_per_second=10.0  # Default rate limit
+    )
+    
+    # Initialize the service
+    await service.initialize()
+    
+    logger.info("✓ UBEC Data Synchronizer created and initialized")
+    
+    return service
+
+
 # ==================== MODULE EXPORTS ====================
 # Principle #1: Modular Design - Clear public interface
 
 __all__ = [
     'UBECDataSynchronizer',
     'create_synchronizer_service',
+    'register_factory',
     'RateLimiterWithCircuitBreaker',
     'RateLimiterMetrics'
 ]
@@ -877,17 +1060,28 @@ if __name__ == "__main__":
         "This module implements the service pattern and should not be run directly. "
         "Use main.py as the orchestrator.\n\n"
         "Example usage:\n"
-        "  from core.db.ubec_data_synchronizer import create_synchronizer_service\n"
-        "  sync = create_synchronizer_service(db_manager)\n"
-        "  await sync.initialize()\n"
-        "  count = await sync.discover_accounts('UBEC')\n"
+        "  from services.sync.ubec_data_synchronizer import register_factory\n"
+        "  # Register with service registry\n"
+        "  registry.register_factory(\n"
+        "      'synchronizer',\n"
+        "      register_factory,\n"
+        "      dependencies=['database', 'config', 'stellar_client']\n"
+        "  )\n"
+        "  # Use the service\n"
+        "  sync = await registry.get('synchronizer')\n"
+        "  results = await sync.sync_all()\n"
         "  health = await sync.health_check()\n\n"
-        "Version 2.0.0 - Complete Async + Enhanced Health Check:\n"
+        "Version 3.0.0 - Registry Integration + Method Standardization:\n"
+        "  - Added register_factory for service registry integration\n"
+        "  - Added sync_all() method (standardized interface)\n"
+        "  - Complete implementation of all methods\n"
         "  - All 12 design principles implemented\n"
         "  - Uses ServiceHealthCheck utility (Principle #12)\n"
         "  - Rate limiting with circuit breaker (Principle #9)\n"
         "  - Database configuration (Principles #4 & #8)\n"
         "  - Per-asset monitoring (Principle #7)\n\n"
         "Attribution:\n"
-        "  This project uses the services of Claude and Anthropic PBC."
+        "  This project uses the services of Claude and Anthropic PBC to inform\n"
+        "  our decisions and recommendations. This project was made possible with\n"
+        "  the assistance of Claude and Anthropic PBC."
     )
