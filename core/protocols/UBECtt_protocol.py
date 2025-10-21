@@ -56,10 +56,17 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.1.0 (Enhanced Health Monitoring - DRY Compliance)
-Date: October 19, 2025
+Version: 3.2.0 (CRITICAL FIX - Async Factory Function)
+Date: October 21, 2025
 
 Changelog:
+    v3.2.0 - CRITICAL FIX: Factory function now properly async
+           - FIXED: Changed `def create_ubectt_service` to `async def create_ubectt_service`
+           - RESOLVES: TypeError "object can't be used in 'await' expression"
+           - ALIGNS: Now matches water protocol's async factory pattern
+           - MAINTAINS: All functionality from v3.1.0
+           - COMPLETES: Principle #5 compliance (Strict Async Operations)
+           - TESTED: Service initialization now succeeds in health checks
     v3.1.0 - ENHANCEMENT: Improved health check with DRY compliance
            - ENHANCED: Uses instance variables instead of hardcoded strings
            - ADDED: Comprehensive error tracking (last_error, last_error_time)
@@ -991,21 +998,24 @@ class UBECttProtocolService:
 
 # ==================== SERVICE FACTORY ====================
 # Principle 2: Service Pattern - Factory for instantiation
+# Principle 5: Strict Async Operations - Factory is async
 
-def create_ubectt_service(
+async def create_ubectt_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,
     **kwargs
 ) -> UBECttProtocolService:
     """
-    Factory function to create UBECtt Fire protocol service instance.
+    Async factory function to create UBECtt Fire protocol service instance.
     
     This is the proper way to instantiate the service for use in the service registry.
-    Changed to async to allow for future async initialization if needed.
+    The factory is now async to comply with Principle #5 (Strict Async Operations)
+    and align with other element protocol patterns (water, air).
     
     Principle 2: Service pattern with factory function.
     Principle 3: Dependencies injected via service registry.
+    Principle 5: Strict Async - Factory is async for consistency.
     
     Args:
         db_manager: Database manager with async support
@@ -1031,6 +1041,11 @@ def create_ubectt_service(
         ...     stellar_client=stellar
         ... )
         >>> health = await service.health_check()
+    
+    Version History:
+        v3.2.0 - Changed from sync to async function (CRITICAL FIX)
+        v3.1.0 - Added comprehensive health monitoring
+        v3.0.0 - Added element metadata exposure
     """
     # Validate required config parameters
     required_params = ['asset_code', 'issuer']
@@ -1047,8 +1062,9 @@ def create_ubectt_service(
         rate_limit_calls_per_second=kwargs.get('rate_limit_calls_per_second', 10.0)
     )
     
-    # Note: No async initialization needed currently
-    # Pattern allows for future async initialization if needed
+    # Note: No additional async initialization needed currently
+    # Service is ready immediately after construction
+    # Factory is async for consistency with other protocol patterns
     
     return service
 
@@ -1086,7 +1102,10 @@ if __name__ == "__main__":
         "  service = await create_ubectt_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
         "  await service.sync_transformation_data()\n\n"
-        "Version 3.0.0 - Element Metadata + Health Check:\n"
+        "Version 3.2.0 - CRITICAL FIX: Async Factory Function:\n"
+        "  - Factory function now properly async (def -> async def)\n"
+        "  - Resolves TypeError in service registry initialization\n"
+        "  - Aligns with water and air protocol patterns\n"
         "  - Complete element metadata (fire, regeneration, 🜂)\n"
         "  - Uses ServiceHealthCheck.element_protocol_health() utility\n"
         "  - Implements Principle #12: Method Singularity\n"

@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-21T13:28:18.575793  
+**Generated:** 2025-10-21T17:14:39.276089  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 77 MB  
