@@ -1,247 +1,247 @@
 triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
-2025-10-22 07:10:08,076 - __main__ - INFO - 
+2025-10-22 07:50:19,317 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:08,076 - __main__ - INFO - UBEC PROTOCOL SYSTEM STARTING
-2025-10-22 07:10:08,076 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,076 - __main__ - INFO - Mode: health
-2025-10-22 07:10:08,076 - __main__ - INFO - Version: 16.1.0 (Critical Fixes - Element Protocols & Synchronizer)
-2025-10-22 07:10:08,076 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,076 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,076 - __main__ - INFO - REGISTERING SERVICES WITH SERVICE REGISTRY
-2025-10-22 07:10:08,076 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: database
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: config (depends on: database)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: rate_limiter (depends on: database)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: stellar_client (depends on: config, rate_limiter)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: air (depends on: database, config, stellar_client)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: water (depends on: database, config, stellar_client)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: earth (depends on: database, config, stellar_client)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: fire (depends on: database, config, stellar_client)
-2025-10-22 07:10:08,076 - __main__ - INFO - ✓ Registered: synchronizer (depends on: database, config, stellar_client)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: ubec_analytics_service (depends on: database, config)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: ubec_audit_service (depends on: database, config)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: ubec_distribution_service (depends on: database, config, stellar_client, ubec_audit_service)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: ubec_distribution_evaluator (depends on: database, ubec_distribution_service, ubec_audit_service)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: ubec_holonic_evaluator (depends on: database, config)
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ Registered: visualizer (depends on: database, config)
-2025-10-22 07:10:08,077 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ ALL SERVICES REGISTERED
-2025-10-22 07:10:08,077 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - ✓ All 15 required services registered
-2025-10-22 07:10:08,077 - __main__ - INFO - 
+2025-10-22 07:50:19,318 - __main__ - INFO - UBEC PROTOCOL SYSTEM STARTING
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - Mode: health
+2025-10-22 07:50:19,318 - __main__ - INFO - Version: 16.1.0 (Critical Fixes - Element Protocols & Synchronizer)
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - REGISTERING SERVICES WITH SERVICE REGISTRY
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: database
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: config (depends on: database)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: rate_limiter (depends on: database)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: stellar_client (depends on: config, rate_limiter)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: air (depends on: database, config, stellar_client)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: water (depends on: database, config, stellar_client)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: earth (depends on: database, config, stellar_client)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: fire (depends on: database, config, stellar_client)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: synchronizer (depends on: database, config, stellar_client)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: ubec_analytics_service (depends on: database, config)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: ubec_audit_service (depends on: database, config)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: ubec_distribution_service (depends on: database, config, stellar_client, ubec_audit_service)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: ubec_distribution_evaluator (depends on: database, ubec_distribution_service, ubec_audit_service)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: ubec_holonic_evaluator (depends on: database, config)
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ Registered: visualizer (depends on: database, config)
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ ALL SERVICES REGISTERED
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - ✓ All 15 required services registered
+2025-10-22 07:50:19,318 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - SERVICE REGISTRY VALIDATED - READY TO EXECUTE
-2025-10-22 07:10:08,077 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - 
+2025-10-22 07:50:19,318 - __main__ - INFO - SERVICE REGISTRY VALIDATED - READY TO EXECUTE
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - INITIALIZING SERVICES CONCURRENTLY
-2025-10-22 07:10:08,077 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:08,077 - __main__ - INFO - 
+2025-10-22 07:50:19,318 - __main__ - INFO - INITIALIZING SERVICES CONCURRENTLY
+2025-10-22 07:50:19,318 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:19,318 - __main__ - INFO - 
 🔷 Level 0: Initializing foundation services...
-2025-10-22 07:10:08,077 - core.service_registry - INFO - Initializing service: database
-2025-10-22 07:10:08,096 - __main__ - INFO -   ├─ Database: schema=ubec_main
-2025-10-22 07:10:08,096 - __main__ - INFO -      Pool: 2-10 connections
-2025-10-22 07:10:08,096 - core.db.database_manager - INFO - AsyncDatabaseManager created for ubec.ubec_main,public (pool: 2-10)
-2025-10-22 07:10:08,163 - core.db.database_manager - INFO - Database pool initialized: ubec.ubec_main,public (2-10 connections)
-2025-10-22 07:10:08,163 - core.service_registry - INFO - ✓ Initialized service: database
-2025-10-22 07:10:08,163 - __main__ - INFO -   ✓ database: 85ms
-2025-10-22 07:10:08,163 - __main__ - INFO - 
+2025-10-22 07:50:19,318 - core.service_registry - INFO - Initializing service: database
+2025-10-22 07:50:19,341 - __main__ - INFO -   ├─ Database: schema=ubec_main
+2025-10-22 07:50:19,341 - __main__ - INFO -      Pool: 2-10 connections
+2025-10-22 07:50:19,341 - core.db.database_manager - INFO - AsyncDatabaseManager created for ubec.ubec_main,public (pool: 2-10)
+2025-10-22 07:50:19,405 - core.db.database_manager - INFO - Database pool initialized: ubec.ubec_main,public (2-10 connections)
+2025-10-22 07:50:19,405 - core.service_registry - INFO - ✓ Initialized service: database
+2025-10-22 07:50:19,405 - __main__ - INFO -   ✓ database: 86ms
+2025-10-22 07:50:19,405 - __main__ - INFO - 
 🔷 Level 1: Initializing configuration...
-2025-10-22 07:10:08,163 - core.service_registry - INFO - Initializing service: config
-2025-10-22 07:10:08,164 - __main__ - INFO -   ├─ Config: Database-backed settings (schema=ubec_main)
-2025-10-22 07:10:08,166 - config.settings - INFO - ✓ Configuration loaded: 68 settings from database
-2025-10-22 07:10:08,166 - core.service_registry - INFO - ✓ Initialized service: config
-2025-10-22 07:10:08,166 - __main__ - INFO -   ✓ config: 3ms
-2025-10-22 07:10:08,167 - __main__ - INFO - 
+2025-10-22 07:50:19,405 - core.service_registry - INFO - Initializing service: config
+2025-10-22 07:50:19,412 - __main__ - INFO -   ├─ Config: Database-backed settings (schema=ubec_main)
+2025-10-22 07:50:19,415 - config.settings - INFO - ✓ Configuration loaded: 70 settings from database
+2025-10-22 07:50:19,415 - core.service_registry - INFO - ✓ Initialized service: config
+2025-10-22 07:50:19,415 - __main__ - INFO -   ✓ config: 9ms
+2025-10-22 07:50:19,415 - __main__ - INFO - 
 🔷 Level 2: Initializing independent services in parallel...
-2025-10-22 07:10:08,167 - core.service_registry - INFO - Initializing service: rate_limiter
-2025-10-22 07:10:08,174 - __main__ - INFO -   ├─ Rate Limiter: Database-backed configuration
-2025-10-22 07:10:08,174 - __main__ - INFO -      ✓ Token bucket algorithm
-2025-10-22 07:10:08,174 - __main__ - INFO -      ✓ Circuit breaker pattern
-2025-10-22 07:10:08,174 - __main__ - INFO -      ✓ Per-API monitoring
-2025-10-22 07:10:08,174 - __main__ - INFO -      Buffer: 80% of max
-2025-10-22 07:10:08,174 - services.stellar.rate_limiter_service - INFO - RateLimiterService created (awaiting initialization)
-2025-10-22 07:10:08,174 - services.stellar.rate_limiter_service - INFO - Initializing RateLimiterService...
-2025-10-22 07:10:08,175 - core.service_registry - INFO - Initializing service: ubec_analytics_service
-2025-10-22 07:10:08,177 - __main__ - INFO -   ├─ Analytics: Token distribution and metrics
-2025-10-22 07:10:08,177 - services.analytics.ubec_analytics_service - INFO - Initializing UBEC Analytics Service
-2025-10-22 07:10:08,177 - services.analytics.ubec_analytics_service - INFO - ✓ UBEC Analytics Service initialized
-2025-10-22 07:10:08,177 - services.analytics.ubec_analytics_service - INFO - Initializing analytics service...
-2025-10-22 07:10:08,178 - core.service_registry - INFO - Initializing service: ubec_audit_service
-2025-10-22 07:10:08,180 - __main__ - INFO -   ├─ Audit: Compliance & auditing
-2025-10-22 07:10:08,181 - __main__ - INFO -     ✓ Loaded administration account: GDEQ4KXO...
-2025-10-22 07:10:08,181 - __main__ - INFO -     ✓ Loaded stewardship account: GA3I6MN4...
-2025-10-22 07:10:08,181 - __main__ - INFO -     ✓ Tokenomics targets: Admin=5.0%, Steward=30.0%
-2025-10-22 07:10:08,181 - UBECAuditService - INFO - Audit service created for UBEC
-2025-10-22 07:10:08,181 - UBECAuditService - INFO - Initializing audit service...
-2025-10-22 07:10:08,181 - core.service_registry - INFO - Initializing service: ubec_holonic_evaluator
-2025-10-22 07:10:08,183 - __main__ - INFO -   ├─ Holonic Evaluator: Ubuntu principles
-2025-10-22 07:10:08,183 - UBECHolonic - INFO - Holonic Evaluator created for UBEC (schema: ubec_main)
-2025-10-22 07:10:08,183 - core.service_registry - INFO - Initializing service: visualizer
-2025-10-22 07:10:09,132 - __main__ - INFO -   ├─ Visualizer: Charts & reports
-2025-10-22 07:10:09,132 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer initialized | schema=ubec_main | element_mode=all | color_palette=Ubuntu_v13.0.0
-2025-10-22 07:10:09,136 - UBECAuditService - INFO - ✓ Database connection verified
-2025-10-22 07:10:09,136 - UBECAuditService - INFO - ✓ Configuration valid: UBEC, targets: 5.0%/30.0%
-2025-10-22 07:10:09,136 - UBECAuditService - INFO - ✓ Audit service initialized
-2025-10-22 07:10:09,136 - core.service_registry - INFO - ✓ Initialized service: ubec_audit_service
-2025-10-22 07:10:09,136 - __main__ - INFO -   ✓ ubec_audit_service: 958ms
-2025-10-22 07:10:09,136 - services.analytics.ubec_analytics_service - INFO - ✓ Database connection verified
-2025-10-22 07:10:09,136 - services.analytics.ubec_analytics_service - INFO - ✓ Analytics service fully initialized
-2025-10-22 07:10:09,136 - core.service_registry - INFO - ✓ Initialized service: ubec_analytics_service
-2025-10-22 07:10:09,136 - __main__ - INFO -   ✓ ubec_analytics_service: 961ms
-2025-10-22 07:10:09,214 - services.stellar.rate_limiter_service - INFO - Loading rate limit configurations from database...
-2025-10-22 07:10:09,215 - core.holonic.ubec_holonic_visualizer - INFO - Schema features verified | transactions_available=True
-2025-10-22 07:10:09,215 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer initialized successfully | transactions_available=True
-2025-10-22 07:10:09,215 - core.service_registry - INFO - ✓ Initialized service: visualizer
-2025-10-22 07:10:09,215 - __main__ - INFO -   ✓ visualizer: 1031ms
-2025-10-22 07:10:09,216 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: buffer = 100.0 req/s
-2025-10-22 07:10:09,217 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: default = 10.0 req/s
-2025-10-22 07:10:09,217 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: stellar = 100.0 req/s
-2025-10-22 07:10:09,217 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: sync = 3000.0 req/s
-2025-10-22 07:10:09,217 - services.stellar.rate_limiter_service - INFO - ✓ RateLimiterService initialized with 4 API configurations
-2025-10-22 07:10:09,217 - services.stellar.rate_limiter_service - WARNING - ⚠️ Initialization slower than expected: 1042.29ms (baseline: 50ms, 20.8x slower)
-2025-10-22 07:10:09,217 - core.service_registry - INFO - ✓ Initialized service: rate_limiter
-2025-10-22 07:10:09,217 - __main__ - INFO -   ✓ rate_limiter: 1050ms
-2025-10-22 07:10:09,220 - UBECHolonic - INFO - ✓ Schema detected: confidence=True, calculation_mode=True
-2025-10-22 07:10:09,220 - core.service_registry - INFO - ✓ Initialized service: ubec_holonic_evaluator
-2025-10-22 07:10:09,220 - __main__ - INFO -   ✓ ubec_holonic_evaluator: 1038ms
-2025-10-22 07:10:09,220 - __main__ - INFO -   📊 Level 2 total: 1053ms (concurrent)
-2025-10-22 07:10:09,220 - __main__ - INFO - 
+2025-10-22 07:50:19,415 - core.service_registry - INFO - Initializing service: rate_limiter
+2025-10-22 07:50:19,422 - __main__ - INFO -   ├─ Rate Limiter: Database-backed configuration
+2025-10-22 07:50:19,422 - __main__ - INFO -      ✓ Token bucket algorithm
+2025-10-22 07:50:19,422 - __main__ - INFO -      ✓ Circuit breaker pattern
+2025-10-22 07:50:19,422 - __main__ - INFO -      ✓ Per-API monitoring
+2025-10-22 07:50:19,422 - __main__ - INFO -      Buffer: 80% of max
+2025-10-22 07:50:19,422 - services.stellar.rate_limiter_service - INFO - RateLimiterService created (awaiting initialization)
+2025-10-22 07:50:19,422 - services.stellar.rate_limiter_service - INFO - Initializing RateLimiterService...
+2025-10-22 07:50:19,422 - services.stellar.rate_limiter_service - INFO - Loading rate limit configurations from database...
+2025-10-22 07:50:19,422 - core.service_registry - INFO - Initializing service: ubec_analytics_service
+2025-10-22 07:50:19,429 - __main__ - INFO -   ├─ Analytics: Token distribution and metrics
+2025-10-22 07:50:19,429 - services.analytics.ubec_analytics_service - INFO - Initializing UBEC Analytics Service
+2025-10-22 07:50:19,429 - services.analytics.ubec_analytics_service - INFO - ✓ UBEC Analytics Service initialized
+2025-10-22 07:50:19,429 - services.analytics.ubec_analytics_service - INFO - Initializing analytics service...
+2025-10-22 07:50:19,429 - core.service_registry - INFO - Initializing service: ubec_audit_service
+2025-10-22 07:50:19,435 - __main__ - INFO -   ├─ Audit: Compliance & auditing
+2025-10-22 07:50:19,435 - __main__ - INFO -     ✓ Loaded administration account: GDEQ4KXO...
+2025-10-22 07:50:19,435 - __main__ - INFO -     ✓ Loaded stewardship account: GA3I6MN4...
+2025-10-22 07:50:19,435 - __main__ - INFO -     ✓ Tokenomics targets: Admin=5.0%, Steward=30.0%
+2025-10-22 07:50:19,435 - UBECAuditService - INFO - Audit service created for UBEC
+2025-10-22 07:50:19,435 - UBECAuditService - INFO - Initializing audit service...
+2025-10-22 07:50:19,435 - core.service_registry - INFO - Initializing service: ubec_holonic_evaluator
+2025-10-22 07:50:19,441 - __main__ - INFO -   ├─ Holonic Evaluator: Ubuntu principles
+2025-10-22 07:50:19,441 - UBECHolonic - INFO - Holonic Evaluator created for UBEC (schema: ubec_main)
+2025-10-22 07:50:19,442 - core.service_registry - INFO - Initializing service: visualizer
+2025-10-22 07:50:20,363 - __main__ - INFO -   ├─ Visualizer: Charts & reports
+2025-10-22 07:50:20,363 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer initialized | schema=ubec_main | element_mode=all | color_palette=Ubuntu_v13.0.0
+2025-10-22 07:50:20,369 - UBECAuditService - INFO - ✓ Database connection verified
+2025-10-22 07:50:20,369 - UBECAuditService - INFO - ✓ Configuration valid: UBEC, targets: 5.0%/30.0%
+2025-10-22 07:50:20,369 - UBECAuditService - INFO - ✓ Audit service initialized
+2025-10-22 07:50:20,369 - core.service_registry - INFO - ✓ Initialized service: ubec_audit_service
+2025-10-22 07:50:20,369 - __main__ - INFO -   ✓ ubec_audit_service: 939ms
+2025-10-22 07:50:20,369 - services.analytics.ubec_analytics_service - INFO - ✓ Database connection verified
+2025-10-22 07:50:20,369 - services.analytics.ubec_analytics_service - INFO - ✓ Analytics service fully initialized
+2025-10-22 07:50:20,369 - core.service_registry - INFO - ✓ Initialized service: ubec_analytics_service
+2025-10-22 07:50:20,369 - __main__ - INFO -   ✓ ubec_analytics_service: 946ms
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: buffer = 100.0 req/s
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: default = 10.0 req/s
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: stellar = 100.0 req/s
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - INFO -   ├─ Loaded: sync = 3000.0 req/s
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - INFO - ✓ RateLimiterService initialized with 4 API configurations
+2025-10-22 07:50:20,490 - services.stellar.rate_limiter_service - WARNING - ⚠️ Initialization slower than expected: 1067.83ms (baseline: 50ms, 21.4x slower)
+2025-10-22 07:50:20,490 - core.service_registry - INFO - ✓ Initialized service: rate_limiter
+2025-10-22 07:50:20,490 - __main__ - INFO -   ✓ rate_limiter: 1075ms
+2025-10-22 07:50:20,490 - core.holonic.ubec_holonic_visualizer - INFO - Schema features verified | transactions_available=True
+2025-10-22 07:50:20,490 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer initialized successfully | transactions_available=True
+2025-10-22 07:50:20,490 - core.service_registry - INFO - ✓ Initialized service: visualizer
+2025-10-22 07:50:20,490 - __main__ - INFO -   ✓ visualizer: 1048ms
+2025-10-22 07:50:20,491 - UBECHolonic - INFO - ✓ Schema detected: confidence=True, calculation_mode=True
+2025-10-22 07:50:20,491 - core.service_registry - INFO - ✓ Initialized service: ubec_holonic_evaluator
+2025-10-22 07:50:20,491 - __main__ - INFO -   ✓ ubec_holonic_evaluator: 1055ms
+2025-10-22 07:50:20,491 - __main__ - INFO -   📊 Level 2 total: 1076ms (concurrent)
+2025-10-22 07:50:20,491 - __main__ - INFO - 
 🔷 Level 3: Initializing Stellar client and protocols in parallel...
-2025-10-22 07:10:09,220 - core.service_registry - INFO - Initializing service: stellar_client
-2025-10-22 07:10:09,676 - __main__ - INFO -   ├─ Stellar Client: Blockchain interaction
-2025-10-22 07:10:09,676 - __main__ - INFO -      ✓ Rate limiting: Enabled
-2025-10-22 07:10:09,676 - __main__ - INFO -      ✓ Configuration: Database-backed
-2025-10-22 07:10:09,676 - services.stellar.stellar_client_service - INFO - Creating Stellar client service via factory...
-2025-10-22 07:10:09,676 - services.stellar.stellar_client_service - INFO - Stellar client service constructed - call initialize() to complete setup
-2025-10-22 07:10:09,676 - services.stellar.stellar_client_service - INFO - ✓ Stellar client initialized: https://horizon.stellar.org
-2025-10-22 07:10:09,676 - services.stellar.stellar_client_service - INFO - ✓ Stellar client service created and initialized
-2025-10-22 07:10:09,677 - core.service_registry - INFO - ✓ Initialized service: stellar_client
-2025-10-22 07:10:09,677 - __main__ - INFO -   ✓ stellar_client: 456ms
-2025-10-22 07:10:09,677 - core.service_registry - INFO - Initializing service: air
-2025-10-22 07:10:09,680 - __main__ - INFO -   ├─ Air Protocol (UBEC): Universal access
-2025-10-22 07:10:09,681 - UBECProtocol.UBEC - INFO - Air Protocol Service initialized for UBEC (Element: Gateway & Universal Access)
-2025-10-22 07:10:09,681 - core.service_registry - INFO - ✓ Initialized service: air
-2025-10-22 07:10:09,681 - __main__ - INFO -   ✓ air: 4ms
-2025-10-22 07:10:09,681 - core.service_registry - INFO - Initializing service: water
-2025-10-22 07:10:09,685 - __main__ - INFO -   ├─ Water Protocol (UBECrc): Reciprocity & flow
-2025-10-22 07:10:09,685 - UBECProtocol.UBECrc - INFO - Water Protocol Service constructed for UBECrc (Element: water, Principle: reciprocity) - call initialize() to complete setup
-2025-10-22 07:10:09,685 - UBECProtocol.UBECrc - INFO - Initializing Water protocol service...
-2025-10-22 07:10:09,685 - core.service_registry - INFO - Initializing service: earth
-2025-10-22 07:10:09,689 - __main__ - INFO -   ├─ Earth Protocol (UBECgpi): Ground & stability
-2025-10-22 07:10:09,689 - UBECProtocol.UBECgpi - INFO - Earth Protocol Service initialized for UBECgpi (Element: earth, Principle: mutualism)
-2025-10-22 07:10:09,689 - core.service_registry - INFO - ✓ Initialized service: earth
-2025-10-22 07:10:09,689 - __main__ - INFO -   ✓ earth: 3ms
-2025-10-22 07:10:09,689 - core.service_registry - INFO - Initializing service: fire
-2025-10-22 07:10:09,694 - __main__ - INFO -   ├─ Fire Protocol (UBECtt): Transformation
-2025-10-22 07:10:09,695 - UBECttProtocol.UBECtt - INFO - Fire Protocol Service initialized for UBECtt (Element: fire, Principle: regeneration)
-2025-10-22 07:10:09,695 - core.service_registry - INFO - ✓ Initialized service: fire
-2025-10-22 07:10:09,695 - __main__ - INFO -   ✓ fire: 5ms
-2025-10-22 07:10:09,695 - core.service_registry - INFO - Initializing service: synchronizer
-2025-10-22 07:10:09,698 - __main__ - INFO -   ├─ Synchronizer: Blockchain data sync
-2025-10-22 07:10:09,698 - __main__ - INFO -      Batch Size: 100 accounts minimum
-2025-10-22 07:10:09,699 - core.service_registry - INFO - Initializing service: ubec_distribution_service
-2025-10-22 07:10:09,701 - __main__ - INFO -   ├─ UBEC Distribution Service: Token balance management
-2025-10-22 07:10:09,701 - __main__ - INFO -      Transaction Minimum: 1.0 UBEC
-2025-10-22 07:10:09,701 - __main__ - INFO -      Distribution Minimum: 0.1 UBEC
-2025-10-22 07:10:09,701 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Distribution service constructed - call initialize() to complete setup
-2025-10-22 07:10:09,701 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Initializing distribution service...
-2025-10-22 07:10:09,702 - UBECProtocol.UBECrc - INFO - ✓ Water protocol service initialized successfully
+2025-10-22 07:50:20,491 - core.service_registry - INFO - Initializing service: stellar_client
+2025-10-22 07:50:20,932 - __main__ - INFO -   ├─ Stellar Client: Blockchain interaction
+2025-10-22 07:50:20,932 - __main__ - INFO -      ✓ Rate limiting: Enabled
+2025-10-22 07:50:20,932 - __main__ - INFO -      ✓ Configuration: Database-backed
+2025-10-22 07:50:20,932 - services.stellar.stellar_client_service - INFO - Creating Stellar client service via factory...
+2025-10-22 07:50:20,932 - services.stellar.stellar_client_service - INFO - Stellar client service constructed - call initialize() to complete setup
+2025-10-22 07:50:20,932 - services.stellar.stellar_client_service - INFO - ✓ Stellar client initialized: https://horizon.stellar.org
+2025-10-22 07:50:20,932 - services.stellar.stellar_client_service - INFO - ✓ Stellar client service created and initialized
+2025-10-22 07:50:20,932 - core.service_registry - INFO - ✓ Initialized service: stellar_client
+2025-10-22 07:50:20,932 - __main__ - INFO -   ✓ stellar_client: 440ms
+2025-10-22 07:50:20,932 - core.service_registry - INFO - Initializing service: air
+2025-10-22 07:50:20,936 - __main__ - INFO -   ├─ Air Protocol (UBEC): Universal access
+2025-10-22 07:50:20,936 - UBECProtocol.UBEC - INFO - Air Protocol Service initialized for UBEC (Element: Gateway & Universal Access)
+2025-10-22 07:50:20,936 - core.service_registry - INFO - ✓ Initialized service: air
+2025-10-22 07:50:20,936 - __main__ - INFO -   ✓ air: 3ms
+2025-10-22 07:50:20,936 - core.service_registry - INFO - Initializing service: water
+2025-10-22 07:50:20,940 - __main__ - INFO -   ├─ Water Protocol (UBECrc): Reciprocity & flow
+2025-10-22 07:50:20,940 - UBECProtocol.UBECrc - INFO - Water Protocol Service constructed for UBECrc (Element: water, Principle: reciprocity) - call initialize() to complete setup
+2025-10-22 07:50:20,940 - UBECProtocol.UBECrc - INFO - Initializing Water protocol service...
+2025-10-22 07:50:20,940 - core.service_registry - INFO - Initializing service: earth
+2025-10-22 07:50:20,944 - __main__ - INFO -   ├─ Earth Protocol (UBECgpi): Ground & stability
+2025-10-22 07:50:20,944 - UBECProtocol.UBECgpi - INFO - Earth Protocol Service initialized for UBECgpi (Element: earth, Principle: mutualism)
+2025-10-22 07:50:20,944 - core.service_registry - INFO - ✓ Initialized service: earth
+2025-10-22 07:50:20,944 - __main__ - INFO -   ✓ earth: 3ms
+2025-10-22 07:50:20,944 - core.service_registry - INFO - Initializing service: fire
+2025-10-22 07:50:20,949 - __main__ - INFO -   ├─ Fire Protocol (UBECtt): Transformation
+2025-10-22 07:50:20,949 - UBECttProtocol.UBECtt - INFO - Fire Protocol Service initialized for UBECtt (Element: fire, Principle: regeneration)
+2025-10-22 07:50:20,949 - core.service_registry - INFO - ✓ Initialized service: fire
+2025-10-22 07:50:20,949 - __main__ - INFO -   ✓ fire: 5ms
+2025-10-22 07:50:20,949 - core.service_registry - INFO - Initializing service: synchronizer
+2025-10-22 07:50:20,953 - __main__ - INFO -   ├─ Synchronizer: Blockchain data sync
+2025-10-22 07:50:20,953 - __main__ - INFO -      Batch Size: 100 accounts minimum
+2025-10-22 07:50:20,953 - core.service_registry - INFO - Initializing service: ubec_distribution_service
+2025-10-22 07:50:20,956 - __main__ - INFO -   ├─ UBEC Distribution Service: Token balance management
+2025-10-22 07:50:20,956 - __main__ - INFO -      Transaction Minimum: 1.0 UBEC
+2025-10-22 07:50:20,956 - __main__ - INFO -      Distribution Minimum: 0.1 UBEC
+2025-10-22 07:50:20,956 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Distribution service constructed - call initialize() to complete setup
+2025-10-22 07:50:20,956 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Initializing distribution service...
+2025-10-22 07:50:20,956 - UBECProtocol.UBECrc - INFO - ✓ Water protocol service initialized successfully
   Asset: UBECrc
   Issuer: GBYOTGM27KLF...
   Element: water (🜄)
   Principle: reciprocity
   Schema: ubec_main
-2025-10-22 07:10:09,702 - core.service_registry - INFO - ✓ Initialized service: water
-2025-10-22 07:10:09,702 - __main__ - INFO -   ✓ water: 21ms
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ✅ Loaded issuer from system_settings: GDPNB7S3...
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - UBEC Distribution Service Initialized
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Asset: UBEC
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Issuer: GDPNB7S3...CX5UB2VN
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Network: MAINNET
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Database Schema: ubec_main
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Official Tokenomics Validated:
-2025-10-22 07:10:09,703 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - General Distribution: 65.00%
-2025-10-22 07:10:09,704 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - Stewardship: 30.00%
-2025-10-22 07:10:09,704 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - Administration: 5.00%
-2025-10-22 07:10:09,704 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
-2025-10-22 07:10:09,704 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ✅ Distribution service initialization complete
-2025-10-22 07:10:09,704 - core.service_registry - INFO - ✓ Initialized service: ubec_distribution_service
-2025-10-22 07:10:09,704 - __main__ - INFO -   ✓ ubec_distribution_service: 5ms
-2025-10-22 07:10:09,704 - UBECDataSynchronizer - INFO - ✓ Synchronizer initialized: https://horizon.stellar.org
-2025-10-22 07:10:09,704 - core.service_registry - INFO - ✓ Initialized service: synchronizer
-2025-10-22 07:10:09,704 - __main__ - INFO -   ✓ synchronizer: 9ms
-2025-10-22 07:10:09,704 - __main__ - INFO -   📊 Level 3 total: 484ms (concurrent)
-2025-10-22 07:10:09,704 - __main__ - INFO - 
+2025-10-22 07:50:20,957 - core.service_registry - INFO - ✓ Initialized service: water
+2025-10-22 07:50:20,957 - __main__ - INFO -   ✓ water: 20ms
+2025-10-22 07:50:20,958 - UBECDataSynchronizer - INFO - ✓ Synchronizer initialized: https://horizon.stellar.org
+2025-10-22 07:50:20,958 - core.service_registry - INFO - ✓ Initialized service: synchronizer
+2025-10-22 07:50:20,958 - __main__ - INFO -   ✓ synchronizer: 8ms
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ✅ Loaded issuer from system_settings: GDPNB7S3...
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - UBEC Distribution Service Initialized
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Asset: UBEC
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Issuer: GDPNB7S3...CX5UB2VN
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Network: MAINNET
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Database Schema: ubec_main
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - Official Tokenomics Validated:
+2025-10-22 07:50:20,958 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - General Distribution: 65.00%
+2025-10-22 07:50:20,959 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - Stewardship: 30.00%
+2025-10-22 07:50:20,959 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO -   - Administration: 5.00%
+2025-10-22 07:50:20,959 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ======================================================================
+2025-10-22 07:50:20,959 - services.distribution.ubec_distribution_service.UBECDistributionService - INFO - ✅ Distribution service initialization complete
+2025-10-22 07:50:20,959 - core.service_registry - INFO - ✓ Initialized service: ubec_distribution_service
+2025-10-22 07:50:20,959 - __main__ - INFO -   ✓ ubec_distribution_service: 5ms
+2025-10-22 07:50:20,959 - __main__ - INFO -   📊 Level 3 total: 467ms (concurrent)
+2025-10-22 07:50:20,959 - __main__ - INFO - 
 🔷 Level 4: Initializing final dependent services...
-2025-10-22 07:10:09,705 - core.service_registry - INFO - Initializing service: ubec_distribution_evaluator
-2025-10-22 07:10:09,707 - __main__ - INFO -   ├─ Distribution Evaluator: Compliance checking
-2025-10-22 07:10:09,707 - UBECDistributionEvaluator - INFO - Distribution Evaluator initialized
-2025-10-22 07:10:09,708 - core.service_registry - INFO - ✓ Initialized service: ubec_distribution_evaluator
-2025-10-22 07:10:09,708 - __main__ - INFO -   ✓ ubec_distribution_evaluator: 3ms
-2025-10-22 07:10:09,708 - __main__ - INFO - 
+2025-10-22 07:50:20,959 - core.service_registry - INFO - Initializing service: ubec_distribution_evaluator
+2025-10-22 07:50:20,962 - __main__ - INFO -   ├─ Distribution Evaluator: Compliance checking
+2025-10-22 07:50:20,962 - UBECDistributionEvaluator - INFO - Distribution Evaluator initialized
+2025-10-22 07:50:20,962 - core.service_registry - INFO - ✓ Initialized service: ubec_distribution_evaluator
+2025-10-22 07:50:20,962 - __main__ - INFO -   ✓ ubec_distribution_evaluator: 2ms
+2025-10-22 07:50:20,962 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:09,708 - __main__ - INFO - SERVICE INITIALIZATION SUMMARY
-2025-10-22 07:10:09,708 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:09,708 - __main__ - INFO - Total Initialization Time: 1630ms
-2025-10-22 07:10:09,708 - __main__ - INFO - Services Initialized: 15
-2025-10-22 07:10:09,708 - __main__ - INFO - Services Failed: 0
-2025-10-22 07:10:09,708 - __main__ - INFO - Sequential Estimate: 4600ms
-2025-10-22 07:10:09,708 - __main__ - INFO - Performance Improvement: 64.6% faster
-2025-10-22 07:10:09,708 - __main__ - WARNING - 
+2025-10-22 07:50:20,962 - __main__ - INFO - SERVICE INITIALIZATION SUMMARY
+2025-10-22 07:50:20,962 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:20,962 - __main__ - INFO - Total Initialization Time: 1643ms
+2025-10-22 07:50:20,962 - __main__ - INFO - Services Initialized: 15
+2025-10-22 07:50:20,962 - __main__ - INFO - Services Failed: 0
+2025-10-22 07:50:20,962 - __main__ - INFO - Sequential Estimate: 4600ms
+2025-10-22 07:50:20,962 - __main__ - INFO - Performance Improvement: 64.3% faster
+2025-10-22 07:50:20,962 - __main__ - WARNING - 
 ⚠ Services exceeding performance baselines:
-2025-10-22 07:10:09,708 - __main__ - WARNING -   ubec_audit_service: 958ms (baseline: 300ms, 3.2x slower)
-2025-10-22 07:10:09,708 - __main__ - WARNING -   ubec_analytics_service: 961ms (baseline: 300ms, 3.2x slower)
-2025-10-22 07:10:09,708 - __main__ - WARNING -   rate_limiter: 1050ms (baseline: 50ms, 21.0x slower)
-2025-10-22 07:10:09,708 - __main__ - WARNING -   ubec_holonic_evaluator: 1038ms (baseline: 300ms, 3.5x slower)
-2025-10-22 07:10:09,708 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:09,709 - __main__ - INFO - 
+2025-10-22 07:50:20,962 - __main__ - WARNING -   ubec_audit_service: 939ms (baseline: 300ms, 3.1x slower)
+2025-10-22 07:50:20,962 - __main__ - WARNING -   ubec_analytics_service: 946ms (baseline: 300ms, 3.2x slower)
+2025-10-22 07:50:20,962 - __main__ - WARNING -   rate_limiter: 1075ms (baseline: 50ms, 21.5x slower)
+2025-10-22 07:50:20,962 - __main__ - WARNING -   ubec_holonic_evaluator: 1055ms (baseline: 300ms, 3.5x slower)
+2025-10-22 07:50:20,962 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:20,962 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:09,709 - __main__ - INFO - RUNNING SYSTEM HEALTH CHECK
-2025-10-22 07:10:09,709 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:09,710 - core.utils.service_health - WARNING - Health check 5 for rate_limiter: FAIL - Initialization time (1042.29ms) significantly exceeds baseline (50ms, 20.8x slower)
-2025-10-22 07:10:10,486 - core.utils.service_health - WARNING - Health check 5 for audit: FAIL - No audits performed yet
-2025-10-22 07:10:10,608 - __main__ - INFO - 
+2025-10-22 07:50:20,962 - __main__ - INFO - RUNNING SYSTEM HEALTH CHECK
+2025-10-22 07:50:20,962 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:20,964 - core.utils.service_health - WARNING - Health check 4 for rate_limiter: FAIL - Initialization time (1067.83ms) significantly exceeds baseline (50ms, 21.4x slower)
+2025-10-22 07:50:21,727 - core.utils.service_health - WARNING - Health check 5 for audit: FAIL - No audits performed yet
+2025-10-22 07:50:21,834 - __main__ - INFO - 
 📊 System Health: DEGRADED
-2025-10-22 07:10:10,608 - __main__ - INFO -   ✓ Healthy: 9
-2025-10-22 07:10:10,608 - __main__ - INFO -   ⚠ Unhealthy: 6
-2025-10-22 07:10:10,608 - __main__ - INFO -   ✗ Failed: 0
-2025-10-22 07:10:10,608 - __main__ - INFO - 
+2025-10-22 07:50:21,834 - __main__ - INFO -   ✓ Healthy: 9
+2025-10-22 07:50:21,834 - __main__ - INFO -   ⚠ Unhealthy: 6
+2025-10-22 07:50:21,834 - __main__ - INFO -   ✗ Failed: 0
+2025-10-22 07:50:21,834 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:10,608 - __main__ - INFO - UBEC Protocol - HEALTH Result
-2025-10-22 07:10:10,608 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:21,834 - __main__ - INFO - UBEC Protocol - HEALTH Result
+2025-10-22 07:50:21,834 - __main__ - INFO - ======================================================================
 {
   "success": true,
-  "timestamp": "2025-10-22T07:10:10.608692",
+  "timestamp": "2025-10-22T07:50:21.834191",
   "data": {
-    "timestamp": "2025-10-22T07:10:09.709117",
+    "timestamp": "2025-10-22T07:50:20.962580",
     "services": {
       "database": {
         "status": "healthy",
         "details": {
           "initialized": true,
-          "pool_size": 5,
+          "pool_size": 7,
           "pool_max": 10,
           "connection_test": true,
-          "response_time_ms": 0.57,
+          "response_time_ms": 0.8,
           "database": "ubec",
           "schema": "ubec_main,public",
           "host": "localhost",
           "port": 5432,
-          "pool_idle": 5,
+          "pool_idle": 7,
           "pool_used": 0
         },
-        "init_time_ms": 85
+        "init_time_ms": 86
       },
       "config": {
         "status": "healthy",
         "details": {
           "initialized": true,
-          "settings_count": 68,
+          "settings_count": 70,
           "cache_valid": true,
-          "last_loaded": "2025-10-22T07:10:08.166884",
+          "last_loaded": "2025-10-22T07:50:19.415077",
           "network": "mainnet",
           "horizon_url": "https://horizon.stellar.org",
           "has_database": true,
@@ -258,7 +258,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 2,
           "checks_failed": 0
         },
-        "init_time_ms": 3
+        "init_time_ms": 9
       },
       "rate_limiter": {
         "status": "degraded",
@@ -310,26 +310,21 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
               "circuit_failures": 0
             }
           },
-          "init_time_ms": 1042.288,
+          "init_time_ms": 1067.833,
           "db_query_times": {
-            "load_configurations": 2.787
+            "load_configurations": 1067.529
           },
           "performance_timings": [
             {
-              "phase": "connection_validation",
-              "duration_ms": 1038.9850000000001,
-              "details": {}
-            },
-            {
               "phase": "load_configurations",
-              "duration_ms": 3.2529999999999997,
+              "duration_ms": 1067.784,
               "details": {
                 "config_count": 4
               }
             },
             {
               "phase": "bucket_initialization",
-              "duration_ms": 0.028,
+              "duration_ms": 0.037,
               "details": {
                 "bucket_count": 4
               }
@@ -342,10 +337,6 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
             ],
             [
               "pass",
-              "Database connectivity OK"
-            ],
-            [
-              "pass",
               "Token buckets healthy (4 APIs)"
             ],
             [
@@ -354,13 +345,13 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
             ],
             [
               "fail",
-              "Initialization time (1042.29ms) significantly exceeds baseline (50ms, 20.8x slower)"
+              "Initialization time (1067.83ms) significantly exceeds baseline (50ms, 21.4x slower)"
             ]
           ],
-          "checks_passed": 4,
+          "checks_passed": 3,
           "checks_failed": 1
         },
-        "init_time_ms": 1050
+        "init_time_ms": 1075
       },
       "stellar_client": {
         "status": "healthy",
@@ -382,7 +373,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 1,
           "checks_failed": 0
         },
-        "init_time_ms": 456
+        "init_time_ms": 440
       },
       "air": {
         "status": "needs_sync",
@@ -405,7 +396,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "last_error_time": null,
           "sync_required": true
         },
-        "init_time_ms": 4
+        "init_time_ms": 3
       },
       "water": {
         "status": "needs_sync",
@@ -436,7 +427,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_failed": 0,
           "sync_required": true
         },
-        "init_time_ms": 21
+        "init_time_ms": 20
       },
       "earth": {
         "status": "needs_sync",
@@ -570,7 +561,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 4,
           "checks_failed": 0
         },
-        "init_time_ms": 9
+        "init_time_ms": 8
       },
       "ubec_analytics_service": {
         "status": "healthy",
@@ -607,7 +598,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 4,
           "checks_failed": 0
         },
-        "init_time_ms": 961
+        "init_time_ms": 946
       },
       "ubec_audit_service": {
         "status": "degraded",
@@ -649,7 +640,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 4,
           "checks_failed": 1
         },
-        "init_time_ms": 958
+        "init_time_ms": 939
       },
       "ubec_distribution_service": {
         "status": "healthy",
@@ -690,8 +681,8 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "initialized": true,
           "database_connected": true,
           "dependent_services": {
-            "distribution_service": "<services.distribution.ubec_distribution_service.UBECDistributionService object at 0x7f7c0003e9d0>",
-            "audit_service": "<services.audit.ubec_audit_service.UBECAuditService object at 0x7f7c3a23ae50>"
+            "distribution_service": "<services.distribution.ubec_distribution_service.UBECDistributionService object at 0x7ff99085bfd0>",
+            "audit_service": "<services.audit.ubec_audit_service.UBECAuditService object at 0x7ff9caa0e610>"
           },
           "last_evaluation": null,
           "last_account_eval": null,
@@ -711,7 +702,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 1,
           "checks_failed": 0
         },
-        "init_time_ms": 3
+        "init_time_ms": 2
       },
       "ubec_holonic_evaluator": {
         "status": "healthy",
@@ -767,7 +758,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 1,
           "checks_failed": 0
         },
-        "init_time_ms": 1038
+        "init_time_ms": 1055
       },
       "visualizer": {
         "status": "healthy",
@@ -798,7 +789,7 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
           "checks_passed": 3,
           "checks_failed": 0
         },
-        "init_time_ms": 1031
+        "init_time_ms": 1048
       }
     },
     "summary": {
@@ -810,52 +801,52 @@ triag@245:~/UBEC/projects/UBEC$ python main.py --mode health
     "overall_status": "degraded"
   }
 }
-2025-10-22 07:10:10,610 - __main__ - INFO - 
+2025-10-22 07:50:21,835 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:10,610 - __main__ - INFO - SHUTTING DOWN SERVICES
-2025-10-22 07:10:10,610 - __main__ - INFO - ======================================================================
-2025-10-22 07:10:10,610 - core.service_registry - INFO - Shutting down 15 services...
-2025-10-22 07:10:10,610 - UBECDistributionEvaluator - INFO - Distribution evaluator closing...
-2025-10-22 07:10:10,610 - UBECDistributionEvaluator - INFO - ✓ Distribution evaluator closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: ubec_distribution_evaluator
-2025-10-22 07:10:10,610 - UBECDataSynchronizer - INFO - Closing UBEC Data Synchronizer...
-2025-10-22 07:10:10,610 - UBECDataSynchronizer - INFO - ✓ UBEC Data Synchronizer closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: synchronizer
-2025-10-22 07:10:10,610 - UBECProtocol.UBECrc - INFO - Closing Water protocol service...
-2025-10-22 07:10:10,610 - UBECProtocol.UBECrc - INFO - Water protocol service closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: water
-2025-10-22 07:10:10,610 - UBECttProtocol.UBECtt - INFO - Closing Fire protocol service...
-2025-10-22 07:10:10,610 - UBECttProtocol.UBECtt - INFO - Fire protocol service closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: fire
-2025-10-22 07:10:10,610 - UBECProtocol.UBECgpi - INFO - Closing Earth protocol service...
-2025-10-22 07:10:10,610 - UBECProtocol.UBECgpi - INFO - Earth protocol service closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: earth
-2025-10-22 07:10:10,610 - UBECProtocol.UBEC - INFO - Closing Air protocol service...
-2025-10-22 07:10:10,610 - UBECProtocol.UBEC - INFO - Air protocol service closed
-2025-10-22 07:10:10,610 - core.service_registry - INFO - ✓ Closed service: air
-2025-10-22 07:10:10,611 - services.stellar.stellar_client_service - INFO - ✓ Stellar client closed
-2025-10-22 07:10:10,611 - core.service_registry - INFO - ✓ Closed service: stellar_client
-2025-10-22 07:10:10,611 - UBECHolonic - INFO - Holonic evaluator closing...
-2025-10-22 07:10:10,611 - UBECHolonic - INFO - ✓ Holonic evaluator closed
-2025-10-22 07:10:10,611 - core.service_registry - INFO - ✓ Closed service: ubec_holonic_evaluator
-2025-10-22 07:10:10,611 - services.stellar.rate_limiter_service - INFO - Closing RateLimiterService...
-2025-10-22 07:10:10,614 - services.stellar.rate_limiter_service - INFO - ✓ RateLimiterService closed
-2025-10-22 07:10:10,614 - core.service_registry - INFO - ✓ Closed service: rate_limiter
-2025-10-22 07:10:10,614 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer closed successfully
-2025-10-22 07:10:10,614 - core.service_registry - INFO - ✓ Closed service: visualizer
-2025-10-22 07:10:10,614 - services.analytics.ubec_analytics_service - INFO - Analytics service closed
-2025-10-22 07:10:10,614 - core.service_registry - INFO - ✓ Closed service: ubec_analytics_service
-2025-10-22 07:10:10,614 - UBECAuditService - INFO - Closing audit service...
-2025-10-22 07:10:10,614 - UBECAuditService - INFO - Audit service closed
-2025-10-22 07:10:10,614 - core.service_registry - INFO - ✓ Closed service: ubec_audit_service
-2025-10-22 07:10:10,614 - core.service_registry - INFO - ✓ Closed service: config
-2025-10-22 07:10:10,617 - core.db.database_manager - INFO - Database pool closed
-2025-10-22 07:10:10,618 - core.service_registry - INFO - ✓ Closed service: database
-2025-10-22 07:10:10,618 - core.service_registry - INFO - ✓ Services shut down
-2025-10-22 07:10:10,618 - __main__ - INFO - 
+2025-10-22 07:50:21,835 - __main__ - INFO - SHUTTING DOWN SERVICES
+2025-10-22 07:50:21,835 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:21,835 - core.service_registry - INFO - Shutting down 15 services...
+2025-10-22 07:50:21,835 - UBECDistributionEvaluator - INFO - Distribution evaluator closing...
+2025-10-22 07:50:21,835 - UBECDistributionEvaluator - INFO - ✓ Distribution evaluator closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: ubec_distribution_evaluator
+2025-10-22 07:50:21,835 - UBECDataSynchronizer - INFO - Closing UBEC Data Synchronizer...
+2025-10-22 07:50:21,835 - UBECDataSynchronizer - INFO - ✓ UBEC Data Synchronizer closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: synchronizer
+2025-10-22 07:50:21,835 - UBECProtocol.UBECrc - INFO - Closing Water protocol service...
+2025-10-22 07:50:21,835 - UBECProtocol.UBECrc - INFO - Water protocol service closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: water
+2025-10-22 07:50:21,835 - UBECttProtocol.UBECtt - INFO - Closing Fire protocol service...
+2025-10-22 07:50:21,835 - UBECttProtocol.UBECtt - INFO - Fire protocol service closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: fire
+2025-10-22 07:50:21,835 - UBECProtocol.UBECgpi - INFO - Closing Earth protocol service...
+2025-10-22 07:50:21,835 - UBECProtocol.UBECgpi - INFO - Earth protocol service closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: earth
+2025-10-22 07:50:21,835 - UBECProtocol.UBEC - INFO - Closing Air protocol service...
+2025-10-22 07:50:21,835 - UBECProtocol.UBEC - INFO - Air protocol service closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: air
+2025-10-22 07:50:21,835 - services.stellar.stellar_client_service - INFO - ✓ Stellar client closed
+2025-10-22 07:50:21,835 - core.service_registry - INFO - ✓ Closed service: stellar_client
+2025-10-22 07:50:21,835 - UBECHolonic - INFO - Holonic evaluator closing...
+2025-10-22 07:50:21,835 - UBECHolonic - INFO - ✓ Holonic evaluator closed
+2025-10-22 07:50:21,836 - core.service_registry - INFO - ✓ Closed service: ubec_holonic_evaluator
+2025-10-22 07:50:21,836 - core.holonic.ubec_holonic_visualizer - INFO - HolonicVisualizer closed successfully
+2025-10-22 07:50:21,836 - core.service_registry - INFO - ✓ Closed service: visualizer
+2025-10-22 07:50:21,836 - services.stellar.rate_limiter_service - INFO - Closing RateLimiterService...
+2025-10-22 07:50:21,839 - services.stellar.rate_limiter_service - INFO - ✓ RateLimiterService closed
+2025-10-22 07:50:21,839 - core.service_registry - INFO - ✓ Closed service: rate_limiter
+2025-10-22 07:50:21,839 - services.analytics.ubec_analytics_service - INFO - Analytics service closed
+2025-10-22 07:50:21,839 - core.service_registry - INFO - ✓ Closed service: ubec_analytics_service
+2025-10-22 07:50:21,839 - UBECAuditService - INFO - Closing audit service...
+2025-10-22 07:50:21,839 - UBECAuditService - INFO - Audit service closed
+2025-10-22 07:50:21,839 - core.service_registry - INFO - ✓ Closed service: ubec_audit_service
+2025-10-22 07:50:21,839 - core.service_registry - INFO - ✓ Closed service: config
+2025-10-22 07:50:21,841 - core.db.database_manager - INFO - Database pool closed
+2025-10-22 07:50:21,841 - core.service_registry - INFO - ✓ Closed service: database
+2025-10-22 07:50:21,841 - core.service_registry - INFO - ✓ Services shut down
+2025-10-22 07:50:21,841 - __main__ - INFO - 
 ======================================================================
-2025-10-22 07:10:10,618 - __main__ - INFO - ✓ OPERATION COMPLETED SUCCESSFULLY
-2025-10-22 07:10:10,618 - __main__ - INFO - ======================================================================
+2025-10-22 07:50:21,841 - __main__ - INFO - ✓ OPERATION COMPLETED SUCCESSFULLY
+2025-10-22 07:50:21,841 - __main__ - INFO - ======================================================================
 triag@245:~/UBEC/projects/UBEC$ 
 
 
