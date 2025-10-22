@@ -705,7 +705,7 @@ class UBECDataSynchronizer:
             balance: Token balance
             
         Note:
-            The ubec_balances table uses 'token_code' column, not 'asset_code'.
+            The account_balances table uses 'asset_code' column, not 'asset_code'.
         """
         # Map asset_code to element for the element column
         element_map = {
@@ -717,10 +717,10 @@ class UBECDataSynchronizer:
         element = element_map.get(asset_code, 'air')
         
         query = """
-            INSERT INTO ubec_balances 
-                (account_id, token_code, element, balance, last_modified_at)
-            VALUES ($1, $2::token_code, $3::element_type, $4, NOW())
-            ON CONFLICT (account_id, token_code) 
+            INSERT INTO account_balances 
+                (account_id, asset_code, element, balance, last_modified_at)
+            VALUES ($1, $2::asset_code, $3::element_type, $4, NOW())
+            ON CONFLICT (account_id, asset_code) 
             DO UPDATE SET 
                 balance = EXCLUDED.balance,
                 last_modified_at = EXCLUDED.last_modified_at

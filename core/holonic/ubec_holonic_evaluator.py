@@ -803,8 +803,8 @@ class UBECHolonicEvaluator:
                         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY balance) as median_balance,
                         MAX(balance) as max_balance,
                         SUM(balance) as total_supply
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE token_code = $1
+                    FROM {self.db_schema}.account_balances
+                    WHERE asset_code = $1
                 ),
                 tx_metrics AS (
                     SELECT

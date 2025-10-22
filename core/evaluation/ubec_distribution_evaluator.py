@@ -408,9 +408,9 @@ class UBECDistributionEvaluator:
             
             # Get account balance from database
             query = f"""
-                SELECT balance, token_code
-                FROM {self.distribution_service.db_schema}.ubec_balances
-                WHERE account_id = $1 AND token_code = $2
+                SELECT balance, asset_code
+                FROM {self.distribution_service.db_schema}.account_balances
+                WHERE account_id = $1 AND asset_code = $2
             """
             
             result = await self.db_manager.fetch_one(

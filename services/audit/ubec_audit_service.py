@@ -269,8 +269,8 @@ class UBECAuditService:
         # Query total supply
         supply_query = """
             SELECT COALESCE(SUM(balance), 0) as total_supply
-            FROM ubec_main.ubec_balances
-            WHERE token_code = $1
+            FROM ubec_main.account_balances
+            WHERE asset_code = $1
         """
         supply_result = await self.db.fetch_one(supply_query, (self.ubec_code,))
         total_supply = Decimal(str(supply_result['total_supply']))
@@ -278,8 +278,8 @@ class UBECAuditService:
         # Query admin balance
         admin_query = """
             SELECT COALESCE(balance, 0) as balance
-            FROM ubec_main.ubec_balances
-            WHERE account_id = $1 AND token_code = $2
+            FROM ubec_main.account_balances
+            WHERE account_id = $1 AND asset_code = $2
         """
         admin_result = await self.db.fetch_one(
             admin_query, (self.admin_account, self.ubec_code)
@@ -524,8 +524,8 @@ class UBECAuditService:
             """Verify tokenomics accounts exist in database"""
             admin_query = """
                 SELECT account_id, balance
-                FROM ubec_main.ubec_balances
-                WHERE account_id = $1 AND token_code = $2
+                FROM ubec_main.account_balances
+                WHERE account_id = $1 AND asset_code = $2
             """
             
             # Check admin account

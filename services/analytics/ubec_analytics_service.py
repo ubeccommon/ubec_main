@@ -103,7 +103,7 @@ TOKEN_ELEMENT_MAP = {v: k for k, v in ELEMENT_TOKEN_MAP.items()}
 @dataclass
 class TokenDistribution:
     """Token distribution metrics"""
-    token_code: str
+    asset_code: str
     element: str
     total_holders: int
     total_supply: Decimal
@@ -119,7 +119,7 @@ class TokenDistribution:
 @dataclass
 class HolderAnalysis:
     """Holder concentration analysis"""
-    token_code: str
+    asset_code: str
     total_holders: int
     whale_count: int  # Holders above whale threshold
     whale_holdings: Decimal
@@ -133,7 +133,7 @@ class HolderAnalysis:
 @dataclass
 class TransactionMetrics:
     """Transaction analysis metrics"""
-    token_code: str
+    asset_code: str
     period_days: int
     total_transactions: int
     unique_senders: int
@@ -148,7 +148,7 @@ class TransactionMetrics:
 @dataclass
 class LiquidityMetrics:
     """Liquidity analysis"""
-    token_code: str
+    asset_code: str
     total_supply: Decimal
     circulating_supply: Decimal
     locked_supply: Decimal
@@ -525,14 +525,14 @@ class UBECAnalyticsService:
     
     async def get_token_distribution(
         self,
-        token_code: str,
+        asset_code: str,
         use_cache: bool = True
     ) -> TokenDistribution:
         """
         Analyze token distribution for a specific token.
         
         Args:
-            token_code: Token to analyze (UBEC, UBECrc, UBECgpi, UBECtt)
+            asset_code: Token to analyze (UBEC, UBECrc, UBECgpi, UBECtt)
             use_cache: Whether to use cached results
             
         Returns:
@@ -548,19 +548,19 @@ class UBECAnalyticsService:
             print(f"Top 10 hold: {dist.top_10_concentration}%")
         """
         # Check cache
-        cache_key = self._get_cache_key("token_dist", token_code)
+        cache_key = self._get_cache_key("token_dist", asset_code)
         if use_cache:
             cached = self._get_cached(cache_key)
             if cached:
                 return cached
         
-        logger.info(f"Analyzing token distribution for {token_code}...")
+        logger.info(f"Analyzing token distribution for {asset_code}...")
         
         try:
             # Get basic distribution stats
             query = """
                 SELECT 
-                    token_code,
+                    asset_code,
                     element,
                     COUNT(DISTINCT account_id) as total_holders,
                     SUM(balance) as total_supply,
@@ -568,25 +568,25 @@ class UBECAnalyticsService:
                     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY balance) as median_balance,
                     MIN(balance) as min_balance,
                     MAX(balance) as max_balance
-                FROM ubec_balances
-                WHERE token_code = $1 AND balance > 0
-                GROUP BY token_code, element
+                FROM account_balances
+                WHERE asset_code = $1 AND balance > 0
+                GROUP BY asset_code, element
             """
             
-            row = await self._execute_query(query, (token_code,))
+            row = await self._execute_query(query, (asset_code,))
             
             if not row:
-                raise AnalyticsException(f"No data found for token {token_code}")
+                raise AnalyticsException(f"No data found for token {asset_code}")
             
             # Calculate top holder concentrations
-            top_10_pct = await self._calculate_top_n_concentration(token_code, 10)
-            top_100_pct = await self._calculate_top_n_concentration(token_code, 100)
+            top_10_pct = await self._calculate_top_n_concentration(asset_code, 10)
+            top_100_pct = await self._calculate_top_n_concentration(asset_code, 100)
             
             # Calculate Gini coefficient (inequality measure)
-            gini = await self._calculate_gini_coefficient(token_code)
+            gini = await self._calculate_gini_coefficient(asset_code)
             
             distribution = TokenDistribution(
-                token_code=row['token_code'],
+                asset_code=row['asset_code'],
                 element=row['element'],
                 total_holders=row['total_holders'],
                 total_supply=Decimal(str(row['total_supply'])),
@@ -602,16 +602,16 @@ class UBECAnalyticsService:
             # Cache result
             self._set_cached(cache_key, distribution)
             
-            logger.info(f"✓ Distribution analysis complete for {token_code}")
+            logger.info(f"✓ Distribution analysis complete for {asset_code}")
             return distribution
             
         except Exception as e:
-            self._record_error(f"Error analyzing distribution for {token_code}: {e}")
+            self._record_error(f"Error analyzing distribution for {asset_code}: {e}")
             raise AnalyticsException(f"Distribution analysis failed: {e}")
     
     async def _calculate_top_n_concentration(
         self,
-        token_code: str,
+        asset_code: str,
         n: int
     ) -> Decimal:
         """
@@ -625,13 +625,13 @@ class UBECAnalyticsService:
                     SELECT 
                         balance,
                         ROW_NUMBER() OVER (ORDER BY balance DESC) as rank
-                    FROM ubec_balances
-                    WHERE token_code = $1 AND balance > 0
+                    FROM account_balances
+                    WHERE asset_code = $1 AND balance > 0
                 ),
                 total_supply AS (
                     SELECT SUM(balance) as total
-                    FROM ubec_balances
-                    WHERE token_code = $1 AND balance > 0
+                    FROM account_balances
+                    WHERE asset_code = $1 AND balance > 0
                 ),
                 top_n_supply AS (
                     SELECT SUM(balance) as top_sum
@@ -643,14 +643,14 @@ class UBECAnalyticsService:
                 FROM top_n_supply, total_supply
             """
             
-            row = await self._execute_query(query, (token_code, n))
+            row = await self._execute_query(query, (asset_code, n))
             return Decimal(str(row['percentage'])) if row else Decimal('0')
             
         except Exception as e:
             logger.error(f"Error calculating top {n} concentration: {e}")
             return Decimal('0')
     
-    async def _calculate_gini_coefficient(self, token_code: str) -> Optional[Decimal]:
+    async def _calculate_gini_coefficient(self, asset_code: str) -> Optional[Decimal]:
         """
         Calculate Gini coefficient for token distribution.
         
@@ -668,8 +668,8 @@ class UBECAnalyticsService:
                         balance,
                         ROW_NUMBER() OVER (ORDER BY balance) as rank,
                         COUNT(*) OVER () as total_count
-                    FROM ubec_balances
-                    WHERE token_code = $1 AND balance > 0
+                    FROM account_balances
+                    WHERE asset_code = $1 AND balance > 0
                 ),
                 cumulative AS (
                     SELECT
@@ -686,7 +686,7 @@ class UBECAnalyticsService:
                 GROUP BY total_count, total_sum
             """
             
-            row = await self._execute_query(query, (token_code,))
+            row = await self._execute_query(query, (asset_code,))
             return Decimal(str(row['gini'])) if row and row['gini'] else None
             
         except Exception as e:
@@ -709,7 +709,7 @@ class UBECAnalyticsService:
         Example:
             distributions = await analytics.get_all_token_distributions()
             for dist in distributions:
-                print(f"{dist.token_code}: {dist.total_holders} holders")
+                print(f"{dist.asset_code}: {dist.total_holders} holders")
         """
         logger.info("Analyzing distribution for all UBEC tokens...")
         
@@ -727,7 +727,7 @@ class UBECAnalyticsService:
     
     async def analyze_holder_concentration(
         self,
-        token_code: str,
+        asset_code: str,
         whale_threshold: Decimal = Decimal('10000'),
         mid_tier_threshold: Decimal = Decimal('1000'),
         use_cache: bool = True
@@ -736,7 +736,7 @@ class UBECAnalyticsService:
         Analyze holder concentration by tier (whales, mid-tier, small).
         
         Args:
-            token_code: Token to analyze
+            asset_code: Token to analyze
             whale_threshold: Minimum balance to be considered a whale
             mid_tier_threshold: Minimum balance for mid-tier holder
             use_cache: Whether to use cached results
@@ -751,7 +751,7 @@ class UBECAnalyticsService:
         # Check cache
         cache_key = self._get_cache_key(
             "holder_conc", 
-            token_code, 
+            asset_code, 
             whale_threshold=whale_threshold,
             mid_tier_threshold=mid_tier_threshold
         )
@@ -760,7 +760,7 @@ class UBECAnalyticsService:
             if cached:
                 return cached
         
-        logger.info(f"Analyzing holder concentration for {token_code}...")
+        logger.info(f"Analyzing holder concentration for {asset_code}...")
         
         try:
             query = """
@@ -773,8 +773,8 @@ class UBECAnalyticsService:
                             WHEN balance >= $3 THEN 'mid_tier'
                             ELSE 'small'
                         END as tier
-                    FROM ubec_balances
-                    WHERE token_code = $1 AND balance > 0
+                    FROM account_balances
+                    WHERE asset_code = $1 AND balance > 0
                 ),
                 tier_stats AS (
                     SELECT
@@ -788,8 +788,8 @@ class UBECAnalyticsService:
                     SELECT
                         COUNT(*) as total_holders,
                         SUM(balance) as total_supply
-                    FROM ubec_balances
-                    WHERE token_code = $1 AND balance > 0
+                    FROM account_balances
+                    WHERE asset_code = $1 AND balance > 0
                 )
                 SELECT
                     ts.total_holders,
@@ -808,11 +808,11 @@ class UBECAnalyticsService:
             
             row = await self._execute_query(
                 query,
-                (token_code, whale_threshold, mid_tier_threshold)
+                (asset_code, whale_threshold, mid_tier_threshold)
             )
             
             if not row:
-                raise AnalyticsException(f"No data found for token {token_code}")
+                raise AnalyticsException(f"No data found for token {asset_code}")
             
             total_supply = Decimal(str(row['total_supply']))
             whale_holdings = Decimal(str(row['whale_holdings']))
@@ -820,7 +820,7 @@ class UBECAnalyticsService:
             whale_percentage = (whale_holdings / total_supply * 100) if total_supply > 0 else Decimal('0')
             
             analysis = HolderAnalysis(
-                token_code=token_code,
+                asset_code=asset_code,
                 total_holders=row['total_holders'],
                 whale_count=row['whale_count'],
                 whale_holdings=whale_holdings,
@@ -834,7 +834,7 @@ class UBECAnalyticsService:
             # Cache result
             self._set_cached(cache_key, analysis)
             
-            logger.info(f"✓ Holder concentration analysis complete for {token_code}")
+            logger.info(f"✓ Holder concentration analysis complete for {asset_code}")
             return analysis
             
         except Exception as e:
@@ -843,7 +843,7 @@ class UBECAnalyticsService:
     
     async def identify_whales(
         self,
-        token_code: str,
+        asset_code: str,
         threshold: Decimal = Decimal('10000'),
         limit: int = 100
     ) -> List[Dict[str, Any]]:
@@ -851,7 +851,7 @@ class UBECAnalyticsService:
         Identify whale accounts above threshold.
         
         Args:
-            token_code: Token to analyze
+            asset_code: Token to analyze
             threshold: Minimum balance to be considered whale
             limit: Maximum number of whales to return
             
@@ -861,40 +861,40 @@ class UBECAnalyticsService:
         Example:
             whales = await analytics.identify_whales('UBEC', threshold=Decimal('50000'))
             for whale in whales:
-                print(f"{whale['account_id']}: {whale['balance']} {whale['token_code']}")
+                print(f"{whale['account_id']}: {whale['balance']} {whale['asset_code']}")
         """
-        logger.info(f"Identifying whales for {token_code} (threshold: {threshold})...")
+        logger.info(f"Identifying whales for {asset_code} (threshold: {threshold})...")
         
         try:
             query = """
                 SELECT
                     ub.account_id,
-                    ub.token_code,
+                    ub.asset_code,
                     ub.element,
                     ub.balance,
                     sa.last_modified_at,
                     sa.sync_status
-                FROM ubec_balances ub
+                FROM account_balances ub
                 LEFT JOIN stellar_accounts sa ON sa.account_id = ub.account_id
-                WHERE ub.token_code = $1 AND ub.balance >= $2
+                WHERE ub.asset_code = $1 AND ub.balance >= $2
                 ORDER BY ub.balance DESC
                 LIMIT $3
             """
             
-            rows = await self._execute_query_all(query, (token_code, threshold, limit))
+            rows = await self._execute_query_all(query, (asset_code, threshold, limit))
             
             whales = []
             for row in rows:
                 whales.append({
                     'account_id': row['account_id'],
-                    'token_code': row['token_code'],
+                    'asset_code': row['asset_code'],
                     'element': row['element'],
                     'balance': Decimal(str(row['balance'])),
                     'last_modified': row['last_modified_at'],
                     'sync_status': row['sync_status']
                 })
             
-            logger.info(f"✓ Identified {len(whales)} whales for {token_code}")
+            logger.info(f"✓ Identified {len(whales)} whales for {asset_code}")
             return whales
             
         except Exception as e:
@@ -907,7 +907,7 @@ class UBECAnalyticsService:
     
     async def get_transaction_metrics(
         self,
-        token_code: Optional[str] = None,
+        asset_code: Optional[str] = None,
         period_days: int = 30,
         use_cache: bool = True
     ) -> TransactionMetrics:
@@ -915,7 +915,7 @@ class UBECAnalyticsService:
         Analyze transaction patterns over a time period.
         
         Args:
-            token_code: Specific token to analyze (None for all tokens)
+            asset_code: Specific token to analyze (None for all tokens)
             period_days: Number of days to analyze
             use_cache: Whether to use cached results
             
@@ -930,7 +930,7 @@ class UBECAnalyticsService:
         # Check cache
         cache_key = self._get_cache_key(
             "tx_metrics",
-            token_code or "all",
+            asset_code or "all",
             period_days=period_days
         )
         if use_cache:
@@ -939,7 +939,7 @@ class UBECAnalyticsService:
                 return cached
         
         logger.info(
-            f"Analyzing transaction metrics for {token_code or 'all tokens'} "
+            f"Analyzing transaction metrics for {asset_code or 'all tokens'} "
             f"(period: {period_days} days)..."
         )
         
@@ -959,7 +959,7 @@ class UBECAnalyticsService:
             if not row or row['total_transactions'] == 0:
                 # No transactions in period
                 return TransactionMetrics(
-                    token_code=token_code or "all",
+                    asset_code=asset_code or "all",
                     period_days=period_days,
                     total_transactions=0,
                     unique_senders=0,
@@ -980,14 +980,14 @@ class UBECAnalyticsService:
             # Get total supply for turnover ratio
             supply_query = """
                 SELECT SUM(balance) as total_supply
-                FROM ubec_balances
-                WHERE token_code = $1
-            """ if token_code else """
+                FROM account_balances
+                WHERE asset_code = $1
+            """ if asset_code else """
                 SELECT SUM(balance) as total_supply
-                FROM ubec_balances
+                FROM account_balances
             """
             
-            supply_params = (token_code,) if token_code else ()
+            supply_params = (asset_code,) if asset_code else ()
             supply_row = await self._execute_query(supply_query, supply_params)
             total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
             
@@ -999,7 +999,7 @@ class UBECAnalyticsService:
             turnover_ratio = Decimal('0')
             
             metrics = TransactionMetrics(
-                token_code=token_code or "all",
+                asset_code=asset_code or "all",
                 period_days=period_days,
                 total_transactions=total_transactions,
                 unique_senders=unique_senders,
@@ -1027,14 +1027,14 @@ class UBECAnalyticsService:
     
     async def get_liquidity_metrics(
         self,
-        token_code: str,
+        asset_code: str,
         use_cache: bool = True
     ) -> LiquidityMetrics:
         """
         Analyze liquidity metrics for a token.
         
         Args:
-            token_code: Token to analyze
+            asset_code: Token to analyze
             use_cache: Whether to use cached results
             
         Returns:
@@ -1046,13 +1046,13 @@ class UBECAnalyticsService:
             print(f"Liquidity ratio: {liquidity.liquidity_ratio}%")
         """
         # Check cache
-        cache_key = self._get_cache_key("liquidity", token_code)
+        cache_key = self._get_cache_key("liquidity", asset_code)
         if use_cache:
             cached = self._get_cached(cache_key)
             if cached:
                 return cached
         
-        logger.info(f"Analyzing liquidity metrics for {token_code}...")
+        logger.info(f"Analyzing liquidity metrics for {asset_code}...")
         
         try:
             # Get supply data
@@ -1060,14 +1060,14 @@ class UBECAnalyticsService:
                 SELECT
                     SUM(balance) as total_supply,
                     COUNT(*) as holder_count
-                FROM ubec_balances
-                WHERE token_code = $1 AND balance > 0
+                FROM account_balances
+                WHERE asset_code = $1 AND balance > 0
             """
             
-            row = await self._execute_query(query, (token_code,))
+            row = await self._execute_query(query, (asset_code,))
             
             if not row:
-                raise AnalyticsException(f"No data found for token {token_code}")
+                raise AnalyticsException(f"No data found for token {asset_code}")
             
             total_supply = Decimal(str(row['total_supply']))
             
@@ -1080,7 +1080,7 @@ class UBECAnalyticsService:
             liquidity_ratio = (available_liquidity / total_supply * 100) if total_supply > 0 else Decimal('0')
             
             metrics = LiquidityMetrics(
-                token_code=token_code,
+                asset_code=asset_code,
                 total_supply=total_supply,
                 circulating_supply=circulating_supply,
                 locked_supply=locked_supply,
@@ -1091,7 +1091,7 @@ class UBECAnalyticsService:
             # Cache result
             self._set_cached(cache_key, metrics)
             
-            logger.info(f"✓ Liquidity metrics calculated for {token_code}")
+            logger.info(f"✓ Liquidity metrics calculated for {asset_code}")
             return metrics
             
         except Exception as e:
@@ -1135,7 +1135,7 @@ class UBECAnalyticsService:
             # Get holder counts
             holders_query = """
                 SELECT COUNT(DISTINCT account_id) as total_holders
-                FROM ubec_balances
+                FROM account_balances
                 WHERE balance > 0
             """
             holders_row = await self._execute_query(holders_query)
@@ -1160,7 +1160,7 @@ class UBECAnalyticsService:
             # Get total supply across all tokens
             supply_query = """
                 SELECT SUM(balance) as total_supply
-                FROM ubec_balances
+                FROM account_balances
             """
             supply_row = await self._execute_query(supply_query)
             total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
@@ -1231,7 +1231,7 @@ class UBECAnalyticsService:
                     element,
                     COUNT(DISTINCT account_id) as holder_count,
                     SUM(balance) as total_balance
-                FROM ubec_balances
+                FROM account_balances
                 WHERE balance > 0
                 GROUP BY element
             """
@@ -1325,7 +1325,7 @@ class UBECAnalyticsService:
             
             # Compile token data
             for dist in distributions:
-                comparison['tokens'][dist.token_code] = {
+                comparison['tokens'][dist.asset_code] = {
                     'element': dist.element,
                     'total_holders': dist.total_holders,
                     'total_supply': float(dist.total_supply),
@@ -1340,7 +1340,7 @@ class UBECAnalyticsService:
             # Get unique account count
             unique_query = """
                 SELECT COUNT(DISTINCT account_id) as unique_accounts
-                FROM ubec_balances
+                FROM account_balances
                 WHERE balance > 0
             """
             unique_row = await self._execute_query(unique_query)
@@ -1348,15 +1348,15 @@ class UBECAnalyticsService:
             
             # Create rankings
             comparison['rankings']['by_holders'] = [
-                {'token': d.token_code, 'holders': d.total_holders}
+                {'token': d.asset_code, 'holders': d.total_holders}
                 for d in sorted(distributions, key=lambda d: d.total_holders, reverse=True)
             ]
             comparison['rankings']['by_supply'] = [
-                {'token': d.token_code, 'supply': float(d.total_supply)}
+                {'token': d.asset_code, 'supply': float(d.total_supply)}
                 for d in sorted(distributions, key=lambda d: d.total_supply, reverse=True)
             ]
             comparison['rankings']['by_concentration'] = [
-                {'token': d.token_code, 'concentration': float(d.top_10_concentration)}
+                {'token': d.asset_code, 'concentration': float(d.top_10_concentration)}
                 for d in sorted(distributions, key=lambda d: d.top_10_concentration, reverse=True)
             ]
             

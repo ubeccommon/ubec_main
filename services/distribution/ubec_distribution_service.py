@@ -9,7 +9,7 @@ This service manages UBEC token distribution according to official tokenomics:
     - Administration: 5%
 
 CRITICAL: Total Supply Calculation Includes:
-    1. UBEC tokens in individual accounts (from ubec_balances table)
+    1. UBEC tokens in individual accounts (from account_balances table)
     2. UBEC tokens in ALL liquidity pools (from liquidity_pools table)
     3. Stewardship Liquidity Account includes both free and LP-locked tokens
 
@@ -189,7 +189,7 @@ class UBECDistributionService:
     - 5% in Administration
     
     CRITICAL ACCOUNTING: The total_supply includes:
-    1. UBEC tokens in individual accounts (from ubec_balances table)
+    1. UBEC tokens in individual accounts (from account_balances table)
     2. UBEC tokens in ALL liquidity pools (from liquidity_pools table)
     
     The monitored_total tracks:

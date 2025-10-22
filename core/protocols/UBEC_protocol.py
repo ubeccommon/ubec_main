@@ -373,7 +373,7 @@ class UBECProtocolService:
         # This resolves the "unknown" status issue identified in the review
         return await ServiceHealthCheck.element_protocol_health(
             element_name=self.element,
-            token_code=self.asset_code,
+            asset_code=self.asset_code,
             db_manager=self.db_manager,
             is_initialized=self._initialized,
             last_sync=self._last_sync_time,
@@ -440,9 +440,9 @@ class UBECProtocolService:
                     created_at as first_access,
                     last_modified as last_activity,
                     (SELECT COUNT(*) FROM ubec_main.stellar_transactions 
-                     WHERE source_account = ubec_balances.account_id 
-                     OR destination_account = ubec_balances.account_id) as transaction_count
-                FROM ubec_main.ubec_balances
+                     WHERE source_account = account_balances.account_id 
+                     OR destination_account = account_balances.account_id) as transaction_count
+                FROM ubec_main.account_balances
                 WHERE asset_code = %s
                 ORDER BY balance DESC
             """
