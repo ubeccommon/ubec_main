@@ -13,7 +13,7 @@ The Air element represents:
 
 This module implements the service pattern with:
 - Pure async operations (no sync fallbacks)
-- Factory function for instantiation
+- Async factory function for proper initialization
 - Database as single source of truth
 - Built-in rate limiting
 - In-memory caching with TTL
@@ -23,7 +23,7 @@ This module implements the service pattern with:
 Design Principles Compliance:
 ══════════════════════════════════════════════════════════════════════════════
     ✅ 1.  Modular Design: Self-contained service with clear boundaries
-    ✅ 2.  Service Pattern: No standalone execution, factory-based instantiation
+    ✅ 2.  Service Pattern: No standalone execution, async factory-based instantiation
     ✅ 3.  Service Registry: Accessed through centralized registry
     ✅ 4.  Single Source of Truth: Database is authoritative
     ✅ 5.  Strict Async: All I/O operations use async/await
@@ -39,6 +39,7 @@ Design Principles Compliance:
 Usage:
     from UBEC_protocol import create_ubec_service
     
+    # Factory is now async and handles initialization
     service = await create_ubec_service(
         db_manager=async_db,
         config={'asset_code': 'UBEC', 'issuer': 'G...'},
@@ -56,10 +57,18 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.1.4 (Database-Driven Sync Status - Critical Fix)
+Version: 3.2.0 (Factory Initialization Fix - CRITICAL)
 Date: October 23, 2025
 
 Changelog:
+    v3.2.0 - CRITICAL FIX: Proper async factory initialization
+           - FIXED: Factory function is now async and calls initialize()
+           - FIXED: Changed misleading "initialized" log in __init__ to "constructed"
+           - FIXED: Added proper "initialized" log when initialization completes
+           - Resolves "initialized: false" health check issue from critical review
+           - Service now properly initialized before being returned from factory
+           - Principle #2: Proper service pattern with async factory
+           - Principle #5: Strict async operations including initialization
     v3.1.4 - CRITICAL FIX: Timezone awareness correction
            - FIXED: Added timezone import and changed datetime.now() to datetime.now(timezone.utc)
            - Resolves "can't subtract offset-naive and offset-aware datetimes" error
@@ -72,10 +81,10 @@ Changelog:
            - Now matches actual database schema and other protocols
            - Principle #4: Database as Single Source of Truth compliance
     v3.1.2 - CRITICAL FIX: Database table and parameter correction
-           - FIXED: Changed table ubec_main.balances to account_balances to fetch_one() for AsyncDatabaseManager compatibility
+           - FIXED: Changed table ubec_main.balances to account_balances and to fetch_one() for AsyncDatabaseManager compatibility
            - FIXED: Changed fetch_one(query, asset_code) to fetch_one(query, (asset_code,)) in _get_sync_status_from_db()
            - Resolves table not found and parameter passing errors throughout the service
-           - Both table name and parameter tuple format corrected (line 363)
+           - Both table name and parameter tuple format corrected
            - Principle #5: Strict Async Operations compliance maintained
     v3.1.0 - CRITICAL FIX: Database-driven sync status for health checks
            - Added _get_sync_status_from_db() method to query database directly
@@ -225,12 +234,13 @@ class UBECProtocolService:
         rate_limiter: API rate limiter
         
     Lifecycle:
-        1. Instantiate via create_ubec_service() factory
-        2. Service auto-initializes on first use
+        1. Instantiate via create_ubec_service() async factory
+        2. Factory automatically calls initialize()
         3. Cleanup via close() method
         
     Design Principles:
         - Principle 1: Modular - Clear boundaries and single responsibility
+        - Principle 2: Service Pattern - Async factory with proper initialization
         - Principle 4: Single Source of Truth - Database-driven
         - Principle 5: Strict Async - All I/O operations async
         - Principle 10: Separation of Concerns - Clear layer separation
@@ -245,9 +255,10 @@ class UBECProtocolService:
         rate_limit_calls_per_second: float = 10.0
     ):
         """
-        Initialize UBEC Air protocol service.
+        Construct UBEC Air protocol service.
         
-        DO NOT call directly - use create_ubec_service() factory instead.
+        DO NOT call directly - use create_ubec_service() async factory instead.
+        The factory will call initialize() to complete setup.
         
         Args:
             db_manager: Database manager with async support
@@ -289,9 +300,11 @@ class UBECProtocolService:
         self._last_error: Optional[str] = None
         self._last_error_time: Optional[datetime] = None
         
+        # FIXED: Changed log message to accurately reflect service state
+        # Previously said "initialized" but service is only constructed at this point
         self.logger.info(
-            f"Air Protocol Service initialized for {self.asset_code} "
-            f"(Element: {self.element_description})"
+            f"Air Protocol Service constructed for {self.asset_code} "
+            f"(Element: {self.element_description}) - call initialize() to complete setup"
         )
     
     # ==================== INITIALIZATION ====================
@@ -301,24 +314,38 @@ class UBECProtocolService:
         """
         Initialize the service and verify database connectivity.
         
-        This method is called automatically on first use but can be called
-        explicitly to ensure the service is ready.
+        This method MUST be called after construction to complete service setup.
+        The create_ubec_service() factory handles this automatically.
+        
+        Sets self._initialized = True on successful initialization.
         
         Design Notes:
             - Principle 5: Async initialization
             - Principle 4: Verifies database connection (single source of truth)
+            - CRITICAL FIX: This method sets _initialized flag that health checks depend on
         """
         if self._initialized:
+            self.logger.debug("Service already initialized, skipping")
             return
         
         self.logger.info("Initializing Air protocol service...")
         
         try:
-            # Verify database connection
+            # Verify database connection (Principle 4: Single Source of Truth)
             await self.db_manager.execute("SELECT 1")
             
+            # CRITICAL: Set initialization flag
             self._initialized = True
-            self.logger.info("✓ Air protocol service initialized")
+            
+            # Log successful initialization
+            self.logger.info(
+                f"✓ Air protocol service initialized successfully\n"
+                f"  Asset: {self.asset_code}\n"
+                f"  Issuer: {self.issuer[:12]}...\n"
+                f"  Element: {self.element} ({self.symbol})\n"
+                f"  Principle: {self.ubuntu_principle}\n"
+                f"  Schema: {self.db_manager.schema if hasattr(self.db_manager, 'schema') else 'default'}"
+            )
             
         except Exception as e:
             self._error_count += 1
@@ -328,7 +355,13 @@ class UBECProtocolService:
             raise
     
     async def _ensure_initialized(self) -> None:
-        """Ensure service is initialized before operations."""
+        """
+        Ensure service is initialized before operations.
+        
+        This is a safety check for operations that require initialization.
+        Normally, the factory ensures initialization, but this provides
+        an additional safeguard.
+        """
         if not self._initialized:
             await self.initialize()
     
@@ -351,7 +384,7 @@ class UBECProtocolService:
         
         Returns:
             Tuple of (last_sync_timestamp, account_count):
-                - last_sync_timestamp: Most recent synced_at timestamp or None
+                - last_sync_timestamp: Most recent last_updated timestamp or None
                 - account_count: Number of distinct accounts in database
         
         Design Notes:
@@ -401,7 +434,10 @@ class UBECProtocolService:
         Uses standardized ServiceHealthCheck utility for consistency across
         all services, implementing Principle #12 (Method Singularity).
         
-        CRITICAL FIX v3.1.0: This method now queries the database directly
+        CRITICAL FIX v3.2.0: Service now properly initialized by factory,
+        so this health check will correctly report initialized: true.
+        
+        CRITICAL FIX v3.1.0: This method queries the database directly
         for sync status instead of using instance variables. This ensures
         health checks always reflect the actual database state, even when
         the synchronizer service updates data without notifying the protocol.
@@ -422,7 +458,7 @@ class UBECProtocolService:
                 'message': str,
                 'timestamp': str (ISO format),
                 'details': {
-                    'initialized': bool,
+                    'initialized': bool,  # Now correctly reports true after factory init
                     'has_db': bool,
                     'db_connection': bool,
                     'db_response_time_ms': float,
@@ -453,6 +489,7 @@ class UBECProtocolService:
             >>> print(f"Element: {health['details']['element']}")
             >>> print(f"Principle: {health['details']['ubuntu_principle']}")
             >>> print(f"Accounts: {health['details']['cached_accounts']}")
+            >>> print(f"Initialized: {health['details']['initialized']}")  # Now true!
         
         Design Notes:
             - Principle 4: Queries database for authoritative sync status
@@ -460,6 +497,7 @@ class UBECProtocolService:
             - Principle 12: Delegates to ServiceHealthCheck utility (no duplication)
             - This implementation ensures element metadata is properly exposed
             - Fixes the "needs_sync" issue by using database as truth source
+            - Fixes the "initialized: false" issue with proper factory initialization
         """
         # CRITICAL FIX: Query database for actual sync status
         # This replaces the previous use of self._last_sync_time and len(self._account_cache)
@@ -472,7 +510,7 @@ class UBECProtocolService:
             element_name=self.element,
             token_code=self.asset_code,
             db_manager=self.db_manager,
-            is_initialized=self._initialized,
+            is_initialized=self._initialized,  # ✅ Now properly set by factory
             last_sync=last_sync_db,  # ✅ FROM DATABASE (not self._last_sync_time)
             cached_accounts=account_count_db,  # ✅ FROM DATABASE (not len(self._account_cache))
             ubuntu_principle=self.ubuntu_principle,
@@ -845,21 +883,27 @@ class UBECProtocolService:
 
 
 # ==================== SERVICE FACTORY ====================
-# Principle 2: Service Pattern - Factory for instantiation
+# Principle 2: Service Pattern - Async factory for proper initialization
 
-def create_ubec_service(
+async def create_ubec_service(
     db_manager,
     config: Dict[str, Any],
     stellar_client = None,
     **kwargs
 ) -> UBECProtocolService:
     """
-    Factory function to create UBEC Air protocol service instance.
+    Async factory function to create and initialize UBEC Air protocol service.
     
-    This is the proper way to instantiate the service for use in the service registry.
+    CRITICAL FIX v3.2.0: Factory is now async and properly calls initialize()
+    before returning the service. This ensures the service is fully ready and
+    the _initialized flag is set to True, fixing the health check issue.
     
-    Principle 2: Service pattern with factory function.
+    This is the ONLY proper way to instantiate the service for use in the
+    service registry.
+    
+    Principle 2: Service pattern with async factory function.
     Principle 3: Dependencies injected via service registry.
+    Principle 5: Async initialization ensures proper setup.
     
     Args:
         db_manager: Database manager with async support
@@ -867,33 +911,46 @@ def create_ubec_service(
             - asset_code: UBEC token code (required)
             - issuer: Issuer address (required)
         stellar_client: Optional Stellar async client
-        **kwargs: Additional configuration options
+        **kwargs: Additional configuration options including:
+            - rate_limit_calls_per_second: API rate limit (default: 10.0)
     
     Returns:
-        UBECProtocolService: Initialized service instance
+        UBECProtocolService: Fully initialized service instance with _initialized = True
         
     Raises:
         ValueError: If required config parameters are missing
+        Exception: If initialization fails
     
     Example:
         >>> # In main.py or service registry
-        >>> service = create_ubec_service(
+        >>> service = await create_ubec_service(
         ...     db_manager=db,
         ...     config={'asset_code': 'UBEC', 'issuer': 'GDPNB7S3...'},
         ...     stellar_client=stellar
         ... )
+        >>> # Service is now fully initialized and ready
         >>> health = await service.health_check()
+        >>> assert health['details']['initialized'] == True  # Now passes!
         >>> print(f"Element: {health['details']['element']}")
         >>> print(f"Accounts: {health['details']['cached_accounts']}")
+    
+    Design Notes:
+        - CRITICAL: Factory MUST be async to call initialize()
+        - CRITICAL: Must call await service.initialize() before returning
+        - This fixes the "initialized: false" issue from the critical review
+        - Service is guaranteed to be ready when factory returns
     """
     # Validate required config parameters
     required_params = ['asset_code', 'issuer']
     
     for param in required_params:
         if param not in config:
-            raise ValueError(f"Configuration missing required parameter: '{param}'")
+            raise ValueError(
+                f"Configuration missing required parameter: '{param}'. "
+                f"Required: {required_params}"
+            )
     
-    # Create service instance
+    # Create service instance (constructs but does not initialize)
     service = UBECProtocolService(
         db_manager=db_manager,
         config=config,
@@ -901,10 +958,65 @@ def create_ubec_service(
         rate_limit_calls_per_second=kwargs.get('rate_limit_calls_per_second', 10.0)
     )
     
-    # Note: No async initialization needed currently
-    # Pattern allows for future async initialization if needed
+    # CRITICAL FIX: Call initialize() to complete service setup
+    # This sets _initialized = True and verifies database connectivity
+    # Previously this step was missing, causing health checks to report initialized: false
+    try:
+        await service.initialize()
+    except Exception as e:
+        service.logger.error(f"Service initialization failed: {e}")
+        raise
     
     return service
+
+
+# ==================== REGISTRY INTEGRATION ====================
+# Standardized pattern for service registry registration
+
+def register_factory(registry, name: str = 'air', **dependencies):
+    """
+    Register this service with the service registry using standardized pattern.
+    
+    This is the proper way to register the Air protocol service with the
+    service registry, ensuring all dependencies are properly injected.
+    
+    Args:
+        registry: The service registry instance
+        name: Service name (default: 'air')
+        **dependencies: Dependency service names (database, config, stellar_client)
+    
+    Example:
+        >>> from core.service_registry import ServiceRegistry
+        >>> registry = ServiceRegistry()
+        >>> 
+        >>> # Register dependencies first
+        >>> registry.register('database', db_manager)
+        >>> registry.register('config', config_service)
+        >>> registry.register('stellar_client', stellar_service)
+        >>> 
+        >>> # Register Air protocol
+        >>> register_factory(
+        ...     registry,
+        ...     name='air',
+        ...     database='database',
+        ...     config='config',
+        ...     stellar_client='stellar_client'
+        ... )
+    
+    Design Notes:
+        - Principle 3: Service Registry integration
+        - Factory function is async and handles initialization
+        - Dependencies injected by registry
+    """
+    registry.register(
+        name=name,
+        factory=create_ubec_service,
+        dependencies=[
+            dependencies.get('database', 'database'),
+            dependencies.get('config', 'config'),
+            dependencies.get('stellar_client', 'stellar_client')
+        ]
+    )
 
 
 # ==================== MODULE EXPORTS ====================
@@ -921,6 +1033,7 @@ __all__ = [
     # Service
     'UBECProtocolService',
     'create_ubec_service',
+    'register_factory',
     
     # Utilities
     'RateLimiter'
@@ -936,11 +1049,19 @@ if __name__ == "__main__":
         "Use main.py as the orchestrator.\n\n"
         "Example usage:\n"
         "  from UBEC_protocol import create_ubec_service\n"
-        "  service = create_ubec_service(db_manager, config, stellar_client)\n"
+        "  service = await create_ubec_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
+        "  print(f\"Initialized: {health['details']['initialized']}\")  # Now true!\n"
         "  print(f\"Element: {health['details']['element']}\")\n"
         "  print(f\"Accounts: {health['details']['cached_accounts']}\")\n"
         "  await service.sync_gateway_data()\n\n"
+        "Version 3.2.0 - Factory Initialization Fix (CRITICAL):\n"
+        "  - Factory is now async and calls initialize() before returning\n"
+        "  - Service is guaranteed to be fully initialized (_initialized = True)\n"
+        "  - Fixes 'initialized: false' health check issue from critical review\n"
+        "  - Changed misleading 'initialized' log in __init__ to 'constructed'\n"
+        "  - Implements Principle #2: Proper async service pattern\n"
+        "  - Implements Principle #5: Strict async operations\n\n"
         "Version 3.1.0 - Database-Driven Sync Status (Critical Fix):\n"
         "  - Added _get_sync_status_from_db() method for database queries\n"
         "  - Updated health_check() to use database instead of instance variables\n"
