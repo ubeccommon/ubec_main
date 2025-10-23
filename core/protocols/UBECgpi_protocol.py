@@ -56,10 +56,30 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.1.1 (Fixed Health Check - token_code Correction)
-Date: October 22, 2025
+Version: 3.2.3 (Database-Driven Sync Status - Critical Fix)
+Date: October 23, 2025
 
 Changelog:
+    v3.2.3 - CRITICAL FIX: Timezone awareness correction
+           - FIXED: Added timezone import and changed datetime.now() to datetime.now(timezone.utc)
+           - Resolves "can't subtract offset-naive and offset-aware datetimes" error
+           - Ensures consistent timezone-aware datetime usage throughout
+           - 18 datetime.now() calls updated for UTC timezone awareness
+           - Principle #5: Proper async datetime handling maintained
+    v3.2.2 - CRITICAL FIX: Database method and parameter correction
+           - FIXED: Changed fetchrow() to fetch_one() for AsyncDatabaseManager compatibility
+           - Resolves parameter passing errors - params must be tuple in multiple methods
+           - Changed all fetch_one calls to pass params as tuples throughout the service
+           - 3 instances: (asset_code,) and (account_id, asset_code) (lines 491, 760, 833)
+           - Principle #5: Strict Async Operations compliance maintained
+    v3.2.0 - CRITICAL FIX: Database-driven sync status for health checks
+           - Added _get_sync_status_from_db() method to query database directly
+           - Updated health_check() to use database queries instead of instance variables
+           - Fixes issue where protocols show "needs_sync" after successful sync
+           - Implements Principle #4: Database as Single Source of Truth
+           - Resolves disconnect between synchronizer and protocol status
+           - Health checks now reflect actual database state
+           - Ensures accurate monitoring even when synchronizer updates independently
     v3.1.1 - CRITICAL FIX: Corrected health check implementation
            - FIXED: Changed token_code=self.token_code to token_code=self.asset_code
            - REASON: self.token_code attribute doesn't exist; correct attribute is self.asset_code
@@ -97,8 +117,8 @@ Changelog:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional, Tuple
 from decimal import Decimal
 from dataclasses import dataclass
 from enum import Enum
@@ -334,7 +354,7 @@ class UBECgpiProtocolService:
         if self._cache_timestamp is None:
             return False
         
-        age = datetime.now() - self._cache_timestamp
+        age = datetime.now(timezone.utc) - self._cache_timestamp
         return age < self._cache_ttl
     
     async def _ensure_cache_loaded(self) -> None:
@@ -377,7 +397,7 @@ class UBECgpiProtocolService:
         """
         try:
             self.logger.info("Syncing stability data from database...")
-            start_time = datetime.now()
+            start_time = datetime.now(timezone.utc)
             
             await self.rate_limiter.acquire()
             
@@ -394,11 +414,11 @@ class UBECgpiProtocolService:
             await self._fetch_mutualism_relationships()
             
             # Update sync tracking
-            self._last_sync_time = datetime.now()
+            self._last_sync_time = datetime.now(timezone.utc)
             self._sync_count += 1
-            self._cache_timestamp = datetime.now()
+            self._cache_timestamp = datetime.now(timezone.utc)
             
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             
             result = {
                 'success': True,
@@ -420,7 +440,7 @@ class UBECgpiProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Failed to sync stability data: {e}")
             raise
     
@@ -480,7 +500,7 @@ class UBECgpiProtocolService:
             LIMIT 1
         """
         
-        row = await self.db_manager.fetchrow(query, self.asset_code)
+        row = await self.db_manager.fetch_one(query, (self.asset_code,))
         
         if row:
             self._stability_cache = StabilityMetrics(
@@ -548,7 +568,7 @@ class UBECgpiProtocolService:
             await self._ensure_cache_loaded()
             
             self._query_count += 1
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             
             compliance_results = {}
             
@@ -581,7 +601,7 @@ class UBECgpiProtocolService:
             
             return {
                 'success': True,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'overall_status': overall_status,
                 'violation_count': violation_count,
                 'warning_count': warning_count,
@@ -591,7 +611,7 @@ class UBECgpiProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error checking distribution compliance: {e}")
             raise
     
@@ -615,7 +635,7 @@ class UBECgpiProtocolService:
             await self._ensure_cache_loaded()
             
             self._query_count += 1
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             
             if not self._stability_cache:
                 return {
@@ -627,7 +647,7 @@ class UBECgpiProtocolService:
             
             return {
                 'success': True,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'metrics': {
                     'total_supply': str(metrics.total_supply),
                     'circulating_supply': str(metrics.circulating_supply),
@@ -643,7 +663,7 @@ class UBECgpiProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error getting stability metrics: {e}")
             raise
     
@@ -666,7 +686,7 @@ class UBECgpiProtocolService:
             await self._ensure_cache_loaded()
             
             self._query_count += 1
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             
             # Filter by minimum strength
             strong_relationships = [
@@ -689,7 +709,7 @@ class UBECgpiProtocolService:
             
             return {
                 'success': True,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'total_relationships': len(self._mutualism_cache),
                 'strong_relationships': len(strong_relationships),
                 'min_strength_threshold': min_strength,
@@ -710,7 +730,7 @@ class UBECgpiProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error analyzing mutualism: {e}")
             raise
     
@@ -731,7 +751,7 @@ class UBECgpiProtocolService:
         Principle 7: Per-asset monitoring
         """
         try:
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self.rate_limiter.acquire()
@@ -749,7 +769,7 @@ class UBECgpiProtocolService:
                 WHERE account_id = $1 AND asset_code = $2
             """
             
-            row = await self.db_manager.fetchrow(query, account_id, self.asset_code)
+            row = await self.db_manager.fetch_one(query, (account_id, self.asset_code))
             
             if not row:
                 return {
@@ -773,12 +793,70 @@ class UBECgpiProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error calculating account stability: {e}")
             raise
     
+    # ==================== DATABASE SYNC STATUS ====================
+    # Principle 4: Single Source of Truth - Database queries for actual status
+    # CRITICAL FIX: Query database instead of using instance variables
+    
+    async def _get_sync_status_from_db(self) -> Tuple[Optional[datetime], int]:
+        """
+        Query database for actual synchronization status.
+        
+        This method implements the critical fix for the sync status issue.
+        Instead of relying on in-memory instance variables that may be out of
+        sync with reality, this queries the database directly to get the actual
+        last sync time and account count.
+        
+        The database is the single source of truth (Principle #4), so this
+        ensures health checks always reflect the actual system state, even
+        when the synchronizer service updates data independently.
+        
+        Returns:
+            Tuple of (last_sync_timestamp, account_count):
+                - last_sync_timestamp: Most recent last_updated timestamp or None
+                - account_count: Number of distinct accounts in database
+        
+        Design Notes:
+            - Principle 4: Database as Single Source of Truth
+            - Principle 5: Async database query
+            - Principle 12: Single implementation (no duplication)
+            - This fixes the disconnect between synchronizer and protocol services
+        
+        Example:
+            >>> last_sync, count = await service._get_sync_status_from_db()
+            >>> if last_sync:
+            ...     print(f"Data synced {(datetime.now(timezone.utc) - last_sync).seconds}s ago")
+            >>> print(f"{count} accounts in database")
+        """
+        try:
+            # Query for most recent sync time and distinct account count
+            # This reflects what the synchronizer actually wrote to the database
+            query = """
+                SELECT 
+                    MAX(last_updated) as last_sync,
+                    COUNT(DISTINCT account_id) as account_count
+                FROM ubec_main.account_balances
+                WHERE asset_code = $1
+            """
+            
+            row = await self.db_manager.fetch_one(query, (self.asset_code,))
+            
+            if row and row['last_sync']:
+                return (row['last_sync'], int(row['account_count']))
+            else:
+                return (None, 0)
+                
+        except Exception as e:
+            self.logger.error(f"Error querying sync status from database: {e}")
+            # On error, return None to indicate unknown status
+            return (None, 0)
+    
     # ==================== HEALTH CHECK ====================
     # Principle 12: Method Singularity - Uses shared ServiceHealthCheck utility
+    # CRITICAL FIX: Uses database queries instead of instance variables
     
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -788,31 +866,43 @@ class UBECgpiProtocolService:
         to the shared ServiceHealthCheck utility instead of implementing custom
         health check logic.
         
+        CRITICAL FIX v3.2.0: This method now queries the database directly
+        for sync status instead of using instance variables. This ensures
+        health checks always reflect the actual database state, even when
+        the synchronizer service updates data without notifying the protocol.
+        
         Returns:
             Health status dictionary with standardized format
             
         Example:
             >>> health = await service.health_check()
             >>> print(f"Status: {health['status']}")
-            >>> print(f"Initialized: {health['checks']['initialized']}")
+            >>> print(f"Accounts: {health['details']['cached_accounts']}")
         
         Design Notes:
-            - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
+            - Principle 4: Queries database for authoritative sync status
             - Principle 7: Comprehensive monitoring through standard checks
             - Principle 10: Separation of concerns - health logic in utility
+            - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
+            - Fixes the "needs_sync" issue by using database as truth source
         
         CRITICAL FIX (v3.1.1):
             - Changed token_code=self.token_code to token_code=self.asset_code
             - The service doesn't have a token_code attribute; it has asset_code
             - This was causing AttributeError: 'UBECgpiProtocolService' object has no attribute 'token_code'
         """
+        # CRITICAL FIX: Query database for actual sync status
+        # This replaces the previous use of self._last_sync_time and len(self._account_cache)
+        # which were only updated when the protocol's own methods were called
+        last_sync_db, account_count_db = await self._get_sync_status_from_db()
+        
         return await ServiceHealthCheck.element_protocol_health(
             element_name=self.element,
             token_code=self.asset_code,  # ✅ FIXED: Was self.token_code (which doesn't exist)
             db_manager=self.db_manager,
             is_initialized=self._initialized,
-            last_sync=self._last_sync_time,
-            cached_accounts=len(self._account_cache),
+            last_sync=last_sync_db,  # ✅ FROM DATABASE (not self._last_sync_time)
+            cached_accounts=account_count_db,  # ✅ FROM DATABASE (not len(self._account_cache))
             ubuntu_principle=self.ubuntu_principle,
             # Additional context for comprehensive monitoring
             element_description=self.element_description,

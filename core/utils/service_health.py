@@ -5,6 +5,12 @@ UBEC Service Health Check Utility - PRODUCTION VERSION
 Standardized health checking for all UBEC services.
 Provides reusable health check patterns following Principle #12 (Method Singularity).
 
+ENHANCED in v3.2:
+- CRITICAL FIX: All datetime operations now timezone-aware
+- Fixed timezone mismatch in element_protocol_health()
+- Consistent UTC timestamps across all health checks
+- Eliminated naive datetime operations system-wide
+
 ENHANCED in v3.1:
 - CRITICAL FIX: Corrected Stellar client connectivity test
 - Fixed non-existent get_horizon_info() method call
@@ -30,10 +36,18 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 3.1.0 (Critical Stellar Fix + Enhanced Health Monitoring)
-Date: October 21, 2025
+Version: 3.2.0 (Timezone-Aware Fix + Critical Health Monitoring)
+Date: October 23, 2025
 
 Changelog:
+    v3.2.0 - CRITICAL FIX: Timezone-Aware Datetime Operations:
+           - 🔧 FIXED: All datetime.now() replaced with timezone-aware datetime.now(timezone.utc)
+           - ✅ Eliminated timezone mismatch errors in element_protocol_health()
+           - ✅ Consistent UTC timestamps across all health check operations
+           - ✅ Added get_current_utc_time() utility for system-wide consistency
+           - ✅ All datetime comparisons now timezone-aware
+           - 📊 Production-ready timezone handling
+           - 🎯 Full compliance with database timezone standards
     v3.1.0 - CRITICAL FIX: Stellar Client Health Check:
            - 🔧 FIXED: Replaced non-existent get_horizon_info() with test_connection()
            - ✅ Now correctly tests Stellar Horizon connectivity using SDK's root() method
@@ -53,11 +67,37 @@ Changelog:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable, List, Union
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# TIMEZONE UTILITY - NEW IN v3.2.0
+# ============================================================================
+
+def get_current_utc_time() -> datetime:
+    """
+    Get current time as timezone-aware UTC datetime.
+    
+    This is the SINGLE SOURCE for current time throughout the health check system.
+    All health checks must use this function instead of datetime.now() to ensure
+    timezone consistency with database-stored timestamps.
+    
+    Principle #4: Single Source of Truth - One canonical way to get current time
+    Principle #12: Method Singularity - Used system-wide for consistency
+    
+    Returns:
+        datetime: Current UTC time with timezone info
+        
+    Example:
+        >>> now = get_current_utc_time()
+        >>> now.tzinfo
+        datetime.timezone.utc
+    """
+    return datetime.now(timezone.utc)
 
 
 # ============================================================================
@@ -96,6 +136,7 @@ class ServiceHealthCheck:
     This class provides reusable health check functionality that can be
     used by all services in the system, following Principle #12 (Method Singularity).
     
+    ENHANCED v3.2: Fixed critical timezone issues - all datetime operations now timezone-aware.
     ENHANCED v3.1: Fixed critical Stellar client bug and improved diagnostics.
     ENHANCED v3.0: Includes actionable status messages that guide users
     toward solutions rather than just reporting problems.
@@ -129,6 +170,8 @@ class ServiceHealthCheck:
         This is the canonical health check implementation used across all services.
         All other health check methods build upon this foundation.
         
+        ENHANCED v3.2: Uses timezone-aware timestamps for consistency.
+        
         Principle #5: Strict Async - All checks use async/await
         Principle #12: Method Singularity - Single shared implementation
         
@@ -142,11 +185,11 @@ class ServiceHealthCheck:
         Returns:
             Dictionary with health status information including actionable messages
         """
-        # Initialize health response structure
+        # Initialize health response structure with timezone-aware timestamp
         health = {
             'status': HealthStatus.HEALTHY.value,
             'message': f"{service_name} operational",
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': get_current_utc_time().isoformat(),
             'details': {
                 'initialized': is_initialized,
                 **kwargs
@@ -258,7 +301,7 @@ class ServiceHealthCheck:
         )
     
     # ========================================================================
-    # ELEMENT PROTOCOL HEALTH CHECK - ENHANCED
+    # ELEMENT PROTOCOL HEALTH CHECK - ENHANCED v3.2.0
     # ========================================================================
     
     @staticmethod
@@ -275,7 +318,10 @@ class ServiceHealthCheck:
         """
         Health check for UBEC element protocols (Air, Water, Earth, Fire).
         
-        ENHANCED: Uses NEEDS_SYNC status with actionable guidance instead of
+        CRITICAL FIX v3.2.0: All datetime operations now timezone-aware to prevent
+        "can't subtract offset-naive and offset-aware datetimes" errors.
+        
+        ENHANCED v3.0: Uses NEEDS_SYNC status with actionable guidance instead of
         generic "degraded" status. Provides specific commands to resolve issues.
         
         Principle #7: Per-Asset Monitoring - Tracks each protocol's sync status
@@ -287,6 +333,7 @@ class ServiceHealthCheck:
             db_manager: Database manager instance
             is_initialized: Whether protocol is initialized
             last_sync: Timestamp of last synchronization (None if never synced)
+                      MUST be timezone-aware datetime
             cached_accounts: Number of accounts in cache
             additional_checks: Additional check functions
             **kwargs: Additional protocol-specific context
@@ -298,6 +345,8 @@ class ServiceHealthCheck:
             """
             Check if data synchronization is recent.
             
+            CRITICAL FIX v3.2.0: Uses timezone-aware datetime comparison.
+            
             ENHANCED: Returns actionable status instead of raising exception.
             """
             if last_sync is None:
@@ -306,7 +355,19 @@ class ServiceHealthCheck:
                        f'{element_name} protocol awaiting initial synchronization',
                        'Run: python main.py --mode sync --sync-type all')
             
-            time_since_sync = (datetime.now() - last_sync).total_seconds()
+            # CRITICAL FIX: Use timezone-aware current time for comparison
+            current_time = get_current_utc_time()
+            
+            # Ensure last_sync is timezone-aware (should be from database)
+            if last_sync.tzinfo is None:
+                logger.warning(f"last_sync for {element_name} is timezone-naive, treating as UTC")
+                # If somehow naive, assume UTC
+                last_sync_aware = last_sync.replace(tzinfo=timezone.utc)
+            else:
+                last_sync_aware = last_sync
+            
+            # Now safe to subtract timezone-aware datetimes
+            time_since_sync = (current_time - last_sync_aware).total_seconds()
             
             # Warn if sync is older than 30 minutes
             if time_since_sync > 1800:
@@ -556,6 +617,8 @@ class ServiceHealthCheck:
         """
         Synchronous basic health check for services without async requirements.
         
+        ENHANCED v3.2: Uses timezone-aware timestamps for consistency.
+        
         Used for simple services like configuration managers that don't
         perform I/O operations.
         
@@ -574,7 +637,7 @@ class ServiceHealthCheck:
         health = {
             'status': HealthStatus.HEALTHY.value if is_initialized else HealthStatus.UNHEALTHY.value,
             'message': f"{service_name} {'operational' if is_initialized else 'not initialized'}",
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': get_current_utc_time().isoformat(),
             'details': {
                 'initialized': is_initialized,
                 **kwargs
@@ -608,20 +671,20 @@ class ServiceHealthCheck:
         self.status = HealthStatus.UNKNOWN
         self.message = ""
         self.details = {}
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_utc_time()
     
     def mark_healthy(self, message: str = "Service operational"):
         """Mark service as healthy"""
         self.status = HealthStatus.HEALTHY
         self.message = message
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_utc_time()
     
     def mark_needs_sync(self, message: str, action: str):
         """Mark service as needing synchronization with actionable command"""
         self.status = HealthStatus.NEEDS_SYNC
         self.message = message
         self.details['action'] = action
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_utc_time()
     
     def mark_degraded(self, message: str, action: Optional[str] = None):
         """Mark service as degraded with optional action"""
@@ -629,7 +692,7 @@ class ServiceHealthCheck:
         self.message = message
         if action:
             self.details['action'] = action
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_utc_time()
     
     def mark_unhealthy(self, message: str, action: Optional[str] = None):
         """Mark service as unhealthy with optional action"""
@@ -637,7 +700,7 @@ class ServiceHealthCheck:
         self.message = message
         if action:
             self.details['action'] = action
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_utc_time()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert health check to dictionary"""

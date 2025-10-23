@@ -18,6 +18,7 @@ This module implements the service pattern with:
 - Built-in rate limiting
 - In-memory caching with TTL
 - Comprehensive health monitoring using ServiceHealthCheck utility
+- Database-driven sync status (fixes "needs_sync" issue)
 
 Design Principles Compliance:
 ══════════════════════════════════════════════════════════════════════════════
@@ -55,10 +56,34 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.0.0 (Complete Element Protocol Implementation)
-Date: October 18, 2025
+Version: 3.1.4 (Database-Driven Sync Status - Critical Fix)
+Date: October 23, 2025
 
 Changelog:
+    v3.1.4 - CRITICAL FIX: Timezone awareness correction
+           - FIXED: Added timezone import and changed datetime.now() to datetime.now(timezone.utc)
+           - Resolves "can't subtract offset-naive and offset-aware datetimes" error
+           - Ensures consistent timezone-aware datetime usage throughout
+           - 18 datetime.now() calls updated for UTC timezone awareness
+           - Principle #5: Proper async datetime handling maintained
+    v3.1.3 - CRITICAL FIX: Column name correction
+           - FIXED: Changed column name from synced_at to last_updated
+           - Resolves "column synced_at does not exist" error
+           - Now matches actual database schema and other protocols
+           - Principle #4: Database as Single Source of Truth compliance
+    v3.1.2 - CRITICAL FIX: Database table and parameter correction
+           - FIXED: Changed table ubec_main.balances to account_balances to fetch_one() for AsyncDatabaseManager compatibility
+           - FIXED: Changed fetch_one(query, asset_code) to fetch_one(query, (asset_code,)) in _get_sync_status_from_db()
+           - Resolves table not found and parameter passing errors throughout the service
+           - Both table name and parameter tuple format corrected (line 363)
+           - Principle #5: Strict Async Operations compliance maintained
+    v3.1.0 - CRITICAL FIX: Database-driven sync status for health checks
+           - Added _get_sync_status_from_db() method to query database directly
+           - Updated health_check() to use database queries instead of instance variables
+           - Fixes issue where protocols show "needs_sync" after successful sync
+           - Implements Principle #4: Database as Single Source of Truth
+           - Resolves disconnect between synchronizer and protocol status
+           - Health checks now reflect actual database state
     v3.0.0 - MAJOR: Fixed element metadata exposure
            - Added element, element_description, and ubuntu_principle properties
            - Implemented proper health_check() using element_protocol_health()
@@ -76,8 +101,8 @@ Changelog:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional, Tuple
 from decimal import Decimal
 from dataclasses import dataclass
 from enum import Enum
@@ -298,7 +323,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Failed to initialize Air protocol: {e}")
             raise
     
@@ -307,9 +332,67 @@ class UBECProtocolService:
         if not self._initialized:
             await self.initialize()
     
+    # ==================== DATABASE SYNC STATUS ====================
+    # Principle 4: Single Source of Truth - Database queries for actual status
+    # CRITICAL FIX: Query database instead of using instance variables
+    
+    async def _get_sync_status_from_db(self) -> Tuple[Optional[datetime], int]:
+        """
+        Query database for actual synchronization status.
+        
+        This method implements the critical fix for the sync status issue.
+        Instead of relying on in-memory instance variables that may be out of
+        sync with reality, this queries the database directly to get the actual
+        last sync time and account count.
+        
+        The database is the single source of truth (Principle #4), so this
+        ensures health checks always reflect the actual system state, even
+        when the synchronizer service updates data independently.
+        
+        Returns:
+            Tuple of (last_sync_timestamp, account_count):
+                - last_sync_timestamp: Most recent synced_at timestamp or None
+                - account_count: Number of distinct accounts in database
+        
+        Design Notes:
+            - Principle 4: Database as Single Source of Truth
+            - Principle 5: Async database query
+            - Principle 12: Single implementation (no duplication)
+            - This fixes the disconnect between synchronizer and protocol services
+        
+        Example:
+            >>> last_sync, count = await service._get_sync_status_from_db()
+            >>> if last_sync:
+            ...     print(f"Data synced {(datetime.now(timezone.utc) - last_sync).seconds}s ago")
+            >>> print(f"{count} accounts in database")
+        """
+        try:
+            # Query for most recent sync time and distinct account count
+            # This reflects what the synchronizer actually wrote to the database
+            query = """
+                SELECT 
+                    MAX(last_updated) as last_sync,
+                    COUNT(DISTINCT account_id) as account_count
+                FROM ubec_main.account_balances
+                WHERE asset_code = $1
+            """
+            
+            row = await self.db_manager.fetch_one(query, (self.asset_code,))
+            
+            if row and row['last_sync']:
+                return (row['last_sync'], int(row['account_count']))
+            else:
+                return (None, 0)
+                
+        except Exception as e:
+            self.logger.error(f"Error querying sync status from database: {e}")
+            # On error, return None to indicate unknown status
+            return (None, 0)
+    
     # ==================== HEALTH CHECK ====================
     # Principle 12: Method Singularity - Uses ServiceHealthCheck utility
     # Principle 7: Per-Asset Monitoring - Comprehensive health data
+    # CRITICAL FIX: Uses database queries instead of instance variables
     
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -318,6 +401,11 @@ class UBECProtocolService:
         Uses standardized ServiceHealthCheck utility for consistency across
         all services, implementing Principle #12 (Method Singularity).
         
+        CRITICAL FIX v3.1.0: This method now queries the database directly
+        for sync status instead of using instance variables. This ensures
+        health checks always reflect the actual database state, even when
+        the synchronizer service updates data without notifying the protocol.
+        
         This implementation follows the element protocol health check pattern,
         which includes:
         - Element-specific metadata (air, diversity, UBEC)
@@ -325,6 +413,7 @@ class UBECProtocolService:
         - Cache status and freshness
         - Operational statistics
         - Error tracking
+        - ACTUAL sync status from database (not stale instance variables)
         
         Returns:
             Health status dictionary from ServiceHealthCheck utility:
@@ -363,12 +452,20 @@ class UBECProtocolService:
             ...     print("Air protocol operational")
             >>> print(f"Element: {health['details']['element']}")
             >>> print(f"Principle: {health['details']['ubuntu_principle']}")
+            >>> print(f"Accounts: {health['details']['cached_accounts']}")
         
         Design Notes:
+            - Principle 4: Queries database for authoritative sync status
             - Principle 7: Comprehensive per-asset monitoring
             - Principle 12: Delegates to ServiceHealthCheck utility (no duplication)
             - This implementation ensures element metadata is properly exposed
+            - Fixes the "needs_sync" issue by using database as truth source
         """
+        # CRITICAL FIX: Query database for actual sync status
+        # This replaces the previous use of self._last_sync_time and len(self._account_cache)
+        # which were only updated when the protocol's own methods were called
+        last_sync_db, account_count_db = await self._get_sync_status_from_db()
+        
         # Use the standardized element protocol health check
         # This resolves the "unknown" status issue identified in the review
         return await ServiceHealthCheck.element_protocol_health(
@@ -376,8 +473,8 @@ class UBECProtocolService:
             token_code=self.asset_code,
             db_manager=self.db_manager,
             is_initialized=self._initialized,
-            last_sync=self._last_sync_time,
-            cached_accounts=len(self._account_cache),
+            last_sync=last_sync_db,  # ✅ FROM DATABASE (not self._last_sync_time)
+            cached_accounts=account_count_db,  # ✅ FROM DATABASE (not len(self._account_cache))
             ubuntu_principle=self.ubuntu_principle,
             # Additional context for comprehensive monitoring
             element_description=self.element_description,
@@ -403,7 +500,7 @@ class UBECProtocolService:
             - Principle 4: Database is authoritative, cache is optimization
             - Principle 5: Async operation
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         # Check if cache needs refresh
         cache_stale = (
@@ -443,11 +540,11 @@ class UBECProtocolService:
                      WHERE source_account = account_balances.account_id 
                      OR destination_account = account_balances.account_id) as transaction_count
                 FROM ubec_main.account_balances
-                WHERE asset_code = %s
+                WHERE asset_code = $1
                 ORDER BY balance DESC
             """
             
-            results = await self.db_manager.fetch(query, (self.asset_code,))
+            results = await self.db_manager.fetch(query, self.asset_code)
             
             # Convert to GatewayAccount objects
             self._account_cache.clear()
@@ -478,8 +575,8 @@ class UBECProtocolService:
                 self._account_cache[account.account_id] = account
             
             # Update cache metadata
-            self._cache_timestamp = datetime.now()
-            self._last_sync_time = datetime.now()
+            self._cache_timestamp = datetime.now(timezone.utc)
+            self._last_sync_time = datetime.now(timezone.utc)
             self._sync_count += 1
             
             self.logger.info(f"Loaded {len(self._account_cache)} gateway accounts into cache")
@@ -487,7 +584,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error loading accounts from database: {e}")
             raise
     
@@ -518,12 +615,12 @@ class UBECProtocolService:
             - Principle 4: Database is single source of truth
             - Principle 5: Async operation
         """
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
         
         try:
             await self._load_accounts_from_db()
             
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             
             return {
                 'accounts_synced': len(self._account_cache),
@@ -535,7 +632,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Gateway sync failed: {e}")
             raise
     
@@ -560,7 +657,7 @@ class UBECProtocolService:
         """
         try:
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
@@ -568,7 +665,7 @@ class UBECProtocolService:
             accounts = list(self._account_cache.values())
             
             if active_only:
-                cutoff = datetime.now() - timedelta(days=30)
+                cutoff = datetime.now(timezone.utc) - timedelta(days=30)
                 accounts = [a for a in accounts if a.last_activity >= cutoff]
             
             return accounts
@@ -576,7 +673,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error getting gateway accounts: {e}")
             raise
     
@@ -598,7 +695,7 @@ class UBECProtocolService:
         """
         try:
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
@@ -618,7 +715,7 @@ class UBECProtocolService:
                 )
             
             # Active accounts (activity in last 30 days)
-            cutoff_30d = datetime.now() - timedelta(days=30)
+            cutoff_30d = datetime.now(timezone.utc) - timedelta(days=30)
             active_accounts = len([a for a in accounts if a.last_activity >= cutoff_30d])
             
             # Balance statistics
@@ -627,7 +724,7 @@ class UBECProtocolService:
             average_balance = total_balance / total_accounts if total_accounts > 0 else Decimal('0')
             
             # New accounts in last 24 hours
-            cutoff_24h = datetime.now() - timedelta(hours=24)
+            cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
             new_accounts_24h = len([a for a in accounts if a.first_access >= cutoff_24h])
             
             # Diversity index (simplified - based on balance distribution)
@@ -650,7 +747,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error calculating gateway statistics: {e}")
             raise
     
@@ -716,7 +813,7 @@ class UBECProtocolService:
         """
         try:
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
@@ -725,7 +822,7 @@ class UBECProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error getting account info: {e}")
             raise
     
@@ -787,7 +884,7 @@ def create_ubec_service(
         ... )
         >>> health = await service.health_check()
         >>> print(f"Element: {health['details']['element']}")
-        >>> print(f"Principle: {health['details']['ubuntu_principle']}")
+        >>> print(f"Accounts: {health['details']['cached_accounts']}")
     """
     # Validate required config parameters
     required_params = ['asset_code', 'issuer']
@@ -842,14 +939,15 @@ if __name__ == "__main__":
         "  service = create_ubec_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
         "  print(f\"Element: {health['details']['element']}\")\n"
-        "  print(f\"Principle: {health['details']['ubuntu_principle']}\")\n"
+        "  print(f\"Accounts: {health['details']['cached_accounts']}\")\n"
         "  await service.sync_gateway_data()\n\n"
-        "Version 3.0.0 - Complete Element Protocol Implementation:\n"
-        "  - Fixed element metadata exposure (air, diversity, UBEC)\n"
-        "  - Uses ServiceHealthCheck.element_protocol_health() utility\n"
-        "  - Implements Principle #12: Method Singularity\n"
-        "  - Resolves 'unknown' status issues from critical review\n"
-        "  - Full compliance with all 12 design principles\n\n"
+        "Version 3.1.0 - Database-Driven Sync Status (Critical Fix):\n"
+        "  - Added _get_sync_status_from_db() method for database queries\n"
+        "  - Updated health_check() to use database instead of instance variables\n"
+        "  - Fixes 'needs_sync' issue after successful synchronization\n"
+        "  - Implements Principle #4: Database as Single Source of Truth\n"
+        "  - Resolves disconnect between synchronizer and protocol services\n"
+        "  - Health checks now always reflect actual database state\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

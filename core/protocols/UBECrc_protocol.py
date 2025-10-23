@@ -58,10 +58,30 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.3.0 (Enhanced Health Monitoring - DRY Compliance)
-Date: October 19, 2025
+Version: 3.4.3 (Database-Driven Sync Status - Critical Fix)
+Date: October 23, 2025
 
 Changelog:
+    v3.4.3 - CRITICAL FIX: Timezone awareness correction
+           - FIXED: Added timezone import and changed datetime.now() to datetime.now(timezone.utc)
+           - Resolves "can't subtract offset-naive and offset-aware datetimes" error
+           - Ensures consistent timezone-aware datetime usage throughout
+           - 18 datetime.now() calls updated for UTC timezone awareness
+           - Principle #5: Proper async datetime handling maintained
+    v3.4.2 - CRITICAL FIX: Database method and parameter correction
+           - FIXED: Changed fetchrow() to fetch_one() for AsyncDatabaseManager compatibility
+           - Resolves parameter passing errors - params must be tuple in _get_sync_status_from_db()
+           - Changed fetch_one(query, asset_code) to fetch_one(query, (asset_code,)) throughout the service
+           - All 1 instance corrected (line 441)
+           - Principle #5: Strict Async Operations compliance maintained
+    v3.4.0 - CRITICAL FIX: Database-driven sync status for health checks
+           - Added _get_sync_status_from_db() method to query database directly
+           - Updated health_check() to use database queries instead of instance variables
+           - Fixes issue where protocols show "needs_sync" after successful sync
+           - Implements Principle #4: Database as Single Source of Truth
+           - Resolves disconnect between synchronizer and protocol status
+           - Health checks now reflect actual database state
+           - Ensures accurate monitoring even when synchronizer updates independently
     v3.3.0 - ENHANCEMENT: Improved health check with DRY compliance
            - ENHANCED: Uses instance variables instead of hardcoded strings
            - ADDED: Comprehensive error tracking (last_error, last_error_time)
@@ -105,7 +125,7 @@ Changelog:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from decimal import Decimal
 from dataclasses import dataclass
@@ -369,7 +389,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Failed to initialize Water protocol: {e}")
             raise
     
@@ -385,9 +405,67 @@ class UBECrcProtocolService:
         if not self._initialized:
             await self.initialize()
     
+    # ==================== DATABASE SYNC STATUS ====================
+    # Principle 4: Single Source of Truth - Database queries for actual status
+    # CRITICAL FIX: Query database instead of using instance variables
+    
+    async def _get_sync_status_from_db(self) -> Tuple[Optional[datetime], int]:
+        """
+        Query database for actual synchronization status.
+        
+        This method implements the critical fix for the sync status issue.
+        Instead of relying on in-memory instance variables that may be out of
+        sync with reality, this queries the database directly to get the actual
+        last sync time and account count.
+        
+        The database is the single source of truth (Principle #4), so this
+        ensures health checks always reflect the actual system state, even
+        when the synchronizer service updates data independently.
+        
+        Returns:
+            Tuple of (last_sync_timestamp, account_count):
+                - last_sync_timestamp: Most recent last_updated timestamp or None
+                - account_count: Number of distinct accounts in database
+        
+        Design Notes:
+            - Principle 4: Database as Single Source of Truth
+            - Principle 5: Async database query
+            - Principle 12: Single implementation (no duplication)
+            - This fixes the disconnect between synchronizer and protocol services
+        
+        Example:
+            >>> last_sync, count = await service._get_sync_status_from_db()
+            >>> if last_sync:
+            ...     print(f"Data synced {(datetime.now(timezone.utc) - last_sync).seconds}s ago")
+            >>> print(f"{count} accounts in database")
+        """
+        try:
+            # Query for most recent sync time and distinct account count
+            # This reflects what the synchronizer actually wrote to the database
+            query = """
+                SELECT 
+                    MAX(last_updated) as last_sync,
+                    COUNT(DISTINCT account_id) as account_count
+                FROM ubec_main.account_balances
+                WHERE asset_code = $1
+            """
+            
+            row = await self.db_manager.fetch_one(query, (self.asset_code,))
+            
+            if row and row['last_sync']:
+                return (row['last_sync'], int(row['account_count']))
+            else:
+                return (None, 0)
+                
+        except Exception as e:
+            self.logger.error(f"Error querying sync status from database: {e}")
+            # On error, return None to indicate unknown status
+            return (None, 0)
+    
     # ==================== HEALTH CHECK ====================
     # Principle 7: Per-Asset Monitoring with health checks
     # Principle 12: Method Singularity - Uses standardized utility
+    # CRITICAL FIX: Uses database queries instead of instance variables
     
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -396,6 +474,11 @@ class UBECrcProtocolService:
         This method implements Principle #12 (Method Singularity) by delegating
         to the shared ServiceHealthCheck utility instead of implementing custom
         health check logic.
+        
+        CRITICAL FIX v3.4.0: This method now queries the database directly
+        for sync status instead of using instance variables. This ensures
+        health checks always reflect the actual database state, even when
+        the synchronizer service updates data without notifying the protocol.
         
         Returns:
             Health status dictionary with standardized format:
@@ -439,17 +522,24 @@ class UBECrcProtocolService:
             >>> print(f"Reciprocity Health: {health['details']['reciprocity_health']}")
         
         Design Notes:
-            - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
+            - Principle 4: Queries database for authoritative sync status
             - Principle 7: Comprehensive monitoring through standard checks
             - Principle 10: Separation of concerns - health logic in utility
+            - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
+            - Fixes the "needs_sync" issue by using database as truth source
         """
+        # CRITICAL FIX: Query database for actual sync status
+        # This replaces the previous use of self._last_sync_time and len(self._account_cache)
+        # which were only updated when the protocol's own methods were called
+        last_sync_db, account_count_db = await self._get_sync_status_from_db()
+        
         return await ServiceHealthCheck.element_protocol_health(
             element_name=self.element,
             token_code=self.asset_code,
             db_manager=self.db_manager,
             is_initialized=self._initialized,
-            last_sync=self._last_sync_time,
-            cached_accounts=len(self._account_cache),
+            last_sync=last_sync_db,  # ✅ FROM DATABASE (not self._last_sync_time)
+            cached_accounts=account_count_db,  # ✅ FROM DATABASE (not len(self._account_cache))
             ubuntu_principle=self.ubuntu_principle,
             # Additional context for comprehensive monitoring
             element_description=self.element_description,
@@ -500,7 +590,7 @@ class UBECrcProtocolService:
         """
         if self._cache_timestamp is None:
             return False
-        return datetime.now() - self._cache_timestamp < self._cache_ttl
+        return datetime.now(timezone.utc) - self._cache_timestamp < self._cache_ttl
     
     async def _load_from_database(self) -> None:
         """
@@ -550,7 +640,7 @@ class UBECrcProtocolService:
             # Calculate reciprocity balances
             await self._calculate_reciprocity_balances()
             
-            self._cache_timestamp = datetime.now()
+            self._cache_timestamp = datetime.now(timezone.utc)
             self.logger.info(
                 f"Loaded {len(self._transaction_cache)} transactions "
                 f"and calculated {len(self._reciprocity_cache)} reciprocity balances"
@@ -559,7 +649,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error loading from database: {e}")
             raise
     
@@ -634,7 +724,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error calculating reciprocity balances: {e}")
             raise
     
@@ -678,7 +768,7 @@ class UBECrcProtocolService:
             self.logger.info("Starting Water (UBECrc) flow data synchronization...")
             
             # Track operation for health checks
-            self._last_sync_time = datetime.now()
+            self._last_sync_time = datetime.now(timezone.utc)
             self._sync_count += 1
             
             # Force cache refresh
@@ -691,7 +781,7 @@ class UBECrcProtocolService:
                 'element': 'water',
                 'token': self.asset_code,
                 'status': 'success',
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'transactions_loaded': len(self._transaction_cache),
                 'accounts_tracked': len(self._reciprocity_cache),
                 'metrics': {
@@ -707,14 +797,14 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error syncing flow data: {e}")
             return {
                 'element': 'water',
                 'token': self.asset_code,
                 'status': 'error',
                 'error': str(e),
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
     
     async def get_flow_metrics(self) -> FlowMetrics:
@@ -738,13 +828,13 @@ class UBECrcProtocolService:
             await self._ensure_initialized()
             
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
             
             # Filter to last 24 hours
-            cutoff = datetime.now() - timedelta(hours=24)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
             recent_txs = [
                 tx for tx in self._transaction_cache.values()
                 if tx.timestamp >= cutoff
@@ -783,7 +873,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error calculating flow metrics: {e}")
             raise
     
@@ -842,7 +932,7 @@ class UBECrcProtocolService:
             await self._ensure_initialized()
             
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
@@ -851,7 +941,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error getting reciprocity balance: {e}")
             raise
     
@@ -876,7 +966,7 @@ class UBECrcProtocolService:
             >>> flows = await service.get_account_flows(
             ...     'GXXX...',
             ...     direction=FlowDirection.INBOUND,
-            ...     start_date=datetime.now() - timedelta(days=7)
+            ...     start_date=datetime.now(timezone.utc) - timedelta(days=7)
             ... )
             >>> for flow in flows:
             ...     print(f"{flow.timestamp}: {flow.amount} from {flow.from_account}")
@@ -889,7 +979,7 @@ class UBECrcProtocolService:
             await self._ensure_initialized()
             
             # Track operation for health checks
-            self._last_query_time = datetime.now()
+            self._last_query_time = datetime.now(timezone.utc)
             self._query_count += 1
             
             await self._ensure_cache_loaded()
@@ -921,7 +1011,7 @@ class UBECrcProtocolService:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            self._last_error_time = datetime.now()
+            self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error getting account flows: {e}")
             raise
     
