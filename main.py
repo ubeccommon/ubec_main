@@ -42,11 +42,18 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 17.0.0 (DATABASE-DRIVEN POOL CONFIGURATION)
-Date: October 22, 2025
+Version: 17.1.0 (AIR SERVICE INITIALIZATION FIX)
+Date: October 23, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
 Changelog:
+    v17.1.0 - AIR SERVICE INITIALIZATION FIX (Principle #5)
+            - 🔧 FIXED: Air service now explicitly calls initialize() after creation
+            - 🔧 FIXED: _initialized flag now set to True, resolving health check issue
+            - ✅ Air service matches Water protocol initialization pattern
+            - ✅ All element protocols now consistently initialized
+            - ✅ Health checks will now report Air service as properly initialized
+            - 📝 Resolves critical issue identified in log output analysis
     v17.0.0 - DATABASE-DRIVEN POOL CONFIGURATION (Principles #4 & #8)
             - 🔧 FIXED: Pool configuration now loaded from database (not env vars)
             - 🔧 FIXED: Two-stage initialization: bootstrap → configure → full pool
@@ -486,10 +493,12 @@ def register_core_services():
         """
         Create Air protocol service using factory function.
         
-        CRITICAL FIX v16.1.0: Now passes config dictionary with asset_code and issuer.
-        Previously was passing config object which caused initialization failure.
+        CRITICAL FIX v17.1.0: Now explicitly calls initialize() after service creation.
+        This ensures _initialized flag is set to True, matching Water protocol pattern.
+        Previously was passing config object which caused initialization failure (v16.1.0).
         
         Principle #4: Database as single source of truth for configuration.
+        Principle #5: Explicit async initialization pattern.
         Principle #8: No duplicate configuration - uses centralized config.
         """
         from core.protocols.UBEC_protocol import create_ubec_service
@@ -501,7 +510,8 @@ def register_core_services():
         logger.info("  ├─ Air Protocol (UBEC): Universal access")
         
         # ✅ FIXED v16.1.0: Pass config dictionary, not object
-        return create_ubec_service(
+        # ✅ FIXED v17.1.0: Explicitly call initialize() after creation
+        service = create_ubec_service(
             db_manager=db,
             config={
                 'asset_code': config.get('ubec_code', 'UBEC'),
@@ -510,6 +520,11 @@ def register_core_services():
             },
             stellar_client=stellar
         )
+        
+        # Air protocol requires explicit initialize() call to set _initialized = True
+        await service.initialize()
+        
+        return service
     
     registry.register_factory(
         'air',
@@ -1693,7 +1708,7 @@ async def main_async(args):
     logger.info("UBEC PROTOCOL SYSTEM STARTING")
     logger.info("=" * 70)
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 17.0.0 (Database-Driven Pool Configuration)")
+    logger.info(f"Version: 17.1.0 (Air Service Initialization Fix)")
     logger.info("=" * 70)
     
     try:
