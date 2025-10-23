@@ -373,7 +373,7 @@ class UBECProtocolService:
         # This resolves the "unknown" status issue identified in the review
         return await ServiceHealthCheck.element_protocol_health(
             element_name=self.element,
-            asset_code=self.asset_code,
+            token_code=self.asset_code,
             db_manager=self.db_manager,
             is_initialized=self._initialized,
             last_sync=self._last_sync_time,

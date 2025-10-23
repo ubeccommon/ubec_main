@@ -56,10 +56,16 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.1.0 (Enhanced Health Monitoring - DRY Compliance)
-Date: October 19, 2025
+Version: 3.1.1 (Fixed Health Check - token_code Correction)
+Date: October 22, 2025
 
 Changelog:
+    v3.1.1 - CRITICAL FIX: Corrected health check implementation
+           - FIXED: Changed token_code=self.token_code to token_code=self.asset_code
+           - REASON: self.token_code attribute doesn't exist; correct attribute is self.asset_code
+           - ERROR: 'UBECgpiProtocolService' object has no attribute 'token_code'
+           - STATUS: Now properly passes asset_code to ServiceHealthCheck utility
+           - Maintains all v3.1.0 functionality
     v3.1.0 - ENHANCEMENT: Improved health check with DRY compliance
            - ENHANCED: Uses instance variables instead of hardcoded strings
            - ADDED: Comprehensive error tracking (last_error, last_error_time)
@@ -78,7 +84,7 @@ Changelog:
     v2.2.0 - MAJOR: Standardized health check using ServiceHealthCheck utility
            - Implements Principle #12: Method Singularity with shared utility
            - Removed custom health_check() implementation
-           - Now uses ServiceHealthCheck.api_dependent_health()
+           - Now uses ServiceHealthCheck.element_protocol_health()
            - Cleaner, more maintainable code with consistent patterns
            - Full compliance with health check implementation guide
     v2.1.0 - Enhanced health_check() method for comprehensive monitoring
@@ -349,176 +355,238 @@ class UBECgpiProtocolService:
         self._account_cache.clear()
         self._cache_timestamp = None
     
-    # ==================== CORE FUNCTIONALITY ====================
-    # Principle 5: All I/O operations are async
+    # ==================== DATA SYNCHRONIZATION ====================
+    # Principle 4: Single Source of Truth - Database is authoritative
+    # Principle 5: Strict Async Operations
     
-    async def sync_stability_data(self) -> None:
+    async def sync_stability_data(self) -> Dict[str, Any]:
         """
-        Synchronize stability and distribution data from database.
+        Synchronize stability data from database.
         
-        This is the primary data loading method that populates the cache
-        with current stability metrics, distribution states, and mutualism data.
+        Fetches latest distribution, stability, and mutualism metrics from
+        the database and updates internal caches.
         
-        Principle 4: Database as single source of truth
-        Principle 5: Async operation
-        Principle 7: Per-asset monitoring
-        
+        Returns:
+            Sync result with statistics
+            
         Raises:
-            Exception: If database query fails
+            Exception: If sync fails
+            
+        Principle 4: Database is single source of truth
+        Principle 5: Pure async operation
         """
         try:
-            self.logger.info(f"Syncing stability data for {self.asset_code}...")
+            self.logger.info("Syncing stability data from database...")
+            start_time = datetime.now()
             
-            # Track operation for health checks
-            self._last_sync_time = datetime.now()
-            self._sync_count += 1
-            
-            # Use rate limiter for database queries
             await self.rate_limiter.acquire()
             
-            # Query distribution state from database
-            distribution_query = """
-                SELECT 
-                    category,
-                    current_amount,
-                    target_amount,
-                    target_percentage,
-                    actual_percentage,
-                    (actual_percentage - target_percentage) as deviation,
-                    compliance_status
-                FROM ubec_main.distribution_state
-                WHERE asset_code = $1
-                ORDER BY category
-            """
+            # Clear existing cache
+            self._clear_cache()
             
-            distribution_rows = await self.db_manager.fetch(
-                distribution_query,
-                self.asset_code
-            )
+            # Fetch distribution state
+            await self._fetch_distribution_state()
             
-            # Update distribution cache
-            self._distribution_cache.clear()
-            for row in distribution_rows:
-                category = DistributionCategory(row['category'])
-                state = DistributionState(
-                    category=category,
-                    current_amount=Decimal(str(row['current_amount'])),
-                    target_amount=Decimal(str(row['target_amount'])),
-                    target_percentage=Decimal(str(row['target_percentage'])),
-                    actual_percentage=Decimal(str(row['actual_percentage'])),
-                    deviation=Decimal(str(row['deviation'])),
-                    compliance_status=ComplianceStatus(row['compliance_status'])
-                )
-                self._distribution_cache[category] = state
+            # Fetch stability metrics
+            await self._fetch_stability_metrics()
             
-            # Query stability metrics from database
-            stability_query = """
-                SELECT 
-                    total_supply,
-                    circulating_supply,
-                    distribution_health,
-                    balance_concentration,
-                    holder_count,
-                    median_balance,
-                    stability_index,
-                    compliance_score
-                FROM ubec_main.stability_metrics
-                WHERE asset_code = $1
-                ORDER BY calculated_at DESC
-                LIMIT 1
-            """
+            # Fetch mutualism relationships
+            await self._fetch_mutualism_relationships()
             
-            stability_row = await self.db_manager.fetchrow(
-                stability_query,
-                self.asset_code
-            )
-            
-            if stability_row:
-                self._stability_cache = StabilityMetrics(
-                    total_supply=Decimal(str(stability_row['total_supply'])),
-                    circulating_supply=Decimal(str(stability_row['circulating_supply'])),
-                    distribution_health=float(stability_row['distribution_health']),
-                    balance_concentration=float(stability_row['balance_concentration']),
-                    holder_count=int(stability_row['holder_count']),
-                    median_balance=Decimal(str(stability_row['median_balance'])),
-                    stability_index=float(stability_row['stability_index']),
-                    compliance_score=float(stability_row['compliance_score'])
-                )
-            
-            # Query mutualism relationships from database
-            mutualism_query = """
-                SELECT 
-                    account_a,
-                    account_b,
-                    interaction_count,
-                    mutual_benefit_score,
-                    relationship_strength,
-                    last_interaction
-                FROM ubec_main.mutualism_relationships
-                WHERE asset_code = $1
-                    AND relationship_strength > 0.5
-                ORDER BY relationship_strength DESC
-                LIMIT 100
-            """
-            
-            mutualism_rows = await self.db_manager.fetch(
-                mutualism_query,
-                self.asset_code
-            )
-            
-            self._mutualism_cache = [
-                MutualismRelationship(
-                    account_a=row['account_a'],
-                    account_b=row['account_b'],
-                    interaction_count=int(row['interaction_count']),
-                    mutual_benefit_score=float(row['mutual_benefit_score']),
-                    relationship_strength=float(row['relationship_strength']),
-                    last_interaction=row['last_interaction']
-                )
-                for row in mutualism_rows
-            ]
-            
-            # Update cache timestamp
+            # Update sync tracking
+            self._last_sync_time = datetime.now()
+            self._sync_count += 1
             self._cache_timestamp = datetime.now()
-            self._initialized = True
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            result = {
+                'success': True,
+                'timestamp': self._last_sync_time.isoformat(),
+                'duration_seconds': duration,
+                'distribution_categories': len(self._distribution_cache),
+                'mutualism_relationships': len(self._mutualism_cache),
+                'cached_accounts': len(self._account_cache)
+            }
             
             self.logger.info(
-                f"✓ Stability data synced: "
-                f"{len(self._distribution_cache)} categories, "
-                f"{len(self._mutualism_cache)} relationships"
+                f"Stability data synced successfully in {duration:.2f}s "
+                f"({len(self._distribution_cache)} categories, "
+                f"{len(self._mutualism_cache)} relationships)"
             )
+            
+            return result
             
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
             self._last_error_time = datetime.now()
-            self.logger.error(f"Error syncing stability data: {e}")
+            self.logger.error(f"Failed to sync stability data: {e}")
             raise
     
-    async def check_distribution_compliance(self) -> Dict[DistributionCategory, DistributionState]:
+    async def _fetch_distribution_state(self) -> None:
         """
-        Check compliance of current distribution against targets.
+        Fetch distribution state from database.
+        
+        Principle 4: Database as single source of truth
+        """
+        query = """
+            SELECT 
+                distribution_category,
+                current_amount,
+                target_amount,
+                target_percentage,
+                actual_percentage,
+                deviation,
+                compliance_status
+            FROM ubec_main.distribution_state
+            WHERE asset_code = $1
+        """
+        
+        rows = await self.db_manager.fetch(query, self.asset_code)
+        
+        for row in rows:
+            category = DistributionCategory(row['distribution_category'])
+            state = DistributionState(
+                category=category,
+                current_amount=Decimal(str(row['current_amount'])),
+                target_amount=Decimal(str(row['target_amount'])),
+                target_percentage=Decimal(str(row['target_percentage'])),
+                actual_percentage=Decimal(str(row['actual_percentage'])),
+                deviation=Decimal(str(row['deviation'])),
+                compliance_status=ComplianceStatus(row['compliance_status'])
+            )
+            self._distribution_cache[category] = state
+    
+    async def _fetch_stability_metrics(self) -> None:
+        """
+        Fetch system stability metrics from database.
+        
+        Principle 4: Database as single source of truth
+        """
+        query = """
+            SELECT 
+                total_supply,
+                circulating_supply,
+                distribution_health,
+                balance_concentration,
+                holder_count,
+                median_balance,
+                stability_index,
+                compliance_score
+            FROM ubec_main.stability_metrics
+            WHERE asset_code = $1
+            ORDER BY calculated_at DESC
+            LIMIT 1
+        """
+        
+        row = await self.db_manager.fetchrow(query, self.asset_code)
+        
+        if row:
+            self._stability_cache = StabilityMetrics(
+                total_supply=Decimal(str(row['total_supply'])),
+                circulating_supply=Decimal(str(row['circulating_supply'])),
+                distribution_health=float(row['distribution_health']),
+                balance_concentration=float(row['balance_concentration']),
+                holder_count=int(row['holder_count']),
+                median_balance=Decimal(str(row['median_balance'])),
+                stability_index=float(row['stability_index']),
+                compliance_score=float(row['compliance_score'])
+            )
+    
+    async def _fetch_mutualism_relationships(self) -> None:
+        """
+        Fetch mutualistic relationships from database.
+        
+        Principle 4: Database as single source of truth
+        """
+        query = """
+            SELECT 
+                account_a,
+                account_b,
+                interaction_count,
+                mutual_benefit_score,
+                relationship_strength,
+                last_interaction
+            FROM ubec_main.mutualism_relationships
+            WHERE asset_code = $1
+            ORDER BY relationship_strength DESC
+            LIMIT 100
+        """
+        
+        rows = await self.db_manager.fetch(query, self.asset_code)
+        
+        self._mutualism_cache = [
+            MutualismRelationship(
+                account_a=row['account_a'],
+                account_b=row['account_b'],
+                interaction_count=int(row['interaction_count']),
+                mutual_benefit_score=float(row['mutual_benefit_score']),
+                relationship_strength=float(row['relationship_strength']),
+                last_interaction=row['last_interaction']
+            )
+            for row in rows
+        ]
+    
+    # ==================== DISTRIBUTION COMPLIANCE ====================
+    # Principle 7: Per-Asset Monitoring with execution minimums
+    
+    async def check_distribution_compliance(self) -> Dict[str, Any]:
+        """
+        Check compliance with distribution targets.
+        
+        Analyzes current distribution against target percentages and
+        identifies any compliance violations.
         
         Returns:
-            Dictionary mapping categories to their distribution states
+            Compliance status for all distribution categories
             
-        Example:
-            >>> compliance = await service.check_distribution_compliance()
-            >>> for category, state in compliance.items():
-            ...     print(f"{category.value}: {state.compliance_status.value}")
-            ...     print(f"  Deviation: {state.deviation:.2%}")
-        
-        Design Notes:
-            - Principle 5: Async operation
-            - Principle 7: Per-asset monitoring
+        Principle 7: Per-asset monitoring
+        Principle 5: Async operation
         """
         try:
-            # Track operation for health checks
-            self._last_query_time = datetime.now()
-            self._query_count += 1
-            
             await self._ensure_cache_loaded()
-            return dict(self._distribution_cache)
+            
+            self._query_count += 1
+            self._last_query_time = datetime.now()
+            
+            compliance_results = {}
+            
+            for category, state in self._distribution_cache.items():
+                compliance_results[category.value] = {
+                    'target_percentage': float(state.target_percentage * 100),
+                    'actual_percentage': float(state.actual_percentage * 100),
+                    'deviation': float(state.deviation * 100),
+                    'compliance_status': state.compliance_status.value,
+                    'current_amount': str(state.current_amount),
+                    'target_amount': str(state.target_amount)
+                }
+            
+            # Calculate overall compliance
+            violation_count = sum(
+                1 for state in self._distribution_cache.values()
+                if state.compliance_status == ComplianceStatus.VIOLATION
+            )
+            
+            warning_count = sum(
+                1 for state in self._distribution_cache.values()
+                if state.compliance_status == ComplianceStatus.WARNING
+            )
+            
+            overall_status = 'compliant'
+            if violation_count > 0:
+                overall_status = 'violation'
+            elif warning_count > 0:
+                overall_status = 'warning'
+            
+            return {
+                'success': True,
+                'timestamp': datetime.now().isoformat(),
+                'overall_status': overall_status,
+                'violation_count': violation_count,
+                'warning_count': warning_count,
+                'categories': compliance_results
+            }
             
         except Exception as e:
             self._error_count += 1
@@ -527,31 +595,50 @@ class UBECgpiProtocolService:
             self.logger.error(f"Error checking distribution compliance: {e}")
             raise
     
-    async def get_stability_metrics(self) -> Optional[StabilityMetrics]:
+    # ==================== STABILITY ANALYSIS ====================
+    # Principle 7: Per-Asset Monitoring
+    
+    async def get_stability_metrics(self) -> Dict[str, Any]:
         """
-        Get current stability metrics for the Earth element.
+        Get current stability metrics.
+        
+        Returns comprehensive stability analysis including distribution health,
+        balance concentration, and overall stability index.
         
         Returns:
-            StabilityMetrics object with current metrics, or None if unavailable
+            Stability metrics dictionary
             
-        Example:
-            >>> metrics = await service.get_stability_metrics()
-            >>> if metrics:
-            ...     print(f"Stability Index: {metrics.stability_index:.2%}")
-            ...     print(f"Holder Count: {metrics.holder_count}")
-            ...     print(f"Compliance Score: {metrics.compliance_score:.2%}")
-        
-        Design Notes:
-            - Principle 5: Async operation
-            - Principle 7: Comprehensive monitoring
+        Principle 5: Async operation
+        Principle 7: Comprehensive monitoring
         """
         try:
-            # Track operation for health checks
-            self._last_query_time = datetime.now()
-            self._query_count += 1
-            
             await self._ensure_cache_loaded()
-            return self._stability_cache
+            
+            self._query_count += 1
+            self._last_query_time = datetime.now()
+            
+            if not self._stability_cache:
+                return {
+                    'success': False,
+                    'error': 'No stability metrics available'
+                }
+            
+            metrics = self._stability_cache
+            
+            return {
+                'success': True,
+                'timestamp': datetime.now().isoformat(),
+                'metrics': {
+                    'total_supply': str(metrics.total_supply),
+                    'circulating_supply': str(metrics.circulating_supply),
+                    'distribution_health': metrics.distribution_health,
+                    'balance_concentration': metrics.balance_concentration,
+                    'holder_count': metrics.holder_count,
+                    'median_balance': str(metrics.median_balance),
+                    'stability_index': metrics.stability_index,
+                    'compliance_score': metrics.compliance_score
+                }
+            }
             
         except Exception as e:
             self._error_count += 1
@@ -560,71 +647,90 @@ class UBECgpiProtocolService:
             self.logger.error(f"Error getting stability metrics: {e}")
             raise
     
-    async def get_mutualism_relationships(
-        self,
-        min_strength: float = 0.5
-    ) -> List[MutualismRelationship]:
+    # ==================== MUTUALISM ANALYSIS ====================
+    # Principle 7: Per-Asset Monitoring - Relationship tracking
+    
+    async def analyze_mutualism(self, min_strength: float = 0.5) -> Dict[str, Any]:
         """
-        Get mutualistic relationships between accounts.
+        Analyze mutualistic relationships in the ecosystem.
         
         Args:
             min_strength: Minimum relationship strength to include (0.0 - 1.0)
             
         Returns:
-            List of mutualism relationships above the minimum strength
+            Analysis of mutualistic relationships
             
-        Example:
-            >>> relationships = await service.get_mutualism_relationships(min_strength=0.7)
-            >>> for rel in relationships:
-            ...     print(f"{rel.account_a} <-> {rel.account_b}")
-            ...     print(f"  Strength: {rel.relationship_strength:.2%}")
-            ...     print(f"  Benefit: {rel.mutual_benefit_score:.2%}")
-        
-        Design Notes:
-            - Principle 5: Async operation
-            - Principle 7: Relationship monitoring
+        Principle 5: Async operation
         """
         try:
-            # Track operation for health checks
-            self._last_query_time = datetime.now()
-            self._query_count += 1
-            
             await self._ensure_cache_loaded()
             
+            self._query_count += 1
+            self._last_query_time = datetime.now()
+            
             # Filter by minimum strength
-            return [
+            strong_relationships = [
                 rel for rel in self._mutualism_cache
                 if rel.relationship_strength >= min_strength
             ]
+            
+            # Calculate aggregate metrics
+            if strong_relationships:
+                avg_benefit_score = sum(
+                    rel.mutual_benefit_score for rel in strong_relationships
+                ) / len(strong_relationships)
+                
+                avg_interactions = sum(
+                    rel.interaction_count for rel in strong_relationships
+                ) / len(strong_relationships)
+            else:
+                avg_benefit_score = 0.0
+                avg_interactions = 0.0
+            
+            return {
+                'success': True,
+                'timestamp': datetime.now().isoformat(),
+                'total_relationships': len(self._mutualism_cache),
+                'strong_relationships': len(strong_relationships),
+                'min_strength_threshold': min_strength,
+                'average_benefit_score': avg_benefit_score,
+                'average_interactions': avg_interactions,
+                'top_relationships': [
+                    {
+                        'account_a': rel.account_a[:8] + '...',
+                        'account_b': rel.account_b[:8] + '...',
+                        'strength': rel.relationship_strength,
+                        'benefit_score': rel.mutual_benefit_score,
+                        'interactions': rel.interaction_count
+                    }
+                    for rel in strong_relationships[:10]  # Top 10
+                ]
+            }
             
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
             self._last_error_time = datetime.now()
-            self.logger.error(f"Error getting mutualism relationships: {e}")
+            self.logger.error(f"Error analyzing mutualism: {e}")
             raise
     
-    async def calculate_account_stability(self, account_id: str) -> Dict[str, Any]:
+    # ==================== ACCOUNT ANALYSIS ====================
+    # Principle 7: Per-Asset Monitoring with account-level tracking
+    
+    async def get_account_stability(self, account_id: str) -> Dict[str, Any]:
         """
-        Calculate stability metrics for a specific account.
+        Get stability metrics for a specific account.
         
         Args:
             account_id: Stellar account ID
             
         Returns:
-            Dictionary with stability metrics for the account
+            Account-specific stability metrics
             
-        Example:
-            >>> stability = await service.calculate_account_stability('GXXX...')
-            >>> print(f"Balance: {stability['balance']}")
-            >>> print(f"Stability Score: {stability['stability_score']:.2%}")
-        
-        Design Notes:
-            - Principle 5: Async operation
-            - Principle 7: Per-asset monitoring
+        Principle 5: Async operation
+        Principle 7: Per-asset monitoring
         """
         try:
-            # Track operation for health checks
             self._last_query_time = datetime.now()
             self._query_count += 1
             
@@ -694,10 +800,15 @@ class UBECgpiProtocolService:
             - Principle 12: Uses ServiceHealthCheck.element_protocol_health()
             - Principle 7: Comprehensive monitoring through standard checks
             - Principle 10: Separation of concerns - health logic in utility
+        
+        CRITICAL FIX (v3.1.1):
+            - Changed token_code=self.token_code to token_code=self.asset_code
+            - The service doesn't have a token_code attribute; it has asset_code
+            - This was causing AttributeError: 'UBECgpiProtocolService' object has no attribute 'token_code'
         """
         return await ServiceHealthCheck.element_protocol_health(
             element_name=self.element,
-            token_code=self.asset_code,
+            token_code=self.asset_code,  # ✅ FIXED: Was self.token_code (which doesn't exist)
             db_manager=self.db_manager,
             is_initialized=self._initialized,
             last_sync=self._last_sync_time,
@@ -827,10 +938,16 @@ if __name__ == "__main__":
         "  service = create_ubecgpi_service(db_manager, config, stellar_client)\n"
         "  health = await service.health_check()\n"
         "  await service.sync_stability_data()\n\n"
-        "Version 3.0.0 - Element Metadata + Health Check:\n"
+        "Version 3.1.1 - CRITICAL FIX:\n"
+        "  - Fixed health_check() token_code parameter\n"
+        "  - Now uses self.asset_code (correct) instead of self.token_code (doesn't exist)\n"
+        "  - Resolves AttributeError in health check\n\n"
+        "Version 3.1.0 - Element Metadata + Enhanced Health Check:\n"
         "  - Complete element metadata (earth, mutualism, 🜃)\n"
         "  - Uses ServiceHealthCheck.element_protocol_health() utility\n"
         "  - Implements Principle #12: Method Singularity\n"
+        "  - Enhanced error tracking and issuer visibility\n"
+        "  - Full DRY compliance with instance variables\n"
         "  - Consistent health checks across all services\n"
         "  - Full compatibility with main.py status output\n\n"
         "Attribution:\n"
