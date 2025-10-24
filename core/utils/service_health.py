@@ -353,7 +353,7 @@ class ServiceHealthCheck:
                 # Return tuple: (status, message, action)
                 return ('needs_sync', 
                        f'{element_name} protocol awaiting initial synchronization',
-                       'Run: python main.py --mode sync --sync-type all')
+                       'Run: python main.py sync --sync-type all')
             
             # CRITICAL FIX: Use timezone-aware current time for comparison
             current_time = get_current_utc_time()
@@ -373,7 +373,7 @@ class ServiceHealthCheck:
             if time_since_sync > 1800:
                 return ('degraded',
                        f'{element_name} protocol data stale ({time_since_sync/60:.1f} minutes old)',
-                       'Run: python main.py --mode sync --sync-type all --force')
+                       'Run: python main.py sync --sync-type all --force')
             
             return ('pass', 
                    f'Data fresh: synced {int(time_since_sync)}s ago',
@@ -733,8 +733,8 @@ def create_actionable_message(issue: str, command: str) -> str:
         Formatted actionable message
     
     Example:
-        >>> create_actionable_message("Database not synced", "python main.py --mode sync")
-        "Database not synced → Run: python main.py --mode sync"
+        >>> create_actionable_message("Database not synced", "python main.py sync")
+        "Database not synced → Run: python main.py sync"
     """
     return f"{issue} → Run: {command}"
 
@@ -772,8 +772,8 @@ def get_action_from_health(health_status: Dict[str, Any]) -> Optional[str]:
         Command to resolve issue, or None if no action needed
     
     Example:
-        >>> status = {'status': 'needs_sync', 'action': 'python main.py --mode sync'}
+        >>> status = {'status': 'needs_sync', 'action': 'python main.py sync'}
         >>> get_action_from_health(status)
-        'python main.py --mode sync'
+        'python main.py sync'
     """
     return health_status.get('action')
