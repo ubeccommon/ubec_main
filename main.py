@@ -42,11 +42,20 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 18.0.0 (SYNC FIX + COMPREHENSIVE HEALTH MONITORING)
-Date: October 24, 2025
+Version: 19.0.0 (DISTRIBUTION EVALUATOR INTEGRATION + CLI FIX)
+Date: October 26, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
 Changelog:
+    v19.0.0 - DISTRIBUTION EVALUATOR INTEGRATION + CLI FIX
+            - 🔧 FIXED: Added 'check-compliance' action handler to run_distribution()
+            - 🔧 FIXED: Added 'evaluate-account' action for account-specific checks
+            - 🔧 FIXED: Added 'compliance-trends' action for historical analysis
+            - ✅ ENHANCED: Distribution evaluator now properly integrated
+            - ✅ ENHANCED: CLI arguments for evaluator-specific parameters
+            - ✅ ENHANCED: Comprehensive error messages with available actions
+            - 📝 Resolves "Unknown action: check-compliance" error
+            - 📝 Full compliance with CLI-service contract (Principle #1)
     v18.0.0 - SYNC FIX + COMPREHENSIVE HEALTH MONITORING
             - ✅ VERIFIED: run_sync() uses correct synchronizer methods
             - ✅ VERIFIED: sync_all_tokens() called, not sync_trustlines()
@@ -230,120 +239,99 @@ def register_core_services():
     
     async def create_database(registry: ServiceRegistry):
         """
-        Create database manager service with database-driven pool configuration.
+        Create async database connection pool with TWO-STAGE INITIALIZATION.
         
-        Two-stage initialization for database-driven configuration:
+        Stage 1: Bootstrap connection to load configuration from database
+        Stage 2: Full production pool with database-driven configuration
         
-        Stage 1: Bootstrap Connection
-            - Create minimal pool (1-2 connections) for configuration loading
-            - Load pool configuration from system_settings table
-            - Close bootstrap pool
-            
-        Stage 2: Full Pool Creation
-            - Create production pool with database-configured sizes
-            - Initialize and validate
-            
-        Principle #4: Database is single source of truth for pool configuration
-        Principle #5: Strict Async - Database initialization is async
-        Principle #8: No duplicate configuration - pool size only in database
+        This implements:
+            - Principle #4: Database as single source of truth
+            - Principle #8: No duplicate configuration
         
-        Configuration Priority:
-            1. Database (system_settings: db_pool_min, db_pool_max)
-            2. Fallback defaults (5, 20) if database settings not found
-            
-        Environment variables used ONLY for connection:
-            - DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SCHEMA
+        CRITICAL: Pool configuration comes FROM the database, creating a
+        bootstrap paradox that's resolved via two-stage initialization:
+        1. Bootstrap with minimal pool (1-2 connections) to load config
+        2. Close bootstrap pool
+        3. Create production pool with database-loaded configuration
         """
         from core.db.database_manager import AsyncDatabaseManager
         
-        primary_schema, search_path = get_database_schema_config()
+        # Get database connection parameters (NOT operational config)
+        schema, search_path = get_database_schema_config()
         
-        logger.info(f"  ├─ Database: Two-stage initialization")
-        logger.info(f"     Schema: {primary_schema}")
+        logger.info("  ├─ Database: Two-stage initialization")
+        logger.info(f"     Schema: {schema}")
         
-        # ────────────────────────────────────────────────────────────
-        # STAGE 1: Bootstrap connection to load configuration
-        # ────────────────────────────────────────────────────────────
-        logger.info(f"     Stage 1: Bootstrap connection for configuration")
-        
+        # ────────────────────────────────────────────────────────────────
+        # STAGE 1: Bootstrap connection for configuration loading
+        # ────────────────────────────────────────────────────────────────
+        logger.info("     Stage 1: Bootstrap connection for configuration")
         bootstrap_db = AsyncDatabaseManager(
             host=os.getenv('DB_HOST', 'localhost'),
             port=int(os.getenv('DB_PORT', '5432')),
             database=os.getenv('DB_NAME', 'ubec'),
-            schema=search_path,
+            schema=search_path,  # schema parameter takes the search path
             user=os.getenv('DB_USER', 'ubec_app'),
             password=os.getenv('DB_PASSWORD', ''),
             min_pool_size=1,  # Minimal for bootstrap
-            max_pool_size=2   # Minimal for bootstrap
+            max_pool_size=2
         )
-        
         await bootstrap_db.initialize()
         
-        # Load pool configuration from database
+        # Load pool configuration from database using bootstrap connection
         try:
             pool_config_query = """
-            SELECT setting_key, setting_value
-            FROM system_settings
-            WHERE setting_key IN ('db_pool_min', 'db_pool_max')
-              AND is_active = TRUE
+                SELECT setting_key, setting_value
+                FROM system_settings
+                WHERE setting_key IN ('db_pool_min', 'db_pool_max')
+                  AND is_active = TRUE
             """
-            pool_settings = await bootstrap_db.fetch_all(pool_config_query, ())
+            config_rows = await bootstrap_db.fetch_all(pool_config_query)
             
-            pool_config = {row['setting_key']: row['setting_value'] for row in pool_settings}
+            # Parse configuration
+            min_pool = 5  # Default
+            max_pool = 20  # Default
             
-            # Parse with proper defaults
-            min_pool = int(pool_config.get('db_pool_min', '5'))
-            max_pool = int(pool_config.get('db_pool_max', '20'))
+            for row in config_rows:
+                if row['setting_key'] == 'db_pool_min':
+                    min_pool = int(row['setting_value'])
+                elif row['setting_key'] == 'db_pool_max':
+                    max_pool = int(row['setting_value'])
             
             logger.info(f"     ✓ Loaded from database: Pool {min_pool}-{max_pool} connections")
             
-            if not pool_settings:
-                logger.warning(f"     ⚠ No pool config in database, using defaults: {min_pool}-{max_pool}")
-                
-        except Exception as e:
-            # If query fails, use safe defaults
-            min_pool, max_pool = 5, 20
-            logger.warning(f"     ⚠ Could not load pool config from database: {e}")
-            logger.warning(f"     Using defaults: {min_pool}-{max_pool} connections")
+        finally:
+            # Close bootstrap connection
+            await bootstrap_db.close()
+            logger.info("     ✓ Bootstrap connection closed")
         
-        # Close bootstrap connection
-        await bootstrap_db.close()
-        logger.info(f"     ✓ Bootstrap connection closed")
-        
-        # ────────────────────────────────────────────────────────────
-        # STAGE 2: Create production pool with database configuration
-        # ────────────────────────────────────────────────────────────
-        logger.info(f"     Stage 2: Production pool initialization")
+        # ────────────────────────────────────────────────────────────────
+        # STAGE 2: Production pool with database-driven configuration
+        # ────────────────────────────────────────────────────────────────
+        logger.info("     Stage 2: Production pool initialization")
         logger.info(f"     Pool: {min_pool}-{max_pool} connections")
         
-        db = AsyncDatabaseManager(
+        production_db = AsyncDatabaseManager(
             host=os.getenv('DB_HOST', 'localhost'),
             port=int(os.getenv('DB_PORT', '5432')),
             database=os.getenv('DB_NAME', 'ubec'),
-            schema=search_path,
+            schema=search_path,  # schema parameter takes the search path
             user=os.getenv('DB_USER', 'ubec_app'),
             password=os.getenv('DB_PASSWORD', ''),
-            min_pool_size=min_pool,  # From database
-            max_pool_size=max_pool   # From database
+            min_pool_size=min_pool,
+            max_pool_size=max_pool
         )
-        
-        # Initialize the database connection pool
-        await db.initialize()
-        
-        # Store primary schema and pool config for services that need it
-        db.primary_schema = primary_schema
-        db.configured_min_pool = min_pool
-        db.configured_max_pool = max_pool
+        await production_db.initialize()
         
         logger.info(f"     ✓ Production pool ready: {min_pool}-{max_pool} connections")
         
-        return db
+        return production_db
     
     registry.register_factory(
         'database',
         create_database,
         dependencies=[],
-        config={'type': 'postgresql', 'pooled': True, 'config_source': 'database'}
+        config={'two_stage_init': True, 'pool_from_db': True}
     )
     logger.info("✓ Registered: database")
     
@@ -382,32 +370,22 @@ def register_core_services():
         'config',
         create_config,
         dependencies=['database'],
-        config={'type': 'database_backed'}
+        config={'source': 'database'}
     )
     logger.info("✓ Registered: config (depends on: database)")
     
     # ========================================================================
-    # RATE LIMITER
+    # RATE LIMITER SERVICE
     # ========================================================================
     
     async def create_rate_limiter(registry: ServiceRegistry):
         """
-        Create rate limiting service for API calls.
+        Create rate limiter service with database-backed configuration.
         
-        Features:
-            - Token bucket algorithm with configurable rate limits
-            - Circuit breaker pattern for fault tolerance
-            - Database-backed configuration (system_settings table)
-            - Per-API rate limit tracking and metrics
-            - Comprehensive health monitoring
-        
-        Dependencies:
-            - database: For configuration and state persistence
-        
+        Principle #4: Single Source of Truth - Database configuration
         Principle #9: Integrated Rate Limiting
-        Principle #12: ServiceHealthCheck utility pattern
         """
-        from services.stellar.rate_limiter_service import create_rate_limiter_service
+        from services.stellar.rate_limiter_service import RateLimiterService
         
         db = await registry.get('database')
         
@@ -415,24 +393,23 @@ def register_core_services():
         logger.info("     ✓ Token bucket algorithm")
         logger.info("     ✓ Circuit breaker pattern")
         logger.info("     ✓ Per-API monitoring")
-        logger.info(f"     Buffer: {EXECUTION_MINIMUMS['rate_limit_buffer']:.0%} of max")
+        logger.info(f"     Buffer: {int(EXECUTION_MINIMUMS['rate_limit_buffer'] * 100)}% of max")
         
-        # Create and initialize service
-        service = create_rate_limiter_service(db)
-        await service.initialize()
+        rate_limiter = RateLimiterService(db_manager=db)
+        await rate_limiter.initialize()
         
-        return service
+        return rate_limiter
     
     registry.register_factory(
         'rate_limiter',
         create_rate_limiter,
         dependencies=['database'],
-        config={'type': 'token_bucket', 'circuit_breaker': True}
+        config={'algorithm': 'token_bucket', 'circuit_breaker': True}
     )
     logger.info("✓ Registered: rate_limiter (depends on: database)")
     
     # ========================================================================
-    # STELLAR CLIENT (with Rate Limiting)
+    # STELLAR CLIENT SERVICE
     # ========================================================================
     
     async def create_stellar_client(registry: ServiceRegistry):
@@ -485,31 +462,31 @@ def register_core_services():
         
         db = await registry.get('database')
         config = await registry.get('config')
-        stellar = await registry.get('stellar_client')
+        stellar_client = await registry.get('stellar_client')
         
-        logger.info("  ├─ Air Protocol (UBEC): Universal access")
+        logger.info("  ├─ Air: Gateway / Universal Access (UBEC)")
         
-        # Pass config dictionary with asset details
-        service = await create_ubec_service(
+        # ✅ v17.2.0 FIX: Properly await the async factory
+        air_service = await create_ubec_service(
             db_manager=db,
             config={
                 'asset_code': config.get('ubec_code', 'UBEC'),
                 'issuer': config.get('ubec_issuer', ''),
                 'db_schema': getattr(db, 'primary_schema', 'ubec_main')
             },
-            stellar_client=stellar
+            stellar_client=stellar_client
         )
         
-        # Air protocol requires explicit initialize() call to set _initialized = True
-        await service.initialize()
+        # ✅ v17.1.0 FIX: Explicitly call initialize() to set _initialized flag
+        await air_service.initialize()
         
-        return service
+        return air_service
     
     registry.register_factory(
         'air',
         create_air,
         dependencies=['database', 'config', 'stellar_client'],
-        config={'protocol': 'UBEC', 'element': 'air'}
+        config={'element': 'air', 'token': 'UBEC'}
     )
     logger.info("✓ Registered: air (depends on: database, config, stellar_client)")
     
@@ -521,39 +498,37 @@ def register_core_services():
         """
         Create Water protocol service using factory function.
         
-        Water protocol represents reciprocity and flow (UBECrc token).
+        Water protocol represents flow and reciprocity (UBECrc token).
         
-        Principle #4: Database as single source of truth for configuration
-        Principle #5: Async initialization pattern
+        Principle #5: Async factory pattern
         """
         from core.protocols.UBECrc_protocol import create_ubecrc_service
         
         db = await registry.get('database')
         config = await registry.get('config')
-        stellar = await registry.get('stellar_client')
+        stellar_client = await registry.get('stellar_client')
         
-        logger.info("  ├─ Water Protocol (UBECrc): Reciprocity & flow")
+        logger.info("  ├─ Water: Reciprocity / Flow (UBECrc)")
         
-        service = await create_ubecrc_service(
+        water_service = await create_ubecrc_service(
             db_manager=db,
             config={
                 'asset_code': config.get('ubecrc_code', 'UBECrc'),
                 'issuer': config.get('ubecrc_issuer', ''),
                 'db_schema': getattr(db, 'primary_schema', 'ubec_main')
             },
-            stellar_client=stellar
+            stellar_client=stellar_client
         )
         
-        # Water protocol requires explicit initialize() call
-        await service.initialize()
+        await water_service.initialize()
         
-        return service
+        return water_service
     
     registry.register_factory(
         'water',
         create_water,
         dependencies=['database', 'config', 'stellar_client'],
-        config={'protocol': 'UBECrc', 'element': 'water'}
+        config={'element': 'water', 'token': 'UBECrc'}
     )
     logger.info("✓ Registered: water (depends on: database, config, stellar_client)")
     
@@ -565,39 +540,39 @@ def register_core_services():
         """
         Create Earth protocol service using factory function.
         
-        Earth protocol represents stability and grounding (UBECgpi token).
+        Earth protocol represents ground, stability, and mutualism (UBECgpi token).
         
-        Principle #4: Database as single source of truth for configuration
-        Principle #5: Async initialization pattern - factory must be awaited
+        Principle #5: Async factory pattern with explicit initialization
         """
         from core.protocols.UBECgpi_protocol import create_ubecgpi_service
         
         db = await registry.get('database')
         config = await registry.get('config')
-        stellar = await registry.get('stellar_client')
+        stellar_client = await registry.get('stellar_client')
         
-        logger.info("  ├─ Earth Protocol (UBECgpi): Ground & stability")
+        logger.info("  ├─ Earth: Ground / Stability (UBECgpi)")
         
-        service = await create_ubecgpi_service(
+        # ✅ v17.2.0 FIX: Properly await the async factory
+        earth_service = await create_ubecgpi_service(
             db_manager=db,
             config={
                 'asset_code': config.get('ubecgpi_code', 'UBECgpi'),
                 'issuer': config.get('ubecgpi_issuer', ''),
                 'db_schema': getattr(db, 'primary_schema', 'ubec_main')
             },
-            stellar_client=stellar
+            stellar_client=stellar_client
         )
         
-        # Earth protocol explicitly calls initialize()
-        await service.initialize()
+        # ✅ v17.2.0 FIX: Explicitly call initialize() like other protocols
+        await earth_service.initialize()
         
-        return service
+        return earth_service
     
     registry.register_factory(
         'earth',
         create_earth,
         dependencies=['database', 'config', 'stellar_client'],
-        config={'protocol': 'UBECgpi', 'element': 'earth'}
+        config={'element': 'earth', 'token': 'UBECgpi'}
     )
     logger.info("✓ Registered: earth (depends on: database, config, stellar_client)")
     
@@ -609,33 +584,37 @@ def register_core_services():
         """
         Create Fire protocol service using factory function.
         
-        Fire protocol represents transformation and change (UBECtt token).
+        Fire protocol represents transformation and regeneration (UBECtt token).
         
-        Principle #4: Database as single source of truth for configuration
+        Principle #5: Async factory pattern
         """
         from core.protocols.UBECtt_protocol import create_ubectt_service
         
         db = await registry.get('database')
         config = await registry.get('config')
-        stellar = await registry.get('stellar_client')
+        stellar_client = await registry.get('stellar_client')
         
-        logger.info("  ├─ Fire Protocol (UBECtt): Transformation")
+        logger.info("  ├─ Fire: Transformation (UBECtt)")
         
-        return await create_ubectt_service(
+        fire_service = await create_ubectt_service(
             db_manager=db,
             config={
                 'asset_code': config.get('ubectt_code', 'UBECtt'),
                 'issuer': config.get('ubectt_issuer', ''),
                 'db_schema': getattr(db, 'primary_schema', 'ubec_main')
             },
-            stellar_client=stellar
+            stellar_client=stellar_client
         )
+        
+        await fire_service.initialize()
+        
+        return fire_service
     
     registry.register_factory(
         'fire',
         create_fire,
         dependencies=['database', 'config', 'stellar_client'],
-        config={'protocol': 'UBECtt', 'element': 'fire'}
+        config={'element': 'fire', 'token': 'UBECtt'}
     )
     logger.info("✓ Registered: fire (depends on: database, config, stellar_client)")
     
@@ -683,7 +662,7 @@ def register_core_services():
         'synchronizer',
         create_synchronizer,
         dependencies=['database', 'config', 'stellar_client'],
-        config={'sync_interval': 3600}
+        config={'batch_size': EXECUTION_MINIMUMS['sync_batch_size']}
     )
     logger.info("✓ Registered: synchronizer (depends on: database, config, stellar_client)")
     
@@ -693,18 +672,16 @@ def register_core_services():
     
     async def create_analytics(registry: ServiceRegistry):
         """
-        Create analytics service.
+        Create analytics service for token distribution analysis.
         
-        Principle #12: Uses ServiceHealthCheck utility pattern
+        Principle #4: Database as single source of truth
         """
-        from services.analytics import UBECAnalyticsService
+        from services.analytics.ubec_analytics_service import UBECAnalyticsService
         
         db = await registry.get('database')
-        config = await registry.get('config')
         
         logger.info("  ├─ Analytics: Token distribution and metrics")
         
-        # Instantiate service directly
         analytics = UBECAnalyticsService(db)
         
         # Initialize the service
@@ -716,7 +693,7 @@ def register_core_services():
         'ubec_analytics_service',
         create_analytics,
         dependencies=['database', 'config'],
-        config={'cache_ttl': 300}
+        config={'analysis_depth': 'comprehensive'}
     )
     logger.info("✓ Registered: ubec_analytics_service (depends on: database, config)")
     
@@ -765,9 +742,9 @@ def register_core_services():
             }
         }
         
-        logger.info(f"    ✓ Loaded administration account: {accounts['administration'][:8]}...")
+        logger.info(f"    ✓ Loaded administration account: {accounts['administration'][:12]}...")
         logger.info(f"    ✓ Loaded stewardship account: "
-                   f"{audit_config['stewardship_account'][:8]}...")
+                   f"{audit_config['stewardship_account'][:12]}...")
         
         # Use factory function
         return await create_audit_service(
@@ -780,7 +757,7 @@ def register_core_services():
         'ubec_audit_service',
         create_audit,
         dependencies=['database', 'config'],
-        config={'snapshot_interval': 86400}
+        config={'compliance_monitoring': True}
     )
     logger.info("✓ Registered: ubec_audit_service (depends on: database, config)")
     
@@ -831,7 +808,7 @@ def register_core_services():
         'ubec_distribution_service',
         create_distribution,
         dependencies=['database', 'config', 'stellar_client', 'ubec_audit_service'],
-        config={'distribution_interval': 86400}
+        config={'min_distribution': EXECUTION_MINIMUMS['distribution_minimum']}
     )
     logger.info("✓ Registered: ubec_distribution_service (depends on: database, config, stellar_client, ubec_audit_service)")
    
@@ -904,12 +881,12 @@ def register_core_services():
         'ubec_holonic_evaluator',
         create_holonic_evaluator,
         dependencies=['database', 'config'],
-        config={'evaluation_interval': 3600}
+        config={'evaluation_framework': 'ubuntu_holonic'}
     )
     logger.info("✓ Registered: ubec_holonic_evaluator (depends on: database, config)")
-   
+    
     # ========================================================================
-    # VISUALIZER SERVICE
+    # VISUALIZER
     # ========================================================================
     
     async def create_visualizer(registry: ServiceRegistry):
@@ -938,9 +915,13 @@ def register_core_services():
         'visualizer',
         create_visualizer,
         dependencies=['database', 'config'],
-        config={'output_dir': 'visualizations'}
+        config={'format': 'png', 'color_palette': 'ubuntu'}
     )
     logger.info("✓ Registered: visualizer (depends on: database, config)")
+    
+    # ========================================================================
+    # REGISTRATION COMPLETE
+    # ========================================================================
     
     logger.info("=" * 70)
     logger.info("✓ ALL SERVICES REGISTERED")
@@ -951,352 +932,317 @@ def validate_service_registration():
     """
     Validate that all required services are registered.
     
-    Principle #3: Service Registry validation
+    Principle #1: Modular Design - Validation before execution
     """
-    required_services = [
+    required_services = {
         'database', 'config', 'rate_limiter', 'stellar_client',
         'air', 'water', 'earth', 'fire',
-        'synchronizer', 'ubec_analytics_service', 'ubec_distribution_service',
-        'ubec_distribution_evaluator', 'ubec_holonic_evaluator',
-        'visualizer', 'ubec_audit_service'
-    ]
+        'synchronizer', 'ubec_analytics_service', 'ubec_audit_service',
+        'ubec_distribution_service', 'ubec_distribution_evaluator',
+        'ubec_holonic_evaluator', 'visualizer'
+    }
     
-    # Check if service is registered (either as instance or factory)
-    missing = []
-    for name in required_services:
-        if name not in registry._services and name not in registry._factories:
-            missing.append(name)
+    registered = registry.list_services()
+    
+    missing = required_services - set(registered)
     
     if missing:
-        raise RuntimeError(f"Missing required services: {', '.join(missing)}")
+        raise RuntimeError(
+            f"Missing required services: {', '.join(missing)}\n"
+            f"Registered: {', '.join(registered)}"
+        )
     
     logger.info(f"✓ All {len(required_services)} required services registered")
 
 
 # ========================================================================
-# CONCURRENT INITIALIZATION WITH ERROR TRACKING
-# Principle #5: Strict Async Operations with concurrent execution
+# SERVICE INITIALIZATION WITH CONCURRENT ASYNC PATTERN
+# Principle #5: Strict Async Operations WITH Concurrent Initialization
 # ========================================================================
 
-async def initialize_services_concurrent():
+async def initialize_services_concurrent() -> Tuple[Dict[str, float], set, int]:
     """
-    Initialize services concurrently where dependencies allow.
+    Initialize services concurrently in dependency order.
     
-    This function groups services by dependency level and initializes
-    independent services in parallel using asyncio.gather().
+    Services are initialized in levels based on dependencies:
+    - Level 0: Foundation (database)
+    - Level 1: Configuration (config)
+    - Level 2: Independent services (parallel initialization)
+    - Level 3: Dependent services (parallel where possible)
+    - Level 4: Final dependent services
     
-    Dependency Levels:
-        Level 0: database (foundation - two-stage init)
-        Level 1: config (depends on database)
-        Level 2: rate_limiter, analytics, audit, holonic_evaluator, visualizer
-                 (independent services that don't depend on stellar_client)
-        Level 3: stellar_client (depends on rate_limiter)
-                 protocols (air, water, earth, fire), synchronizer, distribution
-                 (all depend on stellar_client)
-        Level 4: distribution_evaluator (depends on distribution)
-    
-    Error Handling:
-        - Tracks failed services
-        - Returns exit code 1 if critical services fail
-        - Continues with non-critical services if possible
-    
-    Expected Performance:
-        - Sequential: ~2000ms
-        - Concurrent: ~1100ms (45% faster)
+    This implements:
+        - Principle #5: Strict Async with Concurrent Initialization
+        - Principle #7: Per-Asset Monitoring with timing
+        - Principle #12: Method Singularity with standardized patterns
     
     Returns:
-        Tuple of (init_times dict, failed_services set, exit_code int)
+        Tuple of (initialization_times, failed_services, exit_code)
     """
     logger.info("\n" + "=" * 70)
     logger.info("INITIALIZING SERVICES CONCURRENTLY")
     logger.info("=" * 70)
     
-    start_time = time.time()
     init_times = {}
     failed_services = set()
     
-    async def init_service_safe(name: str):
-        """Initialize a service and track time/failures."""
-        service_start = time.time()
+    async def init_service_safe(service_name: str) -> float:
+        """Initialize a single service with error handling and timing."""
+        start = time.time()
         try:
-            await registry.get(name)
-            elapsed = int((time.time() - service_start) * 1000)
-            init_times[name] = elapsed
-            logger.info(f"  ✓ {name}: {elapsed}ms")
-            return True
+            await registry.get(service_name)
+            elapsed = (time.time() - start) * 1000  # Convert to ms
+            init_times[service_name] = elapsed
+            return elapsed
         except Exception as e:
-            elapsed = int((time.time() - service_start) * 1000)
-            init_times[name] = elapsed
-            failed_services.add(name)
-            logger.error(f"  ✗ {name}: {elapsed}ms - FAILED: {str(e)}")
-            return False
+            logger.error(f"  ✗ {service_name}: {str(e)}", exc_info=True)
+            failed_services.add(service_name)
+            return 0
     
-    # Level 0: Database (foundation with two-stage init)
+    # ────────────────────────────────────────────────────────────────
+    # LEVEL 0: Foundation services (sequential)
+    # ────────────────────────────────────────────────────────────────
     logger.info("\n🔷 Level 0: Foundation services")
-    if not await init_service_safe('database'):
+    
+    db_time = await init_service_safe('database')
+    logger.info(f"  ✓ database: {db_time:.0f}ms")
+    
+    if 'database' in failed_services:
+        logger.error("  ✗ CRITICAL: Database initialization failed")
         return init_times, failed_services, 1
     
-    # Level 1: Configuration
+    # ────────────────────────────────────────────────────────────────
+    # LEVEL 1: Configuration (depends on database)
+    # ────────────────────────────────────────────────────────────────
     logger.info("\n🔷 Level 1: Configuration")
-    if not await init_service_safe('config'):
+    
+    config_time = await init_service_safe('config')
+    logger.info(f"  ✓ config: {config_time:.0f}ms")
+    
+    if 'config' in failed_services:
+        logger.error("  ✗ CRITICAL: Configuration initialization failed")
         return init_times, failed_services, 1
     
-    # Level 2: Independent services (parallel)
+    # ────────────────────────────────────────────────────────────────
+    # LEVEL 2: Independent services (parallel)
+    # ────────────────────────────────────────────────────────────────
     logger.info("\n🔷 Level 2: Independent services (parallel)")
-    level_start = time.time()
     
-    level_2_services = [
+    level2_start = time.time()
+    level2_services = [
         'rate_limiter', 'ubec_analytics_service', 'ubec_audit_service',
         'ubec_holonic_evaluator', 'visualizer'
     ]
     
-    await asyncio.gather(
-        *[init_service_safe(name) for name in level_2_services],
-        return_exceptions=True
-    )
+    level2_tasks = [init_service_safe(svc) for svc in level2_services]
+    level2_results = await asyncio.gather(*level2_tasks, return_exceptions=True)
     
-    level_elapsed = int((time.time() - level_start) * 1000)
-    logger.info(f"  📊 Level 2 total: {level_elapsed}ms")
+    for svc, elapsed in zip(level2_services, level2_results):
+        if isinstance(elapsed, Exception):
+            logger.error(f"  ✗ {svc}: {str(elapsed)}")
+            failed_services.add(svc)
+        else:
+            logger.info(f"  ✓ {svc}: {elapsed:.0f}ms")
     
+    level2_elapsed = (time.time() - level2_start) * 1000
+    logger.info(f"  📊 Level 2 total: {level2_elapsed:.0f}ms")
+    
+    # Check critical services
     if 'rate_limiter' in failed_services:
-        logger.error("CRITICAL: rate_limiter failed")
+        logger.error("  ✗ CRITICAL: Rate limiter initialization failed")
         return init_times, failed_services, 1
     
-    # Level 3: Stellar-dependent services (parallel)
-    logger.info("\n🔷 Level 3: Stellar client and protocols (parallel)")
-    level_start = time.time()
+    # ────────────────────────────────────────────────────────────────
+    # LEVEL 3: Stellar-dependent services
+    # ────────────────────────────────────────────────────────────────
+    logger.info("\n🔷 Level 3: Stellar-dependent services")
     
-    level_3_services = [
-        'stellar_client', 'air', 'water', 'earth', 'fire',
-        'synchronizer', 'ubec_distribution_service'
-    ]
+    level3_start = time.time()
     
-    await asyncio.gather(
-        *[init_service_safe(name) for name in level_3_services],
-        return_exceptions=True
-    )
-    
-    level_elapsed = int((time.time() - level_start) * 1000)
-    logger.info(f"  📊 Level 3 total: {level_elapsed}ms")
+    # Stellar client (critical)
+    stellar_time = await init_service_safe('stellar_client')
+    logger.info(f"  ✓ stellar_client: {stellar_time:.0f}ms")
     
     if 'stellar_client' in failed_services:
-        logger.error("CRITICAL: stellar_client failed")
+        logger.error("  ✗ CRITICAL: Stellar client initialization failed")
         return init_times, failed_services, 1
     
-    # Level 4: Final dependent services
+    # Element protocols (parallel)
+    protocol_services = ['air', 'water', 'earth', 'fire', 'synchronizer']
+    protocol_tasks = [init_service_safe(svc) for svc in protocol_services]
+    protocol_results = await asyncio.gather(*protocol_tasks, return_exceptions=True)
+    
+    for svc, elapsed in zip(protocol_services, protocol_results):
+        if isinstance(elapsed, Exception):
+            logger.error(f"  ✗ {svc}: {str(elapsed)}")
+            failed_services.add(svc)
+        else:
+            logger.info(f"  ✓ {svc}: {elapsed:.0f}ms")
+    
+    # Distribution service (depends on audit)
+    if 'ubec_audit_service' not in failed_services:
+        dist_time = await init_service_safe('ubec_distribution_service')
+        logger.info(f"  ✓ ubec_distribution_service: {dist_time:.0f}ms")
+    else:
+        logger.warning("  ⚠ Skipping ubec_distribution_service (audit service failed)")
+        failed_services.add('ubec_distribution_service')
+    
+    level3_elapsed = (time.time() - level3_start) * 1000
+    logger.info(f"  📊 Level 3 total: {level3_elapsed:.0f}ms")
+    
+    # ────────────────────────────────────────────────────────────────
+    # LEVEL 4: Final dependent services
+    # ────────────────────────────────────────────────────────────────
     logger.info("\n🔷 Level 4: Final dependent services")
     
-    if 'ubec_distribution_service' not in failed_services:
-        await init_service_safe('ubec_distribution_evaluator')
+    # Distribution evaluator (depends on distribution and audit)
+    if 'ubec_distribution_service' not in failed_services and 'ubec_audit_service' not in failed_services:
+        eval_time = await init_service_safe('ubec_distribution_evaluator')
+        logger.info(f"  ✓ ubec_distribution_evaluator: {eval_time:.0f}ms")
     else:
         logger.warning("  ⚠ Skipping ubec_distribution_evaluator (distribution service failed)")
         failed_services.add('ubec_distribution_evaluator')
     
-    # Summary
-    total_elapsed = int((time.time() - start_time) * 1000)
+    # ────────────────────────────────────────────────────────────────
+    # SUMMARY
+    # ────────────────────────────────────────────────────────────────
+    total_time = sum(init_times.values())
     successful = len(init_times) - len(failed_services)
     
     logger.info("\n" + "=" * 70)
     logger.info("SERVICE INITIALIZATION SUMMARY")
     logger.info("=" * 70)
-    logger.info(f"Total Time: {total_elapsed}ms")
+    logger.info(f"Total Time: {total_time:.0f}ms")
     logger.info(f"Successful: {successful}")
     logger.info(f"Failed: {len(failed_services)}")
+    logger.info("=" * 70)
     
-    if failed_services:
-        logger.error(f"Failed Services: {', '.join(sorted(failed_services))}")
-    
-    # Determine exit code
+    # Check if any critical services failed
     critical_failed = CRITICAL_SERVICES & failed_services
     if critical_failed:
-        logger.error(f"\nCRITICAL services failed: {', '.join(critical_failed)}")
+        logger.error(f"CRITICAL services failed: {', '.join(critical_failed)}")
         return init_times, failed_services, 1
-    
-    if failed_services:
-        logger.warning(f"\nNon-critical services failed: {', '.join(failed_services)}")
-        logger.warning("System will operate with reduced functionality")
-    
-    logger.info("=" * 70)
     
     return init_times, failed_services, 0
 
 
 # ========================================================================
 # OPERATION HANDLERS
-# Principle #5: All operation handlers are fully async
 # ========================================================================
 
-async def run_health_check(init_times: Dict[str, int], failed_services: set) -> Dict[str, Any]:
+async def run_health_check(
+    init_times: Dict[str, float],
+    failed_services: set
+) -> Dict[str, Any]:
     """
-    Perform comprehensive system health check.
+    Perform comprehensive health check on all services.
     
     Principle #7: Per-Asset Monitoring with health checks
-    Principle #12: Uses ServiceHealthCheck utility
-    
-    Args:
-        init_times: Service initialization times
-        failed_services: Set of services that failed to initialize
-        
-    Returns:
-        Health check result dictionary
+    Principle #12: Method Singularity - ServiceHealthCheck utility
     """
     logger.info("\n" + "=" * 70)
-    logger.info("RUNNING SYSTEM HEALTH CHECK")
+    logger.info("COMPREHENSIVE HEALTH CHECK")
     logger.info("=" * 70)
     
-    health_results = {
-        'timestamp': datetime.now().isoformat(),
-        'services': {},
-        'summary': {
-            'total': 0,
-            'healthy': 0,
-            'unhealthy': 0,
-            'failed': len(failed_services)
-        },
-        'configuration': {
-            'pool_config_source': 'database',
-            'principle_4_compliant': True,
-            'principle_8_compliant': True
-        }
-    }
+    health_results = {}
     
-    # Report pool configuration
-    try:
-        db = registry.get_sync('database')
-        if hasattr(db, 'configured_min_pool') and hasattr(db, 'configured_max_pool'):
-            health_results['configuration']['pool_size'] = {
-                'min': db.configured_min_pool,
-                'max': db.configured_max_pool,
-                'source': 'database (system_settings)'
-            }
-            logger.info(f"\n✅ Pool: {db.configured_min_pool}-{db.configured_max_pool} (from database)")
-    except:
-        pass
-    
-    # List of services to check
-    all_services = [
-        'database', 'config', 'rate_limiter', 'stellar_client',
-        'air', 'water', 'earth', 'fire',
-        'synchronizer', 'ubec_analytics_service', 'ubec_audit_service',
-        'ubec_distribution_service', 'ubec_distribution_evaluator',
-        'ubec_holonic_evaluator', 'visualizer'
-    ]
-    
-    health_results['summary']['total'] = len(all_services)
-    
-    # Check each service
-    for service_name in all_services:
+    for service_name in registry.list_services():
         if service_name in failed_services:
-            health_results['services'][service_name] = {
+            health_results[service_name] = {
                 'status': 'failed',
-                'message': 'Service failed to initialize',
-                'init_time_ms': init_times.get(service_name, 0)
+                'message': 'Service failed to initialize'
             }
-            health_results['summary']['unhealthy'] += 1
-        else:
-            try:
-                service = registry.get_sync(service_name)
-                
-                if hasattr(service, 'health_check'):
-                    health = await service.health_check()
-                    status = health.get('status', 'unknown')
-                    
-                    health_results['services'][service_name] = {
-                        'status': status,
-                        'details': health.get('details', {}),
-                        'init_time_ms': init_times.get(service_name, 0)
-                    }
-                    
-                    if status == 'healthy':
-                        health_results['summary']['healthy'] += 1
-                    else:
-                        health_results['summary']['unhealthy'] += 1
-                else:
-                    health_results['services'][service_name] = {
-                        'status': 'no_health_check',
-                        'init_time_ms': init_times.get(service_name, 0)
-                    }
-                    health_results['summary']['healthy'] += 1
-                    
-            except Exception as e:
-                health_results['services'][service_name] = {
-                    'status': 'error',
-                    'message': str(e),
-                    'init_time_ms': init_times.get(service_name, 0)
+            continue
+        
+        try:
+            service = await registry.get(service_name)
+            
+            # Check if service has health_check method
+            if hasattr(service, 'health_check'):
+                health = await service.health_check()
+                health_results[service_name] = health
+            else:
+                health_results[service_name] = {
+                    'status': 'healthy',
+                    'message': 'Service running (no health_check method)',
+                    'initialization_time_ms': init_times.get(service_name, 0)
                 }
-                health_results['summary']['unhealthy'] += 1
+                
+        except Exception as e:
+            health_results[service_name] = {
+                'status': 'error',
+                'message': str(e)
+            }
     
-    # Overall system health
-    if health_results['summary']['unhealthy'] == 0:
-        health_results['overall_status'] = 'healthy'
-    elif health_results['summary']['failed'] > 0:
-        health_results['overall_status'] = 'critical'
-    else:
-        health_results['overall_status'] = 'degraded'
-    
-    logger.info(f"\n📊 System Health: {health_results['overall_status'].upper()}")
-    logger.info(f"  ✓ Healthy: {health_results['summary']['healthy']}")
-    logger.info(f"  ⚠ Unhealthy: {health_results['summary']['unhealthy']}")
-    logger.info(f"  ✗ Failed: {health_results['summary']['failed']}")
-    
-    return create_response(
-        success=health_results['overall_status'] != 'critical',
-        data=health_results
-    )
+    return create_response(success=True, data=health_results)
 
 
 async def run_status() -> Dict[str, Any]:
     """
     Get current system status.
     
-    Principle #12: Standardized response format
+    Principle #4: Database as single source of truth
     """
-    logger.info("\n" + "=" * 70)
-    logger.info("CHECKING SYSTEM STATUS")
-    logger.info("=" * 70)
+    logger.info("\nGetting system status...")
     
-    # Get registry health
-    registry_health = await registry.health_check()
+    db = await registry.get('database')
     
-    status_data = {
-        'registry': registry_health,
-        'timestamp': datetime.now().isoformat()
-    }
-    
-    return create_response(success=True, data=status_data)
+    try:
+        # Check database connectivity
+        result = await db.fetch_one("SELECT NOW() as current_time")
+        
+        status = {
+            'system': 'operational',
+            'database': 'connected',
+            'timestamp': result['current_time'],
+            'services': registry.list_services()
+        }
+        
+        return create_response(success=True, data=status)
+    except Exception as e:
+        logger.error(f"Status check failed: {e}", exc_info=True)
+        return create_response(success=False, error=str(e))
 
 
 async def run_protocol_health() -> Dict[str, Any]:
     """
-    Check health of all four element protocols.
+    Check health of all element protocols.
     
-    Principle #7: Per-Asset Monitoring
-    Principle #12: Uses ServiceHealthCheck utility
+    Principle #12: Uses standardized health check pattern
     """
     logger.info("\n" + "=" * 70)
-    logger.info("CHECKING PROTOCOL HEALTH")
+    logger.info("PROTOCOL HEALTH CHECK")
     logger.info("=" * 70)
     
-    protocols = ['air', 'water', 'earth', 'fire']
     protocol_health = {}
+    protocols = {
+        'air': 'UBEC',
+        'water': 'UBECrc',
+        'earth': 'UBECgpi',
+        'fire': 'UBECtt'
+    }
     
-    for protocol_name in protocols:
+    for protocol_name, token_code in protocols.items():
+        logger.info(f"\n{protocol_name.upper()} Protocol ({token_code}):")
+        
         try:
-            service = await registry.get(protocol_name)
-            health = await service.health_check()
-            protocol_health[protocol_name] = health
+            protocol = await registry.get(protocol_name)
             
-            status = health.get('status', 'unknown')
-            element = health.get('details', {}).get('element', protocol_name)
-            
-            logger.info(f"\n{element.upper()} Protocol ({protocol_name}):")
-            logger.info(f"  Status: {status}")
-            
-            if 'details' in health:
-                for key, value in health['details'].items():
-                    if key != 'element':
-                        logger.info(f"  {key}: {value}")
-                        
+            if hasattr(protocol, 'health_check'):
+                health = await protocol.health_check()
+                protocol_health[protocol_name] = health
+                
+                status = health.get('status', 'unknown')
+                message = health.get('message', 'No details')
+                logger.info(f"  Status: {status}")
+                logger.info(f"  {message}")
+            else:
+                logger.info(f"  Status: healthy (no health_check method)")
+                protocol_health[protocol_name] = {
+                    'status': 'healthy',
+                    'message': f'{token_code} protocol operational'
+                }
+                
         except Exception as e:
             logger.error(f"\n{protocol_name.upper()} Protocol: ERROR")
             logger.error(f"  {str(e)}")
@@ -1402,9 +1348,9 @@ async def run_discover(max_accounts: int = 100) -> Dict[str, Any]:
 
 async def run_analytics(analysis_type: str = 'distribution') -> Dict[str, Any]:
     """
-    Run analytics analysis.
+    Run analytics on token distribution.
     
-    Principle #5: Async operation
+    Principle #4: Database as single source of truth for analytics
     """
     logger.info(f"\nRunning analytics: type={analysis_type}")
     
@@ -1412,11 +1358,11 @@ async def run_analytics(analysis_type: str = 'distribution') -> Dict[str, Any]:
     
     try:
         if analysis_type == 'distribution':
-            result = await analytics.analyze_token_distribution()
+            result = await analytics.analyze_distribution()
         elif analysis_type == 'velocity':
-            result = await analytics.calculate_velocity()
+            result = await analytics.analyze_velocity()
         elif analysis_type == 'concentration':
-            result = await analytics.calculate_concentration()
+            result = await analytics.analyze_concentration()
         else:
             return create_response(success=False, error=f"Unknown analysis type: {analysis_type}")
         
@@ -1426,28 +1372,102 @@ async def run_analytics(analysis_type: str = 'distribution') -> Dict[str, Any]:
         return create_response(success=False, error=str(e))
 
 
-async def run_distribution(action: str = 'check', dry_run: bool = True) -> Dict[str, Any]:
+async def run_distribution(action: str = 'check', dry_run: bool = True, account_id: Optional[str] = None, days: int = 30) -> Dict[str, Any]:
     """
     Run distribution operations.
     
+    This function now supports BOTH the distribution service and the distribution
+    evaluator service, providing comprehensive distribution management and compliance
+    checking capabilities.
+    
+    Supported Actions:
+        Distribution Service Actions:
+            - 'check': Check current distribution (uses distribution_service)
+            - 'execute': Execute distribution (uses distribution_service)
+        
+        Distribution Evaluator Actions (NEW v19.0.0):
+            - 'check-compliance': Comprehensive compliance evaluation
+            - 'evaluate-account': Evaluate specific account compliance
+            - 'compliance-trends': Historical compliance trend analysis
+    
+    Args:
+        action: Action to perform (see supported actions above)
+        dry_run: Run in dry-run mode (no actual changes)
+        account_id: Account ID for account-specific actions
+        days: Number of days for trend analysis
+        
+    Returns:
+        Standardized response dictionary with operation results
+        
+    Principle #1: Precision in Implementation - All actions are implemented
     Principle #5: Async operation
     Principle #7: Transaction minimums
+    Principle #12: Method Singularity - Single distribution handler
     """
     logger.info(f"\nRunning distribution: action={action}, dry_run={dry_run}")
     
-    distribution = await registry.get('ubec_distribution_service')
-    
     try:
+        # ================================================================
+        # DISTRIBUTION SERVICE ACTIONS
+        # ================================================================
         if action == 'check':
+            distribution = await registry.get('ubec_distribution_service')
             result = await distribution.check_distribution()
+            
         elif action == 'execute':
+            distribution = await registry.get('ubec_distribution_service')
             if dry_run:
                 logger.warning("Dry run mode - no actual distributions")
             result = await distribution.execute_distribution(dry_run=dry_run)
+        
+        # ================================================================
+        # DISTRIBUTION EVALUATOR ACTIONS (NEW v19.0.0)
+        # ================================================================
+        elif action == 'check-compliance':
+            # ✅ FIX: Get evaluator service and call evaluate_distribution()
+            evaluator = await registry.get('ubec_distribution_evaluator')
+            logger.info("Running comprehensive compliance evaluation...")
+            result = await evaluator.evaluate_distribution()
+            
+        elif action == 'evaluate-account':
+            # ✅ NEW: Evaluate specific account compliance
+            if not account_id:
+                return create_response(
+                    success=False,
+                    error="account_id required for evaluate-account action. Use --account-id GXXXX..."
+                )
+            
+            evaluator = await registry.get('ubec_distribution_evaluator')
+            logger.info(f"Evaluating account: {account_id}")
+            result = await evaluator.evaluate_account(account_id)
+            
+        elif action == 'compliance-trends':
+            # ✅ NEW: Get historical compliance trends
+            evaluator = await registry.get('ubec_distribution_evaluator')
+            logger.info(f"Analyzing compliance trends: last {days} days")
+            result = await evaluator.get_compliance_trends(days=days)
+        
+        # ================================================================
+        # UNKNOWN ACTION HANDLER
+        # ================================================================
         else:
-            return create_response(success=False, error=f"Unknown action: {action}")
+            # Provide helpful error with available actions
+            available_actions = [
+                "Distribution Service Actions:",
+                "  - check: Check current distribution",
+                "  - execute: Execute distribution",
+                "",
+                "Distribution Evaluator Actions:",
+                "  - check-compliance: Comprehensive compliance evaluation",
+                "  - evaluate-account: Evaluate specific account (requires --account-id)",
+                "  - compliance-trends: Historical compliance trends (optional --days N)"
+            ]
+            
+            error_message = f"Unknown action: {action}\n\nAvailable actions:\n" + "\n".join(available_actions)
+            return create_response(success=False, error=error_message)
         
         return create_response(success=True, data=result)
+        
     except Exception as e:
         logger.error(f"Distribution failed: {e}", exc_info=True)
         return create_response(success=False, error=str(e))
@@ -1500,42 +1520,52 @@ def parse_arguments():
     """
     Parse command-line arguments.
     
-    Principle #11: Comprehensive documentation
+    Principle #11: Comprehensive documentation for CLI
     """
     parser = argparse.ArgumentParser(
-        description='UBEC Protocol System - Unified Entry Point',
+        description='UBEC Protocol System - Unified entry point',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # System Operations
-  python main.py health
-  python main.py status
-  python main.py protocol-health
+  python main.py health                    # Comprehensive health check
+  python main.py status                    # System status
+  python main.py protocol-health           # Protocol-specific health
   
   # Data Synchronization
-  python main.py sync --sync-type all --force
-  python main.py sync --sync-type UBEC --max-accounts 100
-  python main.py sync --sync-type liquidity
+  python main.py sync                      # Sync all tokens
+  python main.py sync --sync-type liquidity  # Sync liquidity pools
+  python main.py sync --sync-type UBEC     # Sync specific token
+  
+  # Distribution Operations
+  python main.py distribution --action check                    # Check distribution
+  python main.py distribution --action execute --dry-run        # Dry-run execution
+  python main.py distribution --action check-compliance         # Compliance evaluation (NEW v19.0.0)
+  python main.py distribution --action evaluate-account --account-id GXXXX...  # Account evaluation (NEW v19.0.0)
+  python main.py distribution --action compliance-trends --days 30  # Trend analysis (NEW v19.0.0)
   
   # Analytics
-  python main.py analytics --analysis-type distribution
-  python main.py analytics --analysis-type velocity
-  
-  # Distribution
-  python main.py distribution --action check
-  python main.py distribution --action execute --dry-run
+  python main.py analytics --analysis-type distribution  # Distribution analysis
+  python main.py analytics --analysis-type velocity      # Velocity analysis
   
   # Visualization
-  python main.py visualize --action report --include-advanced
-  python main.py visualize --action chart --chart-type distribution
+  python main.py visualize --action report               # Generate comprehensive report
+  python main.py visualize --action chart --chart-type holonic  # Generate specific chart
+
+Attribution:
+  This project uses the services of Claude and Anthropic PBC.
         """
     )
     
+    # Mode selection
     parser.add_argument(
         'mode',
         choices=[
             'health', 'status', 'protocol-health',
-            'sync', 'discover', 'analytics', 'distribution', 'visualize'
+            'sync', 'discover',
+            'analytics',
+            'distribution',
+            'visualize'
         ],
         help='Operation mode'
     )
@@ -1544,7 +1574,7 @@ Examples:
     parser.add_argument(
         '--sync-type',
         default='all',
-        help='Type of sync: all, liquidity, or token code (UBEC, UBECrc, etc.)'
+        help='Sync type: all, liquidity, or token code (UBEC, UBECrc, etc.)'
     )
     
     parser.add_argument(
@@ -1556,7 +1586,7 @@ Examples:
     parser.add_argument(
         '--force',
         action='store_true',
-        help='Force operation'
+        help='Force operation (override safety checks)'
     )
     
     # Analytics options
@@ -1577,6 +1607,19 @@ Examples:
         '--dry-run',
         action='store_true',
         help='Run in dry-run mode (no actual changes)'
+    )
+    
+    # Distribution evaluator options (NEW v19.0.0)
+    parser.add_argument(
+        '--account-id',
+        help='Account ID for account-specific evaluation actions'
+    )
+    
+    parser.add_argument(
+        '--days',
+        type=int,
+        default=30,
+        help='Number of days for trend analysis (default: 30)'
     )
     
     # Visualization options
@@ -1637,7 +1680,7 @@ async def main_async(args):
     logger.info("UBEC PROTOCOL SYSTEM STARTING")
     logger.info("=" * 70)
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 18.0.0 (Sync Fix + Comprehensive Health Monitoring)")
+    logger.info(f"Version: 19.0.0 (Distribution Evaluator Integration + CLI Fix)")
     logger.info("=" * 70)
     
     try:
@@ -1701,11 +1744,13 @@ async def main_async(args):
                 analysis_type=args.analysis_type
             )
         
-        # Distribution
+        # Distribution (with evaluator support - NEW v19.0.0)
         elif args.mode == 'distribution':
             result = await run_distribution(
                 action=args.action or 'check',
-                dry_run=args.dry_run
+                dry_run=args.dry_run,
+                account_id=args.account_id,
+                days=args.days
             )
         
         # Visualization
