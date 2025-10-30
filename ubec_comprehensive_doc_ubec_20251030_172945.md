@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-30T16:39:48.255780  
+**Generated:** 2025-10-30T17:29:45.280283  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 80 MB  
@@ -18,7 +18,7 @@
 **Total Views:** 29  
 **Total Functions:** 1132  
 **Total Relationships:** 9  
-**Total Indexes:** 422  
+**Total Indexes:** 423  
 
 ### Schemas in Database
 
@@ -6383,7 +6383,7 @@
 - **Columns:** 566
 - **Views:** 20
 - **Relationships:** 9
-- **Indexes:** 312
+- **Indexes:** 313
 - **Triggers:** 22
 - **Functions:** 79
 - **Custom Types:** 8
@@ -6429,7 +6429,7 @@
 | stellar_transactions | 74,495 | 20 | 49 MB |
 | stellar_accounts | 1,299 | 17 | 1032 kB |
 | holonic_metrics | 1,286 | 16 | 2624 kB |
-| account_balances | 651 | 6 | 1544 kB |
+| account_balances | 651 | 6 | 1584 kB |
 | ubec_balances | 651 | 15 | 560 kB |
 | stellar_operations | 434 | 20 | 1248 kB |
 | system_settings | 72 | 12 | 144 kB |

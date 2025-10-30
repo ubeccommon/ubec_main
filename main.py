@@ -1348,13 +1348,34 @@ async def run_protocol_health() -> Dict[str, Any]:
         return create_response(success=False, error=str(e))
 
 
-async def run_sync(sync_type: str = 'all', max_accounts: Optional[int] = None, force: bool = False) -> Dict[str, Any]:
+async def run_sync(
+    sync_type: str = 'all',
+    max_accounts: Optional[int] = None,
+    force: bool = False
+) -> Dict[str, Any]:
     """
-    Run data synchronization from Stellar blockchain.
+    Run blockchain data synchronization.
     
-    Principle #5: Async operations
-    Principle #7: Batch processing with minimums
-    Principle #12: Standardized sync operations
+    Args:
+        sync_type: 'all' for all tokens, or specific token code (UBEC, UBECrc, UBECgpi, UBECtt)
+        max_accounts: Maximum accounts to process per token
+        force: Force re-sync (currently unused but kept for compatibility)
+        
+    Returns:
+        Dictionary with sync results
+        
+    Supported sync_types:
+        - 'all': Sync all 4 UBEC tokens
+        - 'UBEC': Discover UBEC (Air) token holders
+        - 'UBECrc': Discover UBECrc (Water) token holders  
+        - 'UBECgpi': Discover UBECgpi (Earth) token holders
+        - 'UBECtt': Discover UBECtt (Fire) token holders
+        - 'liquidity': Sync liquidity pools only
+        
+    Design Principles:
+        - Principle #5: Strict Async Operations
+        - Principle #12: Method Singularity - Uses actual synchronizer methods
+        - Principle #3: Service Registry for Dependencies
     """
     logger.info(f"\n🔄 Running Synchronization: type={sync_type}")
     
@@ -1362,40 +1383,51 @@ async def run_sync(sync_type: str = 'all', max_accounts: Optional[int] = None, f
         synchronizer = await registry.get('synchronizer')
         
         if sync_type == 'all':
-            # Sync all token data
+            # ✅ CORRECT: Use sync_all_tokens() to sync all 4 UBEC tokens
+            logger.info("Synchronizing all UBEC tokens...")
             result = await synchronizer.sync_all_tokens(
-                max_accounts=max_accounts,
-                force_refresh=force
+                max_accounts_per_token=max_accounts or 5000  # ✅ CORRECT parameter name
+            )
+            logger.info("✓ Synchronization completed successfully")
+            
+        elif sync_type.upper() in ['UBEC', 'UBECRC', 'UBECGPI', 'UBECTT']:
+            # ✅ CORRECT: Use discover_accounts() for specific token
+            token_code = sync_type.upper()
+            logger.info(f"Discovering {token_code} token holders...")
+            
+            accounts_discovered = await synchronizer.discover_accounts(
+                asset_code=token_code,
+                max_accounts=max_accounts or 5000  # ✅ CORRECT parameter name for this method
             )
             
-        elif sync_type == 'trustlines':
-            # Sync trustlines only
-            result = await synchronizer.sync_trustlines(force_refresh=force)
-            
-        elif sync_type == 'balances':
-            # Sync balances only
-            result = await synchronizer.sync_balances(
-                max_accounts=max_accounts,
-                force_refresh=force
-            )
+            result = {
+                'token': token_code,
+                'accounts_discovered': accounts_discovered,
+                'status': 'success'
+            }
+            logger.info(f"✓ Discovered {accounts_discovered} {token_code} holders")
             
         elif sync_type == 'liquidity':
-            # Sync liquidity pools
-            result = await synchronizer.sync_liquidity_pools(force_refresh=force)
+            # ✅ CORRECT: Use sync_liquidity_pools()
+            logger.info("Synchronizing liquidity pools...")
+            result = await synchronizer.sync_liquidity_pools(
+                max_pools=max_accounts or 1000  # ✅ Uses max_pools parameter
+            )
+            logger.info("✓ Liquidity pool synchronization completed")
             
         else:
+            # Invalid sync type
+            valid_types = "all, UBEC, UBECrc, UBECgpi, UBECtt, liquidity"
             return create_response(
                 success=False,
-                error=f"Unknown sync type: {sync_type}. Use: all, trustlines, balances, liquidity"
+                error=f"Unknown sync type: '{sync_type}'. Valid types: {valid_types}"
             )
         
-        logger.info(f"  ✓ Synchronization complete")
         return create_response(success=True, data=result)
         
     except Exception as e:
         logger.error(f"Sync failed: {e}", exc_info=True)
         return create_response(success=False, error=str(e))
-
 
 async def run_discover(max_accounts: int = 100) -> Dict[str, Any]:
     """
@@ -1660,7 +1692,7 @@ Examples:
     parser.add_argument(
         '--sync-type',
         default='all',
-        choices=['all', 'trustlines', 'balances', 'liquidity'],
+        choices=['all', 'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt', 'liquidity'],
         help='Type of sync operation'
     )
     
