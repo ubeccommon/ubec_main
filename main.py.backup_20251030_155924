@@ -1178,12 +1178,12 @@ async def run_health_check(init_times: Dict[str, int], failed_services: List[str
                 service = await registry.get(service_name)
                 
                 # Use standardized health check if available
-                if hasattr(service, 'health_check'):
-                    health = await service.health_check()
+                if hasattr(service, 'get_health'):
+                    health = await service.get_health()
                     health_results['services'][service_name] = health
                     
                     # Check if service is healthy
-                    is_healthy = health.get('status') == 'healthy'
+                    is_healthy = health.get('healthy', False)
                     
                     # Track critical service health
                     if service_name in CRITICAL_SERVICES and not is_healthy:
@@ -1269,9 +1269,9 @@ async def run_status() -> Dict[str, Any]:
             try:
                 service = await registry.get(service_name)
                 
-                if hasattr(service, 'health_check'):
-                    health = await service.health_check()
-                    is_healthy = health.get('status') == 'healthy'
+                if hasattr(service, 'get_health'):
+                    health = await service.get_health()
+                    is_healthy = health.get('healthy', False)
                     
                     status['services'][service_name] = {
                         'healthy': is_healthy,
