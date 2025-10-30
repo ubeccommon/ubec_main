@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-25T04:25:14.536139  
+**Generated:** 2025-10-30T15:40:04.089217  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 80 MB  
@@ -18,7 +18,7 @@
 **Total Views:** 29  
 **Total Functions:** 1132  
 **Total Relationships:** 9  
-**Total Indexes:** 421  
+**Total Indexes:** 422  
 
 ### Schemas in Database
 
@@ -6383,7 +6383,7 @@
 - **Columns:** 566
 - **Views:** 20
 - **Relationships:** 9
-- **Indexes:** 311
+- **Indexes:** 312
 - **Triggers:** 22
 - **Functions:** 79
 - **Custom Types:** 8
@@ -6432,7 +6432,7 @@
 | account_balances | 651 | 6 | 1544 kB |
 | ubec_balances | 651 | 15 | 560 kB |
 | stellar_operations | 434 | 20 | 1248 kB |
-| system_settings | 72 | 12 | 128 kB |
+| system_settings | 72 | 12 | 144 kB |
 | asset_holder_analysis | 63 | 19 | 184 kB |
 | liquidity_pool_owners | 26 | 13 | 936 kB |
 | ubec_distributions | 24 | 14 | 112 kB |
