@@ -952,7 +952,16 @@ async def create_holonic_evaluator(
     
     # Create and initialize service
     evaluator = UBECHolonicEvaluator(db_manager=db_manager, config=config)
-    # Service registry handles initialization
+    # CRITICAL FIX: Explicitly call initialize() before returning
+    await evaluator.initialize()
+    
+    # Verify initialization succeeded
+    if not evaluator._initialized:
+        raise RuntimeError(
+            "Holonic evaluator initialization failed - "
+            "check database schema and connectivity"
+        )
+    
     return evaluator
 
 

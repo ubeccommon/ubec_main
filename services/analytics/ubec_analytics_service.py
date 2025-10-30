@@ -295,77 +295,50 @@ class UBECAnalyticsService:
         
         Principle #7: Per-Asset Monitoring with health validation
         Uses ServiceHealthCheck utility (Principle #12: Method Singularity)
-        
-        Returns:
-            Dict with health status and detailed metrics
-            
-        Example:
-            health = await analytics.health_check()
-            if health['status'] != 'healthy':
-                logger.warning(f"Analytics unhealthy: {health['message']}")
         """
-        # Use standardized health check utility (Principle #12)
-        health_checker = ServiceHealthCheck(
-            service_name="ubec_analytics_service",
-            check_database=True,
-            db_manager=self.db_manager
-        )
+        # Additional validation checks
+        additional_checks = []
         
-        # Run standard checks
-        health = await health_checker.check_health()
+        def check_error_count():
+            if self._error_count > 10:
+                raise ValueError(f"High error count: {self._error_count}")
+            return True
         
-        # Add analytics-specific metrics
-        health['details'].update({
-            'initialized': self._initialized,
-            'query_count': self._query_count,
-            'error_count': self._error_count,
-            'last_error': self._last_error,
-            'last_error_time': self._last_error_time.isoformat() if self._last_error_time else None,
-            'last_query_time': self._last_query_time.isoformat() if self._last_query_time else None,
-            'cache_size': len(self._cache),
-            'cache_hits': self._cache_hits,
-            'cache_misses': self._cache_misses,
-            'cache_hit_rate': (
+        def check_recent_errors():
+            if self._last_error_time:
+                time_since_error = datetime.now() - self._last_error_time
+                if time_since_error < timedelta(minutes=5):
+                    raise ValueError("Recent errors detected")
+            return True
+        
+        async def check_database_query():
+            test_query = "SELECT COUNT(*) as count FROM ubec_balances WHERE balance > 0"
+            result = await self.db_manager.fetch_one(test_query, ())
+            if result and result.get('count', 0) > 0:
+                return f"Database responsive ({result['count']} active balances)"
+            raise ValueError("No active balances found")
+        
+        additional_checks.extend([check_error_count, check_recent_errors, check_database_query])
+        
+        return await ServiceHealthCheck.database_dependent_health(
+            service_name='ubec_analytics_service',
+            db_manager=self.db_manager,
+            is_initialized=self._initialized,
+            additional_checks=additional_checks,
+            query_count=self._query_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time.isoformat() if self._last_error_time else None,
+            last_query_time=self._last_query_time.isoformat() if self._last_query_time else None,
+            cache_size=len(self._cache),
+            cache_hits=self._cache_hits,
+            cache_misses=self._cache_misses,
+            cache_hit_rate=(
                 self._cache_hits / (self._cache_hits + self._cache_misses)
                 if (self._cache_hits + self._cache_misses) > 0 else 0
             )
-        })
-        
-        # Additional validation checks
-        issues = []
-        
-        if not self._initialized:
-            issues.append("Service not initialized")
-        
-        if self._error_count > 10:
-            issues.append(f"High error count: {self._error_count}")
-        
-        if self._last_error_time:
-            time_since_error = datetime.now() - self._last_error_time
-            if time_since_error < timedelta(minutes=5):
-                issues.append("Recent errors detected")
-        
-        # Try to query some basic analytics data
-        try:
-            test_query = "SELECT COUNT(*) as count FROM ubec_balances WHERE balance > 0"
-            result = await self._execute_query(test_query)
-            if result and result['count'] > 0:
-                health['details']['data_available'] = True
-                health['details']['balance_records'] = result['count']
-            else:
-                issues.append("No balance data found")
-                health['details']['data_available'] = False
-        except Exception as e:
-            issues.append(f"Data query failed: {e}")
-            health['details']['data_available'] = False
-        
-        # Update health status based on issues
-        if issues:
-            health['status'] = 'degraded' if health['status'] == 'healthy' else health['status']
-            health['details']['issues'] = issues
-        
-        return health
-    
+        )
+
     # ========================================================================
     # CLI COMMAND INTERFACE METHODS
     # ========================================================================
