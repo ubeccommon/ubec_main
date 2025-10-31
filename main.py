@@ -297,6 +297,7 @@ def register_core_services():
         
         logger.info("  ├─ Database: Two-stage initialization")
         logger.info(f"     Schema: {schema}")
+        logger.info(f"     Search path: {search_path}")
         
         # ────────────────────────────────────────────────────────────────
         # STAGE 1: Bootstrap connection for configuration loading
@@ -306,7 +307,8 @@ def register_core_services():
             host=os.getenv('DB_HOST', 'localhost'),
             port=int(os.getenv('DB_PORT', '5432')),
             database=os.getenv('DB_NAME', 'ubec'),
-            schema=search_path,  # schema parameter takes the search path
+            schema=schema,
+            search_path='ubec_main,phenomenal,topology,public',
             user=os.getenv('DB_USER', 'ubec_app'),
             password=os.getenv('DB_PASSWORD', ''),
             min_pool_size=1,  # Minimal for bootstrap
@@ -351,7 +353,7 @@ def register_core_services():
             host=os.getenv('DB_HOST', 'localhost'),
             port=int(os.getenv('DB_PORT', '5432')),
             database=os.getenv('DB_NAME', 'ubec'),
-            schema=search_path,  # schema parameter takes the search path
+            schema=schema,  # schema parameter takes the search path
             user=os.getenv('DB_USER', 'ubec_app'),
             password=os.getenv('DB_PASSWORD', ''),
             min_pool_size=min_pool,

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-Async Database Manager for UBEC Protocol - Enhanced Version
-============================================================
-Provides async database access using asyncpg with comprehensive health monitoring.
+Async Database Manager for UBEC Protocol - Multi-Schema Enhanced Version
+=========================================================================
+Provides async database access using asyncpg with comprehensive health monitoring
+and full multi-schema search path support.
 
 This module implements:
 - Async connection pooling with automatic schema management
+- Multi-schema search path support (ubec_main, phenomenal, topology, public)
 - Query execution with async/await patterns
 - Transaction management with context managers
 - Automatic parameter placeholder conversion (%s → $1, $2...)
 - ISO 8601 datetime string conversion
 - Comprehensive health check monitoring
 - Connection testing utilities
+- Schema parameter validation
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
@@ -33,12 +36,13 @@ Usage Example:
     ```python
     from core.db.database_manager import AsyncDatabaseManager
     
-    # Create and initialize database manager
+    # Create and initialize database manager with multi-schema support
     db = AsyncDatabaseManager(
         host='localhost',
         port=5432,
         database='ubec',
-        schema='ubec_main',
+        schema='ubec_main',  # Primary schema for explicit references
+        search_path='ubec_main,phenomenal,topology,public',  # Full search path
         user='ubec_app',
         password='your_password'
     )
@@ -46,22 +50,23 @@ Usage Example:
     await db.initialize()
     
     # Execute queries (supports both %s and $1 placeholders)
+    # Explicit schema reference (always works)
     results = await db.fetch_all(
-        "SELECT * FROM accounts WHERE asset_code = %s",
-        ('UBEC',)
+        "SELECT * FROM ubec_main.ubec_balances WHERE balance > 0"
     )
     
-    # Fetch single row
-    account = await db.fetch_one(
-        "SELECT * FROM accounts WHERE id = $1",
-        (account_id,)
+    # Implicit reference (uses search path)
+    results = await db.fetch_all(
+        "SELECT * FROM ubec_balances WHERE balance > 0"
     )
     
-    # Execute INSERT/UPDATE/DELETE
-    status = await db.execute(
-        "INSERT INTO logs (message, timestamp) VALUES ($1, $2)",
-        ('Test message', datetime.now())
-    )
+    # Cross-schema joins
+    results = await db.fetch_all("""
+        SELECT ub.*, ph.autonomy_score
+        FROM ubec_main.ubec_balances ub
+        LEFT JOIN phenomenal.holons ph 
+            ON ub.account_id = ANY(ph.constituent_accounts)
+    """)
     
     # Transaction support
     async with db.transaction() as tx:
@@ -74,9 +79,6 @@ Usage Example:
     if health['status'] == 'healthy':
         print("Database operational")
     
-    # Test connection
-    is_connected = await db.test_connection()
-    
     # Cleanup
     await db.close()
     ```
@@ -86,14 +88,17 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 1.4.0
-Date: October 17, 2025
-Changes:
-    - Added test_connection() method for connectivity checks
-    - Enhanced health_check() with comprehensive diagnostics
-    - Improved error handling and logging
-    - Added connection pool statistics
-    - Full compliance with all 12 Design Principles
+Version: 2.0.0 (Multi-Schema Enhanced)
+Date: October 31, 2025
+Changes from v1.4.0:
+    - Added search_path parameter for full multi-schema support
+    - Added schema parameter validation (rejects comma-separated values)
+    - Enhanced _get_connection() to use full search path
+    - Updated transaction() to use full search path
+    - Enhanced health_check() with search_path information
+    - Updated factory function to support UBEC_DB_SEARCH_PATH
+    - Added comprehensive multi-schema documentation
+    - Backward compatible: search_path defaults to "{schema},public"
 """
 
 import asyncio
@@ -261,34 +266,63 @@ class AsyncDatabaseManager:
     Async PostgreSQL database manager with connection pooling and health monitoring.
     
     This class provides the primary database interface for all UBEC services,
-    implementing all 12 Design Principles.
+    implementing all 12 Design Principles with full multi-schema support.
     
     Features:
     - Connection pooling for efficient resource usage
-    - Automatic schema path management
+    - Multi-schema search path (ubec_main, phenomenal, topology, public)
+    - Automatic schema path management per connection
     - Query placeholder conversion (%s → $1)
     - ISO 8601 datetime conversion
     - Transaction support with context managers
     - Comprehensive health monitoring
     - Connection testing utilities
+    - Schema parameter validation
+    
+    Multi-Schema Architecture:
+    - schema: Primary schema for explicit table references (e.g., "ubec_main")
+    - search_path: Full search path for PostgreSQL (e.g., "ubec_main,phenomenal,topology,public")
+    - Explicit references: FROM {schema}.table_name (always works)
+    - Implicit references: FROM table_name (uses search path)
     
     Attributes:
         host (str): Database server host
         port (int): Database server port
         database (str): Database name
-        schema (str): Default schema for queries
+        schema (str): Primary schema for explicit references (single name only)
+        search_path (str): Full PostgreSQL search path (can include multiple schemas)
         user (str): Database user
         min_pool_size (int): Minimum connections in pool
         max_pool_size (int): Maximum connections in pool
         
     Example:
+        >>> # Multi-schema setup for UBEC
         >>> db = AsyncDatabaseManager(
         ...     host='localhost',
         ...     database='ubec',
-        ...     schema='ubec_main'
+        ...     schema='ubec_main',  # Primary schema
+        ...     search_path='ubec_main,phenomenal,topology,public'  # All schemas
         ... )
         >>> await db.initialize()
-        >>> results = await db.fetch_all("SELECT * FROM accounts", ())
+        >>> 
+        >>> # Explicit schema reference (recommended for production)
+        >>> results = await db.fetch_all(
+        ...     "SELECT * FROM ubec_main.ubec_balances", ()
+        ... )
+        >>> 
+        >>> # Implicit reference (uses search path)
+        >>> results = await db.fetch_all(
+        ...     "SELECT * FROM ubec_balances", ()
+        ... )
+        >>> 
+        >>> # Cross-schema join
+        >>> results = await db.fetch_all('''
+        ...     SELECT ub.balance, ph.autonomy_score
+        ...     FROM ubec_main.ubec_balances ub
+        ...     LEFT JOIN phenomenal.holons ph 
+        ...         ON ub.account_id = ANY(ph.constituent_accounts)
+        ... ''', ())
+        >>> 
         >>> await db.close()
     """
     
@@ -298,6 +332,7 @@ class AsyncDatabaseManager:
         port: int = 5432,
         database: str = 'ubec',
         schema: str = 'ubec_main',
+        search_path: Optional[str] = None,
         user: str = 'ubec_app',
         password: str = '',
         min_pool_size: int = 2,
@@ -312,7 +347,12 @@ class AsyncDatabaseManager:
             host: Database host (default: 'localhost')
             port: Database port (default: 5432)
             database: Database name (default: 'ubec')
-            schema: Schema name (default: 'ubec_main')
+            schema: PRIMARY schema name for explicit references (default: 'ubec_main')
+                    MUST be a single schema name, NOT a search path!
+                    Used in queries like: FROM {schema}.table_name
+            search_path: Full PostgreSQL search path (default: "{schema},public")
+                         Can include multiple schemas: "ubec_main,phenomenal,topology,public"
+                         Used by PostgreSQL for implicit table resolution
             user: Database user (default: 'ubec_app')
             password: Database password (default: '')
             min_pool_size: Minimum connections in pool (default: 2)
@@ -320,6 +360,18 @@ class AsyncDatabaseManager:
             
         Raises:
             ImportError: If asyncpg is not installed
+            ValueError: If schema contains comma (invalid for explicit references)
+            
+        Example:
+            >>> # Single schema (backward compatible)
+            >>> db = AsyncDatabaseManager(schema='ubec_main')
+            >>> # search_path defaults to 'ubec_main,public'
+            
+            >>> # Multi-schema (UBEC four-schema architecture)
+            >>> db = AsyncDatabaseManager(
+            ...     schema='ubec_main',
+            ...     search_path='ubec_main,phenomenal,topology,public'
+            ... )
         """
         if not ASYNCPG_AVAILABLE:
             raise ImportError(
@@ -327,10 +379,31 @@ class AsyncDatabaseManager:
                 "Install with: pip install asyncpg"
             )
         
+        # Validate schema parameter - CRITICAL for multi-schema support
+        if ',' in schema:
+            raise ValueError(
+                f"Invalid schema parameter: '{schema}'\n"
+                f"The schema parameter must be a SINGLE schema name for explicit table references.\n"
+                f"Example: schema='ubec_main' (correct)\n"
+                f"NOT: schema='ubec_main,phenomenal' (incorrect - this is a search path)\n"
+                f"\n"
+                f"Use the search_path parameter for multiple schemas:\n"
+                f"  schema='ubec_main',\n"
+                f"  search_path='ubec_main,phenomenal,topology,public'"
+            )
+        
         self.host = host
         self.port = port
         self.database = database
-        self.schema = schema
+        self.schema = schema.strip()  # Primary schema only
+        
+        # Search path: Use provided, or default to schema + public
+        # This supports the full UBEC four-schema architecture
+        if search_path is None:
+            self.search_path = f"{self.schema},public"
+        else:
+            self.search_path = search_path.strip()
+        
         self.user = user
         self.password = password
         self.min_pool_size = min_pool_size
@@ -341,6 +414,7 @@ class AsyncDatabaseManager:
         
         logger.info(
             f"AsyncDatabaseManager created for {database}.{schema} "
+            f"(search_path: {self.search_path}) "
             f"(pool: {min_pool_size}-{max_pool_size})"
         )
     
@@ -376,9 +450,10 @@ class AsyncDatabaseManager:
                 command_timeout=60
             )
             
-            # Test connection and set schema
+            # Test connection and set search path
             async with self._pool.acquire() as conn:
-                await conn.execute(f'SET search_path TO {self.schema}')
+                # Set full search path for this connection
+                await conn.execute(f'SET search_path TO {self.search_path}')
                 result = await conn.fetchval('SELECT 1')
                 if result != 1:
                     raise Exception("Database connection test failed")
@@ -386,6 +461,7 @@ class AsyncDatabaseManager:
             self._initialized = True
             logger.info(
                 f"Database pool initialized: {self.database}.{self.schema} "
+                f"(search_path: {self.search_path}) "
                 f"({self.min_pool_size}-{self.max_pool_size} connections)"
             )
             
@@ -456,11 +532,16 @@ class AsyncDatabaseManager:
                 'details': {
                     'initialized': bool,
                     'pool_size': int,
+                    'pool_idle': int,
+                    'pool_used': int,
                     'pool_max': int,
                     'connection_test': bool,
                     'response_time_ms': float,
                     'database': str,
-                    'schema': str
+                    'schema': str,
+                    'search_path': str,
+                    'host': str,
+                    'port': int
                 }
             }
             
@@ -470,6 +551,7 @@ class AsyncDatabaseManager:
             >>> health = await db.health_check()
             >>> print(f"Status: {health['status']}")
             >>> print(f"Response time: {health['details']['response_time_ms']}ms")
+            >>> print(f"Search path: {health['details']['search_path']}")
         """
         start_time = datetime.now()
         
@@ -480,11 +562,14 @@ class AsyncDatabaseManager:
             'details': {
                 'initialized': self._initialized,
                 'pool_size': 0,
+                'pool_idle': 0,
+                'pool_used': 0,
                 'pool_max': self.max_pool_size,
                 'connection_test': False,
                 'response_time_ms': 0.0,
                 'database': self.database,
                 'schema': self.schema,
+                'search_path': self.search_path,
                 'host': self.host,
                 'port': self.port
             }
@@ -548,14 +633,30 @@ class AsyncDatabaseManager:
         """
         Get a connection from the pool (internal context manager).
         
-        Automatically sets the schema path for the connection.
+        Automatically sets the full search path for the connection.
+        Supports UBEC's four-schema architecture (ubec_main, phenomenal, topology, public).
+        
+        The search path determines how PostgreSQL resolves unqualified table names:
+        - Tables referenced without schema (e.g., FROM ubec_balances)
+        - Searched in order: ubec_main → phenomenal → topology → public
+        - First match is used
+        
+        Explicit schema references always work regardless of search path:
+        - FROM ubec_main.ubec_balances (explicit)
+        - FROM phenomenal.holons (explicit)
+        
         This is an internal method - use fetch_all, fetch_one, execute instead.
         
         Yields:
-            asyncpg.Connection: Database connection
+            asyncpg.Connection: Database connection with search path configured
             
         Raises:
             RuntimeError: If database not initialized
+            
+        Example:
+            >>> async with self._get_connection() as conn:
+            ...     # Connection has search_path set automatically
+            ...     result = await conn.fetch("SELECT * FROM ubec_balances")
         """
         if not self._initialized:
             raise RuntimeError(
@@ -563,8 +664,9 @@ class AsyncDatabaseManager:
             )
         
         async with self._pool.acquire() as conn:
-            # Set schema for this connection
-            await conn.execute(f'SET search_path TO {self.schema}')
+            # Set full search path for this connection
+            # Supports multi-schema queries: ubec_main, phenomenal, topology, public
+            await conn.execute(f'SET search_path TO {self.search_path}')
             yield conn
     
     async def fetch_all(
@@ -579,6 +681,11 @@ class AsyncDatabaseManager:
         Supports both %s and $1 style placeholders.
         Automatically converts ISO 8601 datetime strings to datetime objects.
         
+        Multi-Schema Support:
+        - Explicit schema refs work: SELECT * FROM ubec_main.ubec_balances
+        - Implicit refs use search path: SELECT * FROM ubec_balances
+        - Cross-schema joins supported
+        
         Args:
             query: SQL query (supports both %s and $1 placeholders)
             params: Query parameters as tuple (MUST be tuple, even if empty)
@@ -590,12 +697,25 @@ class AsyncDatabaseManager:
             Exception: If query execution fails
             
         Example:
+            >>> # Explicit schema reference (recommended)
             >>> results = await db.fetch_all(
-            ...     "SELECT * FROM accounts WHERE asset_code = %s",
-            ...     ('UBEC',)
+            ...     "SELECT * FROM ubec_main.ubec_balances WHERE balance > $1",
+            ...     (1000,)
             ... )
-            >>> for row in results:
-            ...     print(row['account_id'])
+            >>> 
+            >>> # Implicit reference (uses search path)
+            >>> results = await db.fetch_all(
+            ...     "SELECT * FROM ubec_balances WHERE balance > $1",
+            ...     (1000,)
+            ... )
+            >>> 
+            >>> # Cross-schema join
+            >>> results = await db.fetch_all('''
+            ...     SELECT ub.balance, ph.autonomy_score
+            ...     FROM ubec_main.ubec_balances ub
+            ...     JOIN phenomenal.holons ph 
+            ...         ON ub.account_id = ANY(ph.constituent_accounts)
+            ... ''', ())
         """
         try:
             # Convert placeholders if needed
@@ -627,6 +747,10 @@ class AsyncDatabaseManager:
         Supports both %s and $1 style placeholders.
         Automatically converts ISO 8601 datetime strings to datetime objects.
         
+        Multi-Schema Support:
+        - Explicit schema refs work: SELECT * FROM ubec_main.ubec_balances
+        - Implicit refs use search path: SELECT * FROM ubec_balances
+        
         Args:
             query: SQL query (supports both %s and $1 placeholders)
             params: Query parameters as tuple (MUST be tuple, even if empty)
@@ -638,8 +762,9 @@ class AsyncDatabaseManager:
             Exception: If query execution fails
             
         Example:
+            >>> # Explicit schema reference
             >>> account = await db.fetch_one(
-            ...     "SELECT * FROM accounts WHERE id = $1",
+            ...     "SELECT * FROM ubec_main.ubec_balances WHERE account_id = $1",
             ...     (account_id,)
             ... )
             >>> if account:
@@ -674,6 +799,10 @@ class AsyncDatabaseManager:
         Supports both %s and $1 style placeholders.
         Automatically converts ISO 8601 datetime strings to datetime objects.
         
+        Multi-Schema Support:
+        - Explicit schema refs work: INSERT INTO ubec_main.ubec_balances ...
+        - Implicit refs use search path: INSERT INTO ubec_balances ...
+        
         Args:
             query: SQL query (supports both %s and $1 placeholders)
             params: Query parameters as tuple (MUST be tuple, even if empty)
@@ -686,8 +815,8 @@ class AsyncDatabaseManager:
             
         Example:
             >>> status = await db.execute(
-            ...     "INSERT INTO logs (message, timestamp) VALUES ($1, $2)",
-            ...     ('Test message', datetime.now())
+            ...     "INSERT INTO ubec_main.ubec_audit_log (message) VALUES ($1)",
+            ...     ('Test message',)
             ... )
             >>> print(status)  # "INSERT 0 1"
         """
@@ -727,7 +856,7 @@ class AsyncDatabaseManager:
             
         Example:
             >>> await db.execute_many(
-            ...     "INSERT INTO logs (message) VALUES ($1)",
+            ...     "INSERT INTO ubec_main.ubec_audit_log (message) VALUES ($1)",
             ...     [('Message 1',), ('Message 2',), ('Message 3',)]
             ... )
         """
@@ -777,21 +906,21 @@ class AsyncDatabaseManager:
         Example:
             >>> # Fetch one row
             >>> row = await db.execute_query(
-            ...     "SELECT * FROM accounts WHERE id = $1",
+            ...     "SELECT * FROM ubec_main.ubec_balances WHERE id = $1",
             ...     (1,),
             ...     fetch_one=True
             ... )
             
             >>> # Fetch all rows
             >>> rows = await db.execute_query(
-            ...     "SELECT * FROM accounts",
+            ...     "SELECT * FROM ubec_main.ubec_balances",
             ...     (),
             ...     fetch_all=True
             ... )
             
             >>> # Execute non-query
             >>> status = await db.execute_query(
-            ...     "INSERT INTO logs (msg) VALUES ($1)",
+            ...     "INSERT INTO ubec_main.ubec_audit_log (msg) VALUES ($1)",
             ...     ('Test',)
             ... )
         """
@@ -809,6 +938,7 @@ class AsyncDatabaseManager:
         
         Automatically commits on success or rolls back on exception.
         Provides a TransactionManager instance with fetch/execute methods.
+        Sets full search path for transaction context.
         
         Yields:
             TransactionManager: Transaction manager for this transaction
@@ -816,11 +946,11 @@ class AsyncDatabaseManager:
         Example:
             >>> async with db.transaction() as tx:
             ...     await tx.execute(
-            ...         "INSERT INTO logs (message) VALUES ($1)",
+            ...         "INSERT INTO ubec_main.ubec_audit_log (message) VALUES ($1)",
             ...         ('Starting transaction',)
             ...     )
             ...     await tx.execute(
-            ...         "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+            ...         "UPDATE ubec_main.ubec_balances SET balance = balance + $1 WHERE id = $2",
             ...         (100, account_id)
             ...     )
             ...     # Auto-commits here if no exception
@@ -832,10 +962,11 @@ class AsyncDatabaseManager:
             raise RuntimeError("Database not initialized")
         
         async with self._pool.acquire() as conn:
-            await conn.execute(f'SET search_path TO {self.schema}')
+            # Set full search path for transaction
+            await conn.execute(f'SET search_path TO {self.search_path}')
             async with conn.transaction():
                 # Create a temporary database manager for this transaction
-                temp_manager = TransactionManager(conn, self.schema)
+                temp_manager = TransactionManager(conn, self.schema, self.search_path)
                 yield temp_manager
 
 
@@ -854,16 +985,18 @@ class TransactionManager:
     AsyncDatabaseManager.transaction() instead.
     """
     
-    def __init__(self, conn, schema: str):
+    def __init__(self, conn, schema: str, search_path: str):
         """
         Initialize transaction manager.
         
         Args:
             conn: asyncpg connection
-            schema: Database schema
+            schema: Primary database schema
+            search_path: Full PostgreSQL search path
         """
         self.conn = conn
         self.schema = schema
+        self.search_path = search_path
     
     async def fetch_all(
         self, 
@@ -941,6 +1074,7 @@ def create_database_manager_from_env() -> AsyncDatabaseManager:
         UBEC_DB_PORT (default: '5432')
         UBEC_DB_NAME (default: 'ubec')
         UBEC_DB_SCHEMA (default: 'ubec_main')
+        UBEC_DB_SEARCH_PATH (default: '{schema},public' or 'ubec_main,phenomenal,topology,public')
         UBEC_DB_USER (default: 'ubec_app')
         UBEC_DB_PASSWORD (default: '')
         UBEC_DB_MIN_POOL (default: '2')
@@ -953,17 +1087,30 @@ def create_database_manager_from_env() -> AsyncDatabaseManager:
         >>> import os
         >>> os.environ['UBEC_DB_HOST'] = 'db.example.com'
         >>> os.environ['UBEC_DB_PASSWORD'] = 'secret'
+        >>> os.environ['UBEC_DB_SEARCH_PATH'] = 'ubec_main,phenomenal,topology,public'
         >>> 
         >>> db = create_database_manager_from_env()
         >>> await db.initialize()
     """
     import os
     
+    # Get primary schema
+    schema = os.getenv('UBEC_DB_SCHEMA', 'ubec_main')
+    
+    # Get search path - supports full multi-schema architecture
+    # Default: If not specified, use schema + public
+    # For UBEC: Set to 'ubec_main,phenomenal,topology,public' in environment
+    search_path = os.getenv(
+        'UBEC_DB_SEARCH_PATH',
+        f'{schema},public'  # Backward compatible default
+    )
+    
     return AsyncDatabaseManager(
         host=os.getenv('UBEC_DB_HOST', 'localhost'),
         port=int(os.getenv('UBEC_DB_PORT', '5432')),
         database=os.getenv('UBEC_DB_NAME', 'ubec'),
-        schema=os.getenv('UBEC_DB_SCHEMA', 'ubec_main'),
+        schema=schema,
+        search_path=search_path,
         user=os.getenv('UBEC_DB_USER', 'ubec_app'),
         password=os.getenv('UBEC_DB_PASSWORD', ''),
         min_pool_size=int(os.getenv('UBEC_DB_MIN_POOL', '2')),
