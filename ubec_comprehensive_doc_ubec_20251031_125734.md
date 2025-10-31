@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-10-31T05:47:30.690082  
+**Generated:** 2025-10-31T12:57:33.708321  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 80 MB  
@@ -12,19 +12,19 @@
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 67  
-**Total Rows:** 87,562  
-**Total Columns:** 840  
+**Total Tables:** 68  
+**Total Rows:** 87,567  
+**Total Columns:** 849  
 **Total Views:** 29  
-**Total Functions:** 1132  
+**Total Functions:** 1133  
 **Total Relationships:** 9  
-**Total Indexes:** 423  
+**Total Indexes:** 427  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 46 | 79,062 | 20 | 79 |
+| ubec_main | Main schema for UBEC four-element protoc... | 47 | 79,067 | 20 | 80 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6378,14 +6378,14 @@
 
 ### Schema Statistics
 
-- **Tables:** 46
-- **Total Rows:** 79,062
-- **Columns:** 566
+- **Tables:** 47
+- **Total Rows:** 79,067
+- **Columns:** 575
 - **Views:** 20
 - **Relationships:** 9
-- **Indexes:** 313
-- **Triggers:** 22
-- **Functions:** 79
+- **Indexes:** 317
+- **Triggers:** 23
+- **Functions:** 80
 - **Custom Types:** 8
 
 ### Custom Types
@@ -6441,11 +6441,11 @@
 | distribution_history | 10 | 15 | 152 kB |
 | liquidity_pools | 10 | 20 | 336 kB |
 | system_configuration | 10 | 8 | 96 kB |
+| monitored_accounts | 5 | 9 | 80 kB |
 | api_rate_limits | 4 | 6 | 56 kB |
 | scheduler_jobs | 2 | 10 | 80 kB |
 | account_order_positions | 0 | 10 | 56 kB |
 | agent_activity_history | 0 | 7 | 56 kB |
-| agent_benefit_history | 0 | 7 | 56 kB |
 
 #### ubec_main.account_balances
 
@@ -6920,6 +6920,28 @@
 - `valid_reserves` (CHECK)
 - `valid_shares` (CHECK)
 - `valid_trustlines` (CHECK)
+
+#### ubec_main.monitored_accounts
+
+*Tracks special accounts (administration, stewardship, general) for tokenomics compliance monitoring. Used by analytics service to calculate locked supply and liquidity ratios.*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| account_id | varchar(56) | ✗ | - | Stellar public key (G... format) |
+| account_type | varchar(20) | ✗ | - | Account classification for tokenomics... |
+| account_name | varchar(100) | ✓ | - | - |
+| description | text | ✓ | - | - |
+| monitored_since | timestamp with time zone | ✓ | CURRENT_TIMESTAMP | - |
+| is_active | boolean | ✓ | true | - |
+| metadata | jsonb | ✓ | '{}'::jsonb | - |
+| created_at | timestamp with time zone | ✓ | CURRENT_TIMESTAMP | - |
+| updated_at | timestamp with time zone | ✓ | CURRENT_TIMESTAMP | - |
+
+**Constraints:**
+- `monitored_accounts_account_type_check` (CHECK)
+- `monitored_accounts_pkey` (PRIMARY KEY)
+- `valid_account_id` (CHECK)
+- `valid_account_name` (CHECK)
 
 #### ubec_main.mutualism_relationships
 
@@ -7692,12 +7714,12 @@
 
 ### Functions
 
-#### armor(bytea, text[], text[])
+#### armor(bytea)
 
 - **Returns:** text
 - **Language:** c
 
-#### armor(bytea)
+#### armor(bytea, text[], text[])
 
 - **Returns:** text
 - **Language:** c
@@ -7746,12 +7768,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(text, text)
+#### digest(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(bytea, text)
+#### digest(text, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7836,12 +7858,12 @@
 - **Returns:** TABLE(setting_key character varying, setting_value text, setting_type character varying, description text)
 - **Language:** plpgsql
 
-#### hmac(bytea, bytea, text)
+#### hmac(text, text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### hmac(text, text, text)
+#### hmac(bytea, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7862,17 +7884,17 @@
 - **Returns:** text
 - **Language:** c
 
+#### pgp_pub_decrypt(bytea, bytea, text)
+
+- **Returns:** text
+- **Language:** c
+
 #### pgp_pub_decrypt(bytea, bytea, text, text)
 
 - **Returns:** text
 - **Language:** c
 
 #### pgp_pub_decrypt(bytea, bytea)
-
-- **Returns:** text
-- **Language:** c
-
-#### pgp_pub_decrypt(bytea, bytea, text)
 
 - **Returns:** text
 - **Language:** c
@@ -7892,12 +7914,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea, text)
+#### pgp_pub_encrypt(text, bytea)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea)
+#### pgp_pub_encrypt(text, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -7912,22 +7934,22 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt(bytea, text)
-
-- **Returns:** text
-- **Language:** c
-
 #### pgp_sym_decrypt(bytea, text, text)
 
 - **Returns:** text
 - **Language:** c
 
-#### pgp_sym_decrypt_bytea(bytea, text, text)
+#### pgp_sym_decrypt(bytea, text)
+
+- **Returns:** text
+- **Language:** c
+
+#### pgp_sym_decrypt_bytea(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt_bytea(bytea, text)
+#### pgp_sym_decrypt_bytea(bytea, text, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -8014,6 +8036,11 @@
 - **Description:** Recalculates ownership percentages and balances when pool data changes
 
 #### update_modified_timestamp()
+
+- **Returns:** trigger
+- **Language:** plpgsql
+
+#### update_monitored_accounts_timestamp()
 
 - **Returns:** trigger
 - **Language:** plpgsql
