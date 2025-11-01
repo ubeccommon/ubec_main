@@ -260,63 +260,6 @@ def convert_params_for_asyncpg(params: Union[Tuple, List, Dict]) -> Union[Tuple,
 # ASYNC DATABASE MANAGER
 # ============================================================================
 
-
-def _validate_params(params, method_name="query"):
-    """
-    Validate that params is a tuple, not a string.
-    
-    CRITICAL FIX: Prevents character-by-character unpacking when strings
-    are accidentally passed instead of tuples.
-    
-    Args:
-        params: Query parameters
-        method_name: Name of calling method (for error messages)
-        
-    Returns:
-        Tuple of parameters
-        
-    Raises:
-        TypeError: If params is a string (indicating a bug)
-        
-    Example of the bug this prevents:
-        # WRONG - string unpacks to 11 arguments:
-        await db.fetch_one(query, "ubec_issuer")  
-        # -> 'u','b','e','c','_','i','s','s','u','e','r'
-        
-        # RIGHT - tuple with one argument:
-        await db.fetch_one(query, ("ubec_issuer",))
-        # -> "ubec_issuer"
-    """
-    if params is None:
-        return ()
-    
-    if isinstance(params, str):
-        raise TypeError(
-            f"\n{'='*70}\n"
-            f"DATABASE PARAMETER BUG DETECTED\n"
-            f"{'='*70}\n"
-            f"Method: {method_name}\n"
-            f"Error: Parameters must be a TUPLE, not a STRING\n"
-            f"\n"
-            f"Received: {params!r} (type: {type(params).__name__})\n"
-            f"\n"
-            f"This causes the string to unpack character-by-character!\n"
-            f"\n"
-            f"FIX: Add a comma to make it a tuple:\n"
-            f"  WRONG: await db.{method_name}(query, '{params}')\n"
-            f"  RIGHT: await db.{method_name}(query, ('{params}',))\n"
-            f"                                           ^  ^ note the comma!\n"
-            f"{'='*70}\n"
-        )
-    
-    if not isinstance(params, (tuple, list)):
-        raise TypeError(
-            f"{method_name}: params must be tuple or list, "
-            f"got {type(params).__name__}: {params!r}"
-        )
-    
-    return tuple(params)
-
 class AsyncDatabaseManager:
     """
     Async PostgreSQL database manager with connection pooling and health monitoring.
@@ -773,7 +716,6 @@ class AsyncDatabaseManager:
             ...         ON ub.account_id = ANY(ph.constituent_accounts)
             ... ''', ())
         """
-        params = _validate_params(params, "fetch_all")
         try:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
@@ -827,7 +769,6 @@ class AsyncDatabaseManager:
             >>> if account:
             ...     print(account['balance'])
         """
-        params = _validate_params(params, "fetch_one")
         try:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
@@ -878,7 +819,6 @@ class AsyncDatabaseManager:
             ... )
             >>> print(status)  # "INSERT 0 1"
         """
-        params = _validate_params(params, "execute")
         try:
             # Convert placeholders if needed
             query = convert_query_placeholders(query)
