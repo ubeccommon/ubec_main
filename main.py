@@ -715,10 +715,11 @@ def register_core_services():
         from services.analytics.ubec_analytics_service import UBECAnalyticsService
         
         db = await registry.get('database')
+        config = await registry.get('config')
         
         logger.info("  ├─ Analytics: Token distribution and metrics")
         
-        analytics = UBECAnalyticsService(db)
+        analytics = UBECAnalyticsService(db, config)
         
         # Initialize the service
         await analytics.initialize()

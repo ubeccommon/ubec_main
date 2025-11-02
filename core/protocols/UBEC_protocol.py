@@ -343,10 +343,9 @@ class UBECProtocolService:
             # This reflects what the synchronizer actually wrote to the database
             query = """
                 SELECT 
-                    MAX(last_updated) as last_sync,
+                    MAX(last_modified_at) as last_sync,
                     COUNT(DISTINCT account_id) as account_count
-                FROM ubec_main.account_balances
-                WHERE asset_code = $1
+                FROM ubec_main.ubec_balances WHERE token_code = $1
             """
             
             row = await self.db_manager.fetch_one(query, (self.asset_code,))
@@ -555,8 +554,7 @@ class UBECProtocolService:
                     (SELECT COUNT(*) FROM ubec_main.stellar_transactions 
                      WHERE source_account = account_balances.account_id 
                      OR destination_account = account_balances.account_id) as transaction_count
-                FROM ubec_main.account_balances
-                WHERE asset_code = $1
+                FROM ubec_main.ubec_balances WHERE token_code = $1
                 ORDER BY balance DESC
             """
             
