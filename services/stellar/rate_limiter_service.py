@@ -60,7 +60,7 @@ Database Schema Requirements:
     system_settings table:
         CRITICAL: Must have this index for optimal performance:
             CREATE INDEX CONCURRENTLY idx_system_settings_key_active 
-            ON system_settings(setting_key, is_active) 
+            ON ubec_main.system_settings(setting_key, is_active) 
             WHERE is_active = TRUE;
         
         Settings format:
@@ -107,11 +107,18 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 4.0.0 (Performance Optimized - Configuration Caching)
-Date: October 22, 2025
+Version: 19.1.0 (Health Check Logic Fix + Schema Qualification)
+Date: November 2, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
 Changelog:
+    v19.1.0 - CRITICAL FIX: Health check logic and schema qualification
+            - 🐛 FIXED: check_performance_baseline() now returns degraded status dict
+              instead of raising exception (prevents false unhealthy reports)
+            - 📝 ADDED: Explicit schema qualification (ubec_main.system_settings)
+              for database queries to improve clarity and reliability
+            - ✅ Maintains all design principle compliance
+            - 🎯 Resolves false negative health check reports
     v4.0.0 - PERFORMANCE OPTIMIZATION: CONFIGURATION CACHING
            - 🚀 Added configuration caching with 5-minute TTL
            - ⚡ Reduced typical init time from 1,067ms to <10ms (100x faster)
@@ -553,6 +560,7 @@ class RateLimiterService:
         - Primary approach: LIKE 'rate_limit_%' (allows B-tree index usage)
         - Secondary approach: Explicit IN clause for known patterns
         - Index requirements: idx_system_settings_key_active
+        - Schema qualification: Explicit ubec_main.system_settings
         
         Principle #4: Database is single source of truth
         Principle #5: True async concurrency for all I/O operations
@@ -565,25 +573,26 @@ class RateLimiterService:
         logger.info("Loading rate limit configurations from database...")
         
         # OPTIMIZED query: Use prefix pattern (fully indexable)
-        # This query is designed to use idx_system_settings_key_active efficiently
+        # FIXED v19.1.0: Added explicit schema qualification for clarity
         query_system_settings = """
             SELECT 
                 setting_key, 
                 setting_value, 
                 setting_type
-            FROM system_settings
+            FROM ubec_main.system_settings
             WHERE setting_key LIKE 'rate_limit_%'
             AND is_active = TRUE
             ORDER BY setting_key
         """
         
         # Secondary query for alternate naming pattern
+        # FIXED v19.1.0: Added explicit schema qualification for clarity
         query_system_settings_alt = """
             SELECT 
                 setting_key, 
                 setting_value, 
                 setting_type
-            FROM system_settings
+            FROM ubec_main.system_settings
             WHERE setting_key IN (
                 'stellar_rate_limit', 
                 'sync_rate_limit', 
@@ -708,7 +717,7 @@ class RateLimiterService:
             logger.warning(
                 "  💡 Recommendation: Ensure idx_system_settings_key_active index exists:\n"
                 "     CREATE INDEX CONCURRENTLY idx_system_settings_key_active\n"
-                "     ON system_settings(setting_key, is_active)\n"
+                "     ON ubec_main.system_settings(setting_key, is_active)\n"
                 "     WHERE is_active = TRUE;"
             )
         except Exception as e:
@@ -1140,16 +1149,59 @@ class RateLimiterService:
                 return f"Circuit breakers OK ({len(open_circuits)} open, within timeout)"
             
             async def check_performance_baseline():
-                """Verify initialization performance meets baseline"""
+                """
+                Verify initialization performance meets baseline.
+                
+                FIXED v19.1.0: Returns structured dict for degraded status instead of
+                raising exception. This allows ServiceHealthCheck to properly categorize
+                performance issues as DEGRADED rather than UNHEALTHY.
+                
+                Returns:
+                    dict: Status dict with 'status': 'pass' | 'degraded'
+                """
                 if self._init_time_ms > INIT_BASELINE_MS * 4:
-                    raise Exception(
-                        f"Initialization time ({self._init_time_ms:.2f}ms) significantly exceeds "
-                        f"baseline ({INIT_BASELINE_MS:.0f}ms, {self._init_time_ms/INIT_BASELINE_MS:.1f}x slower)"
-                    )
+                    # Severe degradation but still functional
+                    return {
+                        'check': 'performance_baseline',
+                        'status': 'degraded',
+                        'severity': 'high',
+                        'baseline_ms': INIT_BASELINE_MS,
+                        'actual_ms': round(self._init_time_ms, 2),
+                        'slowdown_factor': round(self._init_time_ms / INIT_BASELINE_MS, 1),
+                        'message': (
+                            f"Initialization time ({self._init_time_ms:.2f}ms) significantly "
+                            f"exceeds baseline ({INIT_BASELINE_MS:.0f}ms, "
+                            f"{self._init_time_ms/INIT_BASELINE_MS:.1f}x slower)"
+                        ),
+                        'action': (
+                            'Add database index: CREATE INDEX CONCURRENTLY '
+                            'idx_system_settings_key_active ON ubec_main.system_settings '
+                            '(setting_key, is_active) WHERE is_active = TRUE'
+                        ),
+                        'impact': 'Rate limiter operational but slow during initialization'
+                    }
                 elif self._init_time_ms > INIT_BASELINE_MS * 2:
-                    return f"Performance degraded: {self._init_time_ms:.2f}ms (baseline: {INIT_BASELINE_MS:.0f}ms)"
+                    # Moderate degradation
+                    return {
+                        'check': 'performance_baseline',
+                        'status': 'degraded',
+                        'severity': 'medium',
+                        'baseline_ms': INIT_BASELINE_MS,
+                        'actual_ms': round(self._init_time_ms, 2),
+                        'slowdown_factor': round(self._init_time_ms / INIT_BASELINE_MS, 1),
+                        'message': (
+                            f"Performance degraded: {self._init_time_ms:.2f}ms "
+                            f"(baseline: {INIT_BASELINE_MS:.0f}ms)"
+                        ),
+                        'action': 'Review database query performance and consider indexing'
+                    }
                 else:
-                    return f"Performance healthy: {self._init_time_ms:.2f}ms"
+                    # Within acceptable range
+                    return {
+                        'check': 'performance_baseline',
+                        'status': 'pass',
+                        'message': f"Performance healthy: {self._init_time_ms:.2f}ms"
+                    }
             
             async def check_configuration_cache():
                 """Verify configuration cache is healthy"""

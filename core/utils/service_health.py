@@ -5,6 +5,13 @@ UBEC Service Health Check Utility - PRODUCTION VERSION
 Standardized health checking for all UBEC services.
 Provides reusable health check patterns following Principle #12 (Method Singularity).
 
+ENHANCED in v3.3 (v19.1.0):
+- CRITICAL FIX: Added support for structured dict returns from health checks
+- Checks can now return {'status': 'degraded', ...} to indicate degradation
+- Properly distinguishes between degraded performance and complete failure
+- Prevents false unhealthy reports for performance issues
+- Maintains backward compatibility with string/None returns
+
 ENHANCED in v3.2:
 - CRITICAL FIX: All datetime operations now timezone-aware
 - Fixed timezone mismatch in element_protocol_health()
@@ -36,10 +43,18 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 3.2.0 (Timezone-Aware Fix + Critical Health Monitoring)
-Date: October 23, 2025
+Version: 3.3.0 (v19.1.0 - Structured Health Check Returns)
+Date: November 2, 2025
 
 Changelog:
+    v3.3.0 (v19.1.0) - CRITICAL FIX: Structured Health Check Return Handling:
+           - 🔧 FIXED: basic_health_check() now handles dict returns from checks
+           - ✅ Checks can return {'status': 'degraded', ...} for performance issues
+           - ✅ Properly distinguishes degraded vs unhealthy states
+           - ✅ Prevents false unhealthy reports for slow but functional services
+           - ✅ Maintains backward compatibility with string/None returns
+           - 📊 Enhanced detail tracking for structured check results
+           - 🎯 Resolves rate_limiter false negative health reports
     v3.2.0 - CRITICAL FIX: Timezone-Aware Datetime Operations:
            - 🔧 FIXED: All datetime.now() replaced with timezone-aware datetime.now(timezone.utc)
            - ✅ Eliminated timezone mismatch errors in element_protocol_health()
@@ -136,6 +151,7 @@ class ServiceHealthCheck:
     This class provides reusable health check functionality that can be
     used by all services in the system, following Principle #12 (Method Singularity).
     
+    ENHANCED v3.3: Added support for structured dict returns from checks indicating degraded status.
     ENHANCED v3.2: Fixed critical timezone issues - all datetime operations now timezone-aware.
     ENHANCED v3.1: Fixed critical Stellar client bug and improved diagnostics.
     ENHANCED v3.0: Includes actionable status messages that guide users
@@ -169,6 +185,13 @@ class ServiceHealthCheck:
         
         This is the canonical health check implementation used across all services.
         All other health check methods build upon this foundation.
+        
+        ENHANCED v3.3: Now handles structured dict returns from checks indicating
+        degraded status. Checks can return:
+        - {'status': 'pass', 'message': '...'} for success
+        - {'status': 'degraded', 'message': '...', 'action': '...'} for degradation
+        - String or None for backward compatibility (treated as pass)
+        - Exception raised for failure (treated as unhealthy)
         
         ENHANCED v3.2: Uses timezone-aware timestamps for consistency.
         
@@ -207,6 +230,7 @@ class ServiceHealthCheck:
         if additional_checks:
             check_results = []
             failed_checks = 0
+            degraded_checks = 0  # NEW: Track degraded checks separately
             
             for i, check in enumerate(additional_checks):
                 try:
@@ -216,27 +240,94 @@ class ServiceHealthCheck:
                     else:
                         result = check()
                     
-                    check_results.append(('pass', result))
-                    logger.debug(f"Health check {i+1} for {service_name}: PASS")
+                    # ENHANCED v3.3: Handle structured dict returns
+                    if isinstance(result, dict):
+                        check_status = result.get('status', 'pass')
+                        check_name = result.get('check', f'check_{i+1}')
+                        
+                        if check_status == 'degraded':
+                            # Check indicates degradation (not failure)
+                            degraded_checks += 1
+                            check_results.append(('degraded', result.get('message', 'Check degraded')))
+                            logger.warning(f"Health check {i+1} for {service_name}: DEGRADED - {result.get('message', 'unknown')}")
+                            
+                            # Set service to degraded if not already unhealthy
+                            if health['status'] != HealthStatus.UNHEALTHY.value:
+                                health['status'] = HealthStatus.DEGRADED.value
+                                health['message'] = f"{service_name} degraded - {result.get('message', 'performance issues')}"
+                            
+                            # Add warnings list if not present
+                            if 'warnings' not in health:
+                                health['warnings'] = []
+                            health['warnings'].append(result.get('message', 'Check degraded'))
+                            
+                            # Add actionable command if provided
+                            if 'action' in result and 'action' not in health:
+                                health['action'] = result['action']
+                            
+                            # Store detailed check info
+                            if 'check_details' not in health['details']:
+                                health['details']['check_details'] = {}
+                            health['details']['check_details'][check_name] = {
+                                k: v for k, v in result.items() 
+                                if k not in ['check', 'status']
+                            }
+                            
+                        elif check_status == 'pass':
+                            # Check passed
+                            check_results.append(('pass', result.get('message', 'Check passed')))
+                            logger.debug(f"Health check {i+1} for {service_name}: PASS")
+                            
+                            # Optionally store check details
+                            if len(result) > 2:  # More than just 'check' and 'status'
+                                check_name = result.get('check', f'check_{i+1}')
+                                if 'check_details' not in health['details']:
+                                    health['details']['check_details'] = {}
+                                health['details']['check_details'][check_name] = {
+                                    k: v for k, v in result.items() 
+                                    if k not in ['check', 'status']
+                                }
+                        else:
+                            # Unknown status - treat as failed for safety
+                            failed_checks += 1
+                            check_results.append(('fail', f"Unknown status: {check_status}"))
+                            logger.warning(f"Health check {i+1} for {service_name}: FAIL - Unknown status {check_status}")
+                    
+                    elif isinstance(result, (str, type(None))):
+                        # Traditional pass - string message or None means success
+                        check_results.append(('pass', result if result else 'Check passed'))
+                        logger.debug(f"Health check {i+1} for {service_name}: PASS")
+                    else:
+                        # Unexpected return type - log and pass
+                        logger.warning(f"Health check {i+1} for {service_name}: Unexpected return type {type(result)}")
+                        check_results.append(('pass', str(result)))
                     
                 except Exception as e:
+                    # Exception raised = check failed (unhealthy)
                     failed_checks += 1
                     check_results.append(('fail', str(e)))
                     logger.warning(f"Health check {i+1} for {service_name}: FAIL - {e}")
             
             health['details']['checks'] = check_results
-            health['details']['checks_passed'] = len(check_results) - failed_checks
+            health['details']['checks_passed'] = len(check_results) - failed_checks - degraded_checks
             health['details']['checks_failed'] = failed_checks
+            if degraded_checks > 0:
+                health['details']['checks_degraded'] = degraded_checks
             
             # Update status based on check results
+            # Priority: unhealthy > degraded > healthy
             if failed_checks > 0:
                 if failed_checks == len(check_results):
                     health['status'] = HealthStatus.UNHEALTHY.value
                     health['message'] = f"{service_name} unhealthy - all checks failed"
                 else:
-                    health['status'] = HealthStatus.DEGRADED.value
-                    health['message'] = (f"{service_name} degraded - "
+                    # Some checks failed - mark as unhealthy (overrides degraded)
+                    health['status'] = HealthStatus.UNHEALTHY.value
+                    health['message'] = (f"{service_name} unhealthy - "
                                        f"{failed_checks}/{len(check_results)} checks failed")
+            elif degraded_checks > 0 and health['status'] != HealthStatus.UNHEALTHY.value:
+                # Some checks degraded but none failed - already set to degraded above
+                pass
         
         return health
     
@@ -255,6 +346,10 @@ class ServiceHealthCheck:
         """
         Health check for services that depend on database connectivity.
         
+        ENHANCED v3.3: Now properly handles structured dict returns from checks,
+        allowing checks to indicate degraded performance without marking service
+        as completely unhealthy.
+        
         ENHANCED: Provides actionable guidance for database connection issues.
         
         Principle #5: Strict Async - Database checks are async
@@ -264,7 +359,7 @@ class ServiceHealthCheck:
             service_name: Name of the service
             db_manager: Database manager instance
             is_initialized: Whether service is initialized
-            additional_checks: Additional check functions
+            additional_checks: Additional check functions (can return dict with 'status')
             **kwargs: Additional context
         
         Returns:
@@ -448,74 +543,72 @@ class ServiceHealthCheck:
         
         ENHANCED: Provides actionable guidance for API connectivity issues.
         
-        Principle #5: Strict Async - All API checks are async
-        Principle #9: Integrated Rate Limiting - Tracks rate limiter status
+        Principle #5: Strict Async - API checks are async
+        Principle #11: Documentation - Clear error messages with solutions
         
         Args:
             service_name: Name of the service
             is_initialized: Whether service is initialized
             api_url: URL of the external API
-            api_accessible: Whether API is currently accessible
-            request_count: Number of API requests made
-            error_count: Number of API errors encountered
-            rate_limiter: Rate limiter instance if present
-            cache_info: Cache statistics if available
+            api_accessible: Whether the API is currently accessible
+            request_count: Total number of requests made
+            error_count: Number of errors encountered
+            rate_limiter: Optional rate limiter for API calls
+            cache_info: Optional caching information
             additional_checks: Additional check functions
             **kwargs: Additional context
         
         Returns:
-            Health status with API connectivity information and guidance
+            Health status with API connectivity information
         """
-        api_details = {
+        # Calculate error rate
+        error_rate = (error_count / request_count * 100) if request_count > 0 else 0.0
+        
+        # Build context
+        api_context = {
             'api_url': api_url,
             'api_accessible': api_accessible,
             'request_count': request_count,
             'error_count': error_count,
-            'error_rate': (error_count / request_count * 100) if request_count > 0 else 0
+            'error_rate': round(error_rate, 2),
+            **kwargs
         }
         
-        # Add rate limiter status
         if rate_limiter:
-            api_details['rate_limiter_status'] = getattr(rate_limiter, 'status', 'unknown')
-            api_details['has_rate_limiter'] = True
-        else:
-            api_details['has_rate_limiter'] = False
+            api_context['rate_limiter'] = 'enabled'
         
-        # Add cache information
         if cache_info:
-            api_details['cache'] = cache_info
-            api_details['has_cache'] = True
-        else:
-            api_details['has_cache'] = False
+            api_context['cache'] = cache_info
         
-        # Check API accessibility
-        api_checks = []
-        if not api_accessible and api_url:
-            async def check_api():
-                raise Exception(f"API unreachable: {api_url} - "
-                              f"Check network connectivity and API endpoint")
-            api_checks.append(check_api)
-        
-        # Add additional checks
-        if additional_checks:
-            api_checks.extend(additional_checks)
-        
-        return await ServiceHealthCheck.basic_health_check(
+        # Perform basic health check
+        health = await ServiceHealthCheck.basic_health_check(
             service_name=service_name,
             is_initialized=is_initialized,
-            additional_checks=api_checks if api_checks else None,
-            **api_details
+            additional_checks=additional_checks,
+            **api_context
         )
+        
+        # Add API-specific degradation checks
+        if not api_accessible:
+            health['status'] = HealthStatus.UNHEALTHY.value
+            health['message'] = f"{service_name} unhealthy - API unreachable at {api_url}"
+            health['action'] = f"Check network connectivity and verify {api_url} is accessible"
+        elif error_rate > 50.0 and request_count > 10:
+            health['status'] = HealthStatus.DEGRADED.value
+            health['message'] = f"{service_name} degraded - high error rate ({error_rate:.1f}%)"
+            health['action'] = "Check API logs and verify service stability"
+        
+        return health
     
     # ========================================================================
-    # STELLAR CLIENT HEALTH CHECK - CRITICAL FIX v3.1.0
+    # STELLAR CLIENT HEALTH CHECK - ENHANCED v3.1.0
     # ========================================================================
     
     @staticmethod
     async def stellar_client_health(
         client: Any,
         horizon_url: str,
-        initialized: bool,
+        initialized: bool = True,
         request_count: int = 0,
         error_count: int = 0,
         last_error: Optional[str] = None,
@@ -525,24 +618,20 @@ class ServiceHealthCheck:
         """
         Health check for Stellar client service.
         
-        CRITICAL FIX v3.1.0: Now correctly uses test_connection() method
-        instead of non-existent get_horizon_info() method.
+        CRITICAL FIX v3.1.0: Now uses correct test_connection() method instead of
+        non-existent get_horizon_info(). This properly tests Stellar Horizon API
+        connectivity using the SDK's root() method.
         
-        ENHANCED: Provides actionable guidance for Stellar connectivity issues.
-        
-        Principle #5: Strict Async - Stellar SDK operations are async
-        Principle #11: Documentation - Clear error messages with solutions
-        Principle #12: Method Singularity - Reuses service's test_connection()
-        
-        Tests connectivity to Stellar Horizon API and tracks request/error metrics.
+        Principle #12: Method Singularity - Reuses existing test_connection method
+        Principle #11: Documentation - Clear error messages with guidance
         
         Args:
             client: StellarClientService instance
-            horizon_url: Horizon server URL
+            horizon_url: Stellar Horizon API URL
             initialized: Whether client is initialized
-            request_count: Number of requests made
+            request_count: Number of API requests made
             error_count: Number of errors encountered
-            last_error: Last error message
+            last_error: Last error message if any
             last_error_time: Timestamp of last error
             **kwargs: Additional context
         
@@ -551,29 +640,20 @@ class ServiceHealthCheck:
         """
         async def check_horizon_connectivity():
             """
-            Test connection to Horizon API using service's test method.
+            Check if Stellar Horizon API is accessible.
             
-            FIXED v3.1.0: Uses test_connection() instead of get_horizon_info()
-            The test_connection() method correctly implements root().call()
-            which is the proper Stellar SDK method for connectivity testing.
+            FIXED v3.1.0: Uses test_connection() instead of non-existent get_horizon_info()
             """
+            if not initialized:
+                raise Exception("Stellar client not initialized")
+            
             try:
-                # Use the service's existing test_connection method
-                # This correctly uses the Stellar SDK's root().call() method
-                connected = await client.test_connection()
-                
-                if not connected:
-                    raise Exception(
-                        f"Stellar Horizon connectivity test failed - "
-                        f"Check HORIZON_URL ({horizon_url}) and network connectivity"
-                    )
-                
+                # Use the service's test_connection method (Principle #12)
+                # This method internally calls client._client.root().call()
+                await client.test_connection()
                 return True
-                
-            except AttributeError as e:
-                # Handle case where test_connection method might not exist
-                # Fall back to direct root() call
-                logger.warning(f"test_connection() not available, using direct root() call: {e}")
+            except AttributeError:
+                # Fallback: test_connection doesn't exist, try direct SDK call
                 try:
                     await client._client.root().call()
                     return True
