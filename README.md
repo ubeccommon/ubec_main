@@ -292,7 +292,7 @@ UBECTT_ISSUER=GBWYGECRQ7R5E6QQKWBTVNYSCFVTIYZLF6MGDHJQBHP2KU2U65Z5UBEC
 ### 6. Verify Installation
 ```bash
 # Check system health
-python main.py --mode health
+python main.py health
 
 # Expected output:
 # ✓ overall_status: "healthy"
@@ -372,64 +372,55 @@ WHERE setting_key = 'setting_name';
 #### System Operations
 ```bash
 # Check overall system health
-python main.py --mode health
+python main.py health
 
 # View system status and metrics
-python main.py --mode status
+python main.py status
 ```
 
 #### Data Operations
 ```bash
 # Discover UBEC token holders on blockchain
-python main.py --mode discover --max-accounts 100
+python main.py discover --max-accounts 100
 
 # Synchronize blockchain data to database
-python main.py --mode sync --sync-type all
+python main.py sync --sync-type all
 
-# Continuous monitoring (runs until stopped)
-python main.py --mode monitor --interval 300
+# Synchronize specific token
+python main.py sync --sync-type UBEC --max-accounts 500
 ```
 
 #### Protocol Operations
 ```bash
 # Check protocol health (all 4 elements)
-python main.py --mode protocol-health
+python main.py protocol-health
 
 # Get protocol status
-python main.py --mode protocol-status
-
-# Synchronize all protocol data
-python main.py --mode protocol-sync
-
-# Run holonic evaluation
-python main.py --mode evaluate --evaluation-type holonic
+python main.py status
 ```
 
 #### Analytics Operations
 ```bash
-# Generate summary analytics
-python main.py --mode analytics --analysis-type summary
+# Generate overview analytics
+python main.py analytics --analysis-type overview
 
-# Token distribution analysis
-python main.py --mode analytics --analysis-type distribution
+# Top holders analysis
+python main.py analytics --analysis-type holders
 
-# Holder and whale analysis
-python main.py --mode analytics --analysis-type holders
-
-# Export analytics to JSON
-python main.py --mode analytics --analysis-type summary --output json
+# Detailed metrics analysis
+python main.py analytics --analysis-type metrics
 ```
 
 #### Visualization
 ```bash
 # Generate comprehensive HTML report
-python main.py --mode visualize --action report --format html
+python main.py visualize --action report --format html
 
-# Generate all visualizations
-python main.py --mode visualize --action all --include-advanced
+# Generate all visualizations with advanced features
+python main.py visualize --action all --include-advanced
 
 # Create specific chart type
-python main.py --mode visualize --action radar --account-id GXXX...
+python main.py visualize --action chart --chart-type distribution
 ```
 
 ### Common Workflows
@@ -437,39 +428,28 @@ python main.py --mode visualize --action radar --account-id GXXX...
 #### Initial Data Load
 ```bash
 # 1. Discover token holders
-python main.py --mode discover --max-accounts 500
+python main.py discover --max-accounts 500
 
 # 2. Synchronize transaction history
-python main.py --mode sync --sync-type all
+python main.py sync --sync-type all
 
-# 3. Run holonic evaluation
-python main.py --mode evaluate
-
-# 4. Generate initial reports
-python main.py --mode visualize --action report
+# 3. Generate initial reports
+python main.py visualize --action report
 ```
 
 #### Daily Operations
 ```bash
 # Morning: Check system health
-python main.py --mode health
+python main.py health
 
 # Sync latest transactions
-python main.py --mode sync --sync-type incremental
+python main.py sync --sync-type all --force
 
 # Generate updated analytics
-python main.py --mode analytics --analysis-type summary
+python main.py analytics --analysis-type overview
 
 # Update visualizations
-python main.py --mode visualize --action report
-```
-
-#### Monitoring Setup
-```bash
-# Run continuous monitoring (recommended for production)
-python main.py --mode monitor --interval 300
-
-# Or set up with systemd/cron for automated operation
+python main.py visualize --action report
 ```
 
 ### Command Reference
