@@ -63,10 +63,16 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.5.0 (Health Check and Schema Fixes)
+Version: 4.5.1 (Database API Fix)
 Date: November 2, 2025
 
 Changelog:
+    v4.5.1 - HOTFIX: Database API method corrections
+           - Fixed fetch_value() → fetch_one() method calls
+           - Database manager uses fetch_one() returning dict, not fetch_value()
+           - Corrected all queries to use proper database manager API
+           - Fixed balance queries, audit INSERT, and account checks
+           - Resolves AttributeError: 'AsyncDatabaseManager' object has no attribute 'fetch_value'
     v4.5.0 - CRITICAL FIX: Health check and explicit schema fixes
            - Fixed check_audit_recency() to return structured dict instead of exception
            - Zero audits on fresh system now correctly reported as healthy
@@ -273,15 +279,17 @@ class UBECAuditService:
         
         # Get balances from database (Principle 4: Single Source of Truth)
         # v4.5.0: Explicit schema name for production reliability
-        admin_balance = await self.db.fetch_value(
+        admin_row = await self.db.fetch_one(
             "SELECT balance FROM ubec_main.account_balances WHERE account_id = %s AND asset_code = %s",
             (self.admin_account, self.ubec_code)
         )
+        admin_balance = admin_row['balance'] if admin_row else None
         
-        steward_balance = await self.db.fetch_value(
+        steward_row = await self.db.fetch_one(
             "SELECT balance FROM ubec_main.account_balances WHERE account_id = %s AND asset_code = %s",
             (self.steward_account, self.ubec_code)
         )
+        steward_balance = steward_row['balance'] if steward_row else None
         
         # Convert to Decimal (handle None)
         admin_balance = Decimal(str(admin_balance or 0))
@@ -435,7 +443,7 @@ class UBECAuditService:
         
         # Record audit in database (Principle 4: Single Source of Truth)
         # v4.5.0: Explicit schema name for production reliability
-        audit_id = await self.db.fetch_value(
+        audit_result = await self.db.fetch_one(
             """
             INSERT INTO ubec_main.audit_history (
                 audit_type,
@@ -474,6 +482,7 @@ class UBECAuditService:
                 recommendations if (recommendations := compliance.recommendations) else None
             )
         )
+        audit_id = audit_result['id'] if audit_result else None
         
         # Update metrics
         self._audit_count += 1
@@ -654,15 +663,17 @@ class UBECAuditService:
         async def check_tokenomics_accounts():
             """Verify tokenomics accounts exist in database"""
             # v4.5.0: Explicit schema name for production reliability
-            admin_exists = await self.db.fetch_value(
-                "SELECT COUNT(*) FROM ubec_main.account_balances WHERE account_id = %s",
+            admin_row = await self.db.fetch_one(
+                "SELECT COUNT(*) as count FROM ubec_main.account_balances WHERE account_id = %s",
                 (self.admin_account,)
             )
+            admin_exists = admin_row['count'] if admin_row else 0
             
-            steward_exists = await self.db.fetch_value(
-                "SELECT COUNT(*) FROM ubec_main.account_balances WHERE account_id = %s",
+            steward_row = await self.db.fetch_one(
+                "SELECT COUNT(*) as count FROM ubec_main.account_balances WHERE account_id = %s",
                 (self.steward_account,)
             )
+            steward_exists = steward_row['count'] if steward_row else 0
             
             issues = []
             if not admin_exists:
@@ -876,6 +887,11 @@ if __name__ == "__main__":
         "  result = await audit.perform_comprehensive_audit()\n"
         "  compliance = await audit.check_distribution_compliance()\n"
         "  health = await audit.health_check()\n\n"
+        "Version 4.5.1 - Database API Fix:\n"
+        "  - HOTFIX: Corrected database manager method calls\n"
+        "  - Fixed fetch_value() → fetch_one() (database API correction)\n"
+        "  - All queries now use proper AsyncDatabaseManager API\n"
+        "  - Resolves AttributeError on fetch_value\n\n"
         "Version 4.5.0 - Health Check and Schema Fixes:\n"
         "  - CRITICAL FIX: Fixed check_audit_recency() health check logic\n"
         "  - Zero audits on fresh system now correctly reported as healthy\n"

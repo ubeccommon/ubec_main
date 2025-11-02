@@ -42,11 +42,26 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 19.0.5 (DISTRIBUTION EXECUTE ACTION FIX)
-Date: October 31, 2025
+Version: 19.0.7 (VISUALIZER METHOD NAME FIX)
+Date: November 2, 2025
 Author: UBEC Protocol Team with Claude AI assistance
 
 Changelog:
+    v19.0.7 - VISUALIZER METHOD NAME FIX - CRITICAL
+            - 🔧 CRITICAL FIX: Changed generate_holonic_report() to generate_report()
+            - 🔧 FIXED: Method call now matches actual HolonicVisualizer implementation
+            - 🔧 ENHANCED: Added format parameter to generate_report() call
+            - ✅ VERIFIED: Method signature matches visualizer's generate_report()
+            - 📝 Resolves AttributeError: 'HolonicVisualizer' object has no attribute 'generate_holonic_report'
+            - 📝 Full compliance with Principle #1 (Precision in Implementation)
+            - 📝 Full compliance with Principle #12 (Method Singularity)
+    v19.0.6 - HTML FORMAT SUPPORT FOR VISUALIZER
+            - 🔧 ADDED: HTML format support to visualize command
+            - 🔧 CHANGED: --format argument now accepts 'html' in addition to 'png', 'pdf', 'svg'
+            - ✅ ENHANCED: Users can now generate HTML reports with interactive features
+            - 📝 Resolves "invalid choice: 'html'" error in visualize command
+            - 📝 Full compliance with Principle #1 (Precision in Implementation)
+            - 📝 Minimal change approach - only updated format choices
     v19.0.5 - DISTRIBUTION EXECUTE ACTION FIX - CRITICAL
             - 🔧 CRITICAL FIX: Removed non-existent execute_distribution() method call
             - 🔧 FIXED: Execute action now returns clear "not yet implemented" message
@@ -1649,7 +1664,8 @@ async def run_visualize(
         
         if action == 'report':
             # Generate comprehensive report
-            result = await visualizer.generate_holonic_report(
+            result = await visualizer.generate_report(
+                format=format,
                 output_dir=output_dir or 'output/reports',
                 include_advanced=include_advanced
             )
@@ -1803,7 +1819,7 @@ Examples:
     parser.add_argument(
         '--format',
         default='png',
-        choices=['png', 'pdf', 'svg'],
+        choices=['png', 'pdf', 'svg', 'html'],
         help='Output format for visualizations'
     )
     
@@ -1852,7 +1868,7 @@ async def main_async(args):
     logger.info("UBEC PROTOCOL SYSTEM STARTING")
     logger.info("=" * 70)
     logger.info(f"Mode: {args.mode}")
-    logger.info(f"Version: 19.0.2 (Stellar Client Constructor Fix)")
+    logger.info(f"Version: 19.0.7 (Visualizer Method Name Fix)")
     logger.info("=" * 70)
     
     try:
