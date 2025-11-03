@@ -519,10 +519,16 @@ ubec-protocol/
 │   ├── MAIN_PY_QUICK_REFERENCE.md
 │   ├── UBEC_COMPREHENSIVE_STATUS_REPORT_2025.md
 │   ├── UBEC_Protocol_Suite_Status_Report_Nov_2025.md
-│   └── User_Guides/
-│       ├── SYSTEM_ADMINISTRATOR_ONBOARDING_GUIDE.md
-│       ├── TECHNICAL_OPERATOR_ONBOARDING_GUIDE.md
-│       └── UBEC_Developer_Onboarding_Guide.md
+│   ├── User_Guides/
+│   │   ├── SYSTEM_ADMINISTRATOR_ONBOARDING_GUIDE.md
+│   │   ├── TECHNICAL_OPERATOR_ONBOARDING_GUIDE.md
+│   │   ├── UBEC_Developer_Onboarding_Guide.md
+│   │   ├── UBEC_Onboarding_User_Guides.md
+│   │   ├── UBEC_Community_Organizer_Quick_Start_Checklist.md
+│   │   └── UBEC_Public_Guide.md
+│   └── Profiles/
+│       ├── UBEC_User_Group_Definitions.md
+│       └── UBEC_Core_Beneficiary_Profiles.md
 │
 ├── database/                       # Database schemas
 │   └── schema/
@@ -630,10 +636,19 @@ Stellar Blockchain → Horizon API → Stellar Client (rate limited)
 - [Quick Reference Guide](docs/MAIN_PY_QUICK_REFERENCE.md) - Command cheat sheet
 - [Main.py Modernization Guide](docs/MAIN_PY_MODERNIZATION_GUIDE.md) - Complete orchestrator documentation
 
-**User Guides:**
+**For Technical Teams:**
 - [System Administrator Guide](docs/User_Guides/SYSTEM_ADMINISTRATOR_ONBOARDING_GUIDE.md) - Deployment and operations
 - [Technical Operator Guide](docs/User_Guides/TECHNICAL_OPERATOR_ONBOARDING_GUIDE.md) - Database and blockchain operations
 - [Developer Onboarding Guide](docs/User_Guides/UBEC_Developer_Onboarding_Guide.md) - Development practices
+
+**For End Users:**
+- [User Onboarding Guide](docs/User_Guides/UBEC_Onboarding_User_Guides.md) - For farmers, communities, and activators
+- [Community Organizer Quick Start](docs/User_Guides/UBEC_Community_Organizer_Quick_Start_Checklist.md) - 90-day action plan
+- [Public Guide](docs/User_Guides/UBEC_Public_Guide.md) - Overview for general public
+
+**For Understanding Participants:**
+- [User Group Definitions](docs/Profiles/UBEC_User_Group_Definitions.md) - Participant categories and roles
+- [Core Beneficiary Profiles](docs/Profiles/UBEC_Core_Beneficiary_Profiles.md) - Detailed beneficiary profiles
 
 **Technical Documentation:**
 - [Service Registry Documentation](docs/README_SERVICE_REGISTRY.md)
