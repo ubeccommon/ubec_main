@@ -2,12 +2,12 @@
 
 **Ubuntu Bioregional Economic Commons**
 
-[![Project Status](https://img.shields.io/badge/status-operational-green)](https://github.com/yourusername/ubec)
-[![Completion](https://img.shields.io/badge/completion-85--90%25-brightgreen)](docs/UBEC_COMPREHENSIVE_STATUS_REPORT_2025.md)
+[![Project Status](https://img.shields.io/badge/status-operational-green)](docs/UBEC_Protocol_Suite_Status_Report_Nov_2025.md)
+[![Completion](https://img.shields.io/badge/completion-85--90%25-brightgreen)](docs/UBEC_Protocol_Suite_Status_Report_Nov_2025.md)
 [![Network](https://img.shields.io/badge/network-Stellar%20Mainnet-blue)](https://stellar.org)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15.13-blue)](https://www.postgresql.org)
-[![License](https://img.shields.io/badge/license-see%20docs-lightgrey)](LICENSE)
+[![Design Principles](https://img.shields.io/badge/design%20principles-100%25-success)](docs/DESIGN_PRINCIPLES.md)
 
 > *"As we learn to think like a plant, we discover that technology and nature are not opposites but complementary expressions of the same creative forces that shape our world."*
 
@@ -30,7 +30,9 @@ A blockchain-based economic system implementing Ubuntu philosophy through four i
 - [Documentation](#documentation)
 - [Current Status](#current-status)
 - [Contributing](#contributing)
+- [License](#license)
 - [Attribution](#attribution)
+- [Contact & Support](#contact--support)
 
 ---
 
@@ -477,74 +479,58 @@ ubec-protocol/
 │   ├── db/                         # Database components
 │   │   ├── __init__.py
 │   │   ├── database_manager.py     # Async database manager
-│   │   └── ubec_data_synchronizer.py  # Blockchain sync
+│   │   └── ubec_data_synchronizer.py  # Blockchain sync service
 │   │
-│   ├── protocols/                  # Element protocols
-│   │   ├── __init__.py
+│   ├── evaluation/                 # Evaluation services
+│   │   └── ubec_distribution_evaluator.py
+│   │
+│   ├── holonic/                    # Holonic evaluation
+│   │   ├── ubec_holonic_evaluator.py
+│   │   └── ubec_holonic_visualizer.py
+│   │
+│   ├── protocols/                  # Token protocol services
 │   │   ├── UBEC_protocol.py        # Air (Gateway)
 │   │   ├── UBECrc_protocol.py      # Water (Reciprocity)
 │   │   ├── UBECgpi_protocol.py     # Earth (Stability)
 │   │   └── UBECtt_protocol.py      # Fire (Transformation)
 │   │
-│   ├── evaluation/                 # Evaluation systems
-│   │   ├── __init__.py
-│   │   ├── distribution_evaluator.py
-│   │   └── holonic_evaluator.py
-│   │
-│   └── utils/                      # Utilities
-│       ├── __init__.py
-│       └── service_health.py
+│   └── utils/                      # Utility modules
+│       └── service_health.py       # Health check utilities
 │
-├── services/                       # Service modules
-│   ├── analytics/                  # Analytics service
-│   │   ├── __init__.py
+├── services/                       # Operational services
+│   ├── analytics/                  # Analytics services
 │   │   └── ubec_analytics_service.py
 │   │
-│   ├── visualization/              # Visualization service
-│   │   ├── __init__.py
-│   │   └── ubec_holonic_visualizer.py
+│   ├── audit/                      # Audit logging
+│   │   └── ubec_audit_service.py
 │   │
-│   └── audit/                      # Audit service
-│       ├── __init__.py
-│       └── ubec_audit_service.py
+│   ├── distribution/               # Distribution management
+│   │   └── ubec_distribution_service.py
+│   │
+│   └── market/                     # Market operations
+│       └── ubec_orderbook_service.py
 │
-├── config/                         # Configuration
-│   ├── __init__.py
-│   ├── settings.py                 # Database-backed settings
-│   └── logging.py                  # Logging configuration
-│
-├── database/                       # Database files
-│   └── schema/
-│       ├── ubec_main_schema.sql    # Main schema
-│       └── migrations/             # Schema migrations
-│
-├── phenom/                         # Phenomenological extensions
-│   ├── unified_phenomenological_quantum_schema.sql
-│   ├── quantum_gravity_interface.py
-│   └── README_QUANTUM_GRAVITY_COMPLETE.md
+├── phenom/                         # Advanced analytics
+│   ├── phenomenal_db_interface.py  # Phenomenological interface
+│   └── quantum_gravity_interface.py # Quantum gravity modeling
 │
 ├── docs/                           # Documentation
-│   ├── UBEC_COMPREHENSIVE_STATUS_REPORT_2025.md
+│   ├── DESIGN_PRINCIPLES.md
 │   ├── MAIN_PY_QUICK_REFERENCE.md
-│   ├── MAIN_PY_MODERNIZATION_GUIDE.md
-│   ├── env.example                 # Environment template
-│   │
-│   ├── protocols/                  # Protocol documentation
-│   │   ├── COMPLETE_SUITE_ALL_FOUR_PROTOCOLS.md
-│   │   └── QUICK_DEPLOY_GUIDE.md
-│   │
-│   └── visualization/              # Visualization guides
-│       ├── VISUALIZER_ENHANCEMENT_DOCUMENTATION.md
-│       └── QUICK_REFERENCE_GUIDE.md
+│   ├── UBEC_COMPREHENSIVE_STATUS_REPORT_2025.md
+│   ├── UBEC_Protocol_Suite_Status_Report_Nov_2025.md
+│   └── User_Guides/
+│       ├── SYSTEM_ADMINISTRATOR_ONBOARDING_GUIDE.md
+│       ├── TECHNICAL_OPERATOR_ONBOARDING_GUIDE.md
+│       └── UBEC_Developer_Onboarding_Guide.md
 │
-├── logs/                           # Log files (created at runtime)
-│   ├── ubec_main.log
-│   ├── ubec_synchronizer.log
-│   └── ubec_visualizer.log
+├── database/                       # Database schemas
+│   └── schema/
+│       └── ubec_main_schema.sql
 │
-└── reports/                        # Generated reports (created at runtime)
-    ├── holonic_report_*.html
-    └── analytics_*.json
+├── logs/                           # Application logs
+├── reports/                        # Generated reports
+└── tests/                          # Test suite
 ```
 
 ---
@@ -553,75 +539,82 @@ ubec-protocol/
 
 ### Design Principles
 
-The UBEC Protocol Suite adheres to **12 Core Design Principles** with 100% verified compliance:
+The UBEC Protocol Suite strictly adheres to **12 core design principles**:
 
 1. **Modular Design** - Self-contained components with clear boundaries
-2. **Service Pattern** - Single orchestrator (main.py) coordinates all services
-3. **Service Registry** - Central registry manages all dependencies
-4. **Single Source of Truth** - Database is authoritative for all data
-5. **Strict Async Operations** - 100% async/await patterns throughout
-6. **No Sync Fallbacks** - Pure async implementation, no hybrid code
-7. **Per-Asset Monitoring** - Individual tracking and health checks
+2. **Service Pattern** - Only main.py executes; all modules are services
+3. **Service Registry** - Centralized dependency management with topological sorting
+4. **Single Source of Truth** - Database-backed configuration, no duplication
+5. **Strict Async** - 100% async/await, zero blocking operations
+6. **No Sync Fallbacks** - Forward-looking codebase only
+7. **Per-Asset Monitoring** - Individual tracking with execution minimums
 8. **No Duplicate Configuration** - Each parameter defined exactly once
-9. **Integrated Rate Limiting** - Built-in API protection and circuit breakers
-10. **Clear Separation of Concerns** - Data/Protocol/System layer isolation
-11. **Comprehensive Documentation** - Full docstrings and inline comments
-12. **Method Singularity** - Zero code duplication, each method implemented once
+9. **Integrated Rate Limiting** - Built-in protection for all external APIs
+10. **Clear Separation of Concerns** - Layered architecture
+11. **Comprehensive Documentation** - Complete docstrings in all modules
+12. **Method Singularity** - Each method implemented once (zero code duplication)
 
-### System Architecture
+### Service Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    main.py (SOLE ENTRY POINT)               │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │           Service Registry (Central Hub)              │ │
-│  │                                                       │ │
-│  │  Infrastructure Services:    Protocol Services:      │ │
-│  │  • database                  • air                   │ │
-│  │  • config                    • water                 │ │
-│  │  • stellar_client            • earth                 │ │
-│  │  • synchronizer              • fire                  │ │
-│  │  • audit                                             │ │
-│  │                                                       │ │
-│  │  Operational Services:                               │ │
-│  │  • analytics                                         │ │
-│  │  • distribution                                      │ │
-│  │  • holonic_evaluator                                 │ │
-│  │  • visualizer                                        │ │
-│  └───────────────────────────────────────────────────────┘ │
-│                                                             │
-│  Operation Modes (10):                                      │
-│  ┌──────────────┬──────────────────┬─────────────────┐    │
-│  │ Data Layer   │ Protocol Layer   │ System Layer    │    │
-│  ├──────────────┼──────────────────┼─────────────────┤    │
-│  │ • discover   │ • protocol-health│ • health        │    │
-│  │ • sync       │ • protocol-status│ • status        │    │
-│  │ • monitor    │ • protocol-sync  │                 │    │
-│  │              │ • evaluate       │                 │    │
-│  └──────────────┴──────────────────┴─────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+│                         main.py                              │
+│                    (Sole Entry Point)                        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Service Registry                          │
+│           (Dependency Injection Container)                   │
+└──┬──────────────────┬──────────────────┬───────────────────┘
+   │                  │                  │
+   ▼                  ▼                  ▼
+┌──────────┐    ┌──────────┐      ┌──────────┐
+│Infrastructure│ │ Protocol │      │Operational│
+│  Services    │ │ Services │      │ Services  │
+└──────────┘    └──────────┘      └──────────┘
 ```
 
-### Service Dependencies
+#### Infrastructure Services (5)
+1. **Database Manager** - PostgreSQL connection pool with multi-schema support
+2. **Configuration Service** - Database-backed configuration management
+3. **Stellar Client** - Blockchain API client with rate limiting
+4. **Service Registry** - Central dependency management and health monitoring
+5. **Audit Service** - Comprehensive change tracking and logging
+
+#### Protocol Services (4)
+6. **Air Protocol (UBEC)** - Gateway and universal access (diversity principle)
+7. **Water Protocol (UBECrc)** - Flow and reciprocity monitoring
+8. **Earth Protocol (UBECgpi)** - Distribution and stability tracking
+9. **Fire Protocol (UBECtt)** - Transformation and regeneration assessment
+
+#### Operational Services (6)
+10. **Data Synchronizer** - Blockchain to database synchronization
+11. **Analytics Service** - Token and network analytics
+12. **Distribution Manager** - Balance and allocation management
+13. **Distribution Evaluator** - Compliance checking
+14. **Holonic Evaluator** - Ubuntu principle assessment
+15. **Visualizer** - Chart generation and reporting
+
+### Data Flow
 
 ```
-database
-├── config (depends on: database)
-│   ├── stellar_client (depends on: config)
-│   ├── synchronizer (depends on: database, config, stellar_client)
-│   ├── air_protocol (depends on: database, config, stellar_client)
-│   ├── water_protocol (depends on: database, config, stellar_client)
-│   ├── earth_protocol (depends on: database, config, stellar_client)
-│   ├── fire_protocol (depends on: database, config, stellar_client)
-│   ├── analytics (depends on: database, config)
-│   ├── distribution (depends on: database, config)
-│   ├── holonic_evaluator (depends on: database, config)
-│   ├── visualizer (depends on: database, config)
-│   └── audit (depends on: database, config)
+Stellar Blockchain → Horizon API → Stellar Client (rate limited)
+                                          ↓
+                                   Data Synchronizer
+                                          ↓
+                                   PostgreSQL (4 schemas)
+                                          ↓
+                        ┌─────────────────┼─────────────────┐
+                        ▼                 ▼                 ▼
+                  Protocol Services  Analytics Service  Evaluators
+                        │                 │                 │
+                        └─────────────────┼─────────────────┘
+                                          ▼
+                                    Visualizer
+                                          ↓
+                                    Reports (HTML/PDF/CSV)
 ```
-
-Dependencies are automatically resolved using topological sorting.
 
 ---
 
@@ -631,26 +624,21 @@ Dependencies are automatically resolved using topological sorting.
 
 **Project Overview:**
 - [Comprehensive Status Report 2025](docs/UBEC_COMPREHENSIVE_STATUS_REPORT_2025.md) - Complete project status
-- [Executive Summary](docs/EXECUTIVE_SUMMARY.md) - High-level overview
+- [Status Report Nov 2025](docs/UBEC_Protocol_Suite_Status_Report_Nov_2025.md) - Latest status update
 
 **Getting Started:**
 - [Quick Reference Guide](docs/MAIN_PY_QUICK_REFERENCE.md) - Command cheat sheet
 - [Main.py Modernization Guide](docs/MAIN_PY_MODERNIZATION_GUIDE.md) - Complete orchestrator documentation
 
-**Protocols:**
-- [Complete Four-Element Protocol Suite](docs/protocols/COMPLETE_SUITE_ALL_FOUR_PROTOCOLS.md)
-- [Quick Deploy Guide](docs/protocols/QUICK_DEPLOY_GUIDE.md)
-- [Final Deliverables Summary](docs/protocols/FINAL_DELIVERABLES_SUMMARY.md)
+**User Guides:**
+- [System Administrator Guide](docs/User_Guides/SYSTEM_ADMINISTRATOR_ONBOARDING_GUIDE.md) - Deployment and operations
+- [Technical Operator Guide](docs/User_Guides/TECHNICAL_OPERATOR_ONBOARDING_GUIDE.md) - Database and blockchain operations
+- [Developer Onboarding Guide](docs/User_Guides/UBEC_Developer_Onboarding_Guide.md) - Development practices
 
 **Technical Documentation:**
 - [Service Registry Documentation](docs/README_SERVICE_REGISTRY.md)
 - [Design Principles](docs/DESIGN_PRINCIPLES.md)
 - [Database Schema Documentation](ubec_comprehensive_doc_ubec_20251102_040632.md)
-
-**Advanced Features:**
-- [Quantum Gravity Extension](phenom/README_QUANTUM_GRAVITY_COMPLETE.md)
-- [Integration Architecture](phenom/INTEGRATION_ARCHITECTURE.md)
-- [Visualization Enhancement](docs/visualization/VISUALIZER_ENHANCEMENT_DOCUMENTATION.md)
 
 ### API Documentation
 
@@ -688,8 +676,9 @@ Common issues and solutions:
 | Blockchain Sync | ✅ 100% | Real-time sync, rate limiting, circuit breakers |
 | Protocol Services | ✅ 100% | All 4 element protocols operational |
 | Analytics Suite | ✅ 100% | Token analytics, distribution monitoring |
-| Visualization | ✅ 100% | 10 chart types, multiple export formats |
+| Visualization | ✅ 100% | 10 chart types, HTML/PDF/CSV export |
 | Holonic Evaluation | ✅ 100% | Ubuntu principle assessment functional |
+| Design Principles | ✅ 100% | Full compliance with all 12 principles |
 | Data Population | 🔄 15% | Active synchronization, 87K+ records |
 | Testing Coverage | 🔄 60% | Functional tests, expanding to 80% |
 | User Documentation | 🔄 80% | Technical docs complete, user guides in progress |
@@ -791,8 +780,7 @@ We welcome contributions to the UBEC Protocol Suite!
 
 - [Design Principles](docs/DESIGN_PRINCIPLES.md)
 - [Service Registry Documentation](docs/README_SERVICE_REGISTRY.md)
-- [Code Style Guide](docs/CODE_STYLE.md) (if available)
-- [Testing Guide](docs/TESTING_GUIDE.md) (if available)
+- [Developer Onboarding Guide](docs/User_Guides/UBEC_Developer_Onboarding_Guide.md)
 
 ### Getting Help
 
@@ -843,7 +831,7 @@ This project uses the services of Claude and Anthropic PBC to inform our decisio
 
 ---
 
-**Version:** 13.0.0  
-**Last Updated:** November 2, 2025  
+**Version:** 1.0.0  
+**Last Updated:** November 3, 2025  
 **Status:** Operational (85-90% Complete)  
 **Network:** Stellar Mainnet
