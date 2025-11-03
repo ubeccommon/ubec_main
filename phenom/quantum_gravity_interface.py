@@ -14,9 +14,10 @@ Design Principles:
     - Service pattern with registry (Principles #2, #3)
     - Single source of truth - database (Principle #4)
     - No duplicate code (Principle #12)
+    - Explicit schema names in all queries (Principle #8)
 
-Version: 1.0.0
-Date: October 12, 2025
+Version: 1.0.1
+Date: November 3, 2025
 """
 
 import asyncio
@@ -109,10 +110,10 @@ class QuantumState:
     energy_level: int
     energy_value: Decimal
     possible_transitions: Dict[str, Any]
-    position_uncertainty: Optional[Decimal]
-    momentum_uncertainty: Optional[Decimal]
-    energy_time_uncertainty: Optional[Decimal]
-    decoherence_rate: Optional[Decimal]
+    position_uncertainty: Optional[Decimal] = None
+    momentum_uncertainty: Optional[Decimal] = None
+    energy_time_uncertainty: Optional[Decimal] = None
+    decoherence_rate: Optional[Decimal] = None
     state_prepared_at: Optional[datetime] = None
 
 
@@ -124,12 +125,12 @@ class QuantumEntanglement:
     entity2_state_id: int
     entanglement_entropy: Decimal
     correlation_coefficient: Decimal
-    bell_parameter: Optional[Decimal]
-    violates_bell_inequality: Optional[bool]
     joint_state: Dict[str, Any]
+    bell_parameter: Optional[Decimal] = None
+    violates_bell_inequality: Optional[bool] = None
     is_separable: bool = False
-    separation_distance: Optional[Decimal]
-    instantaneous_correlation: Optional[bool]
+    separation_distance: Optional[Decimal] = None
+    instantaneous_correlation: Optional[bool] = None
     entanglement_created_at: Optional[datetime] = None
 
 
@@ -138,15 +139,15 @@ class LorentzViolation:
     """Represents Lorentz symmetry violation"""
     id: Optional[int]
     region_geometry: Polygon
-    preferred_direction: Optional[LineString]
     anisotropy_vector: Dict[str, Any]
     violation_magnitude: Decimal
     violation_type: str
-    dispersion_coefficients: Optional[Dict[str, Any]]
-    speed_anisotropy: Optional[Decimal]
-    test_statistic: Optional[Decimal]
-    significance_level: Optional[Decimal]
-    is_statistically_significant: Optional[bool]
+    preferred_direction: Optional[LineString] = None
+    dispersion_coefficients: Optional[Dict[str, Any]] = None
+    speed_anisotropy: Optional[Decimal] = None
+    test_statistic: Optional[Decimal] = None
+    significance_level: Optional[Decimal] = None
+    is_statistically_significant: Optional[bool] = None
     observed_at: Optional[datetime] = None
 
 
@@ -166,6 +167,7 @@ class QuantumGravityService:
     - Detect Lorentz violations
     
     All operations are strictly async (Principle #5).
+    All queries use explicit schema names (Principle #8).
     """
     
     def __init__(self, pool: asyncpg.Pool):
@@ -242,19 +244,20 @@ class QuantumGravityService:
                 """
                 row = await conn.fetchrow(query, entity_type, entity_id, at_time)
             
-            if row:
-                return GravitationalMass(
-                    id=row['id'],
-                    entity_type=row['entity_type'],
-                    entity_id=row['entity_id'],
-                    gravitational_mass=row['gravitational_mass'],
-                    inertial_mass=row['inertial_mass'],
-                    mass_basis=row['mass_basis'],
-                    calculated_at=row['calculated_at'],
-                    valid_until=row['valid_until'],
-                    mass_trajectory=row['mass_trajectory']
-                )
-            return None
+            if not row:
+                return None
+            
+            return GravitationalMass(
+                id=row['id'],
+                entity_type=row['entity_type'],
+                entity_id=row['entity_id'],
+                gravitational_mass=row['gravitational_mass'],
+                inertial_mass=row['inertial_mass'],
+                mass_basis=row['mass_basis'],
+                calculated_at=row['calculated_at'],
+                valid_until=row['valid_until'],
+                mass_trajectory=row.get('mass_trajectory')
+            )
     
     async def get_top_masses(
         self,
@@ -266,7 +269,7 @@ class QuantumGravityService:
         
         Args:
             entity_type: Optional filter by entity type
-            limit: Maximum number of results
+            limit: Number of results
             
         Returns:
             List of GravitationalMass objects
@@ -300,7 +303,7 @@ class QuantumGravityService:
                     mass_basis=row['mass_basis'],
                     calculated_at=row['calculated_at'],
                     valid_until=row['valid_until'],
-                    mass_trajectory=row['mass_trajectory']
+                    mass_trajectory=row.get('mass_trajectory')
                 )
                 for row in rows
             ]
@@ -309,17 +312,17 @@ class QuantumGravityService:
     # GRAVITATIONAL INTERACTION OPERATIONS
     # ========================================================================
     
-    async def calculate_force(
+    async def calculate_gravitational_force(
         self,
         mass1_id: int,
         mass2_id: int
     ) -> Decimal:
         """
-        Calculate gravitational force between two entities.
+        Calculate gravitational force between two masses.
         
         Args:
-            mass1_id: ID of first gravitational mass
-            mass2_id: ID of second gravitational mass
+            mass1_id: ID of first mass
+            mass2_id: ID of second mass
             
         Returns:
             Force magnitude
@@ -332,65 +335,20 @@ class QuantumGravityService:
             )
             return Decimal(str(result))
     
-    async def create_interaction(
-        self,
-        interaction: GravitationalInteraction
-    ) -> int:
-        """
-        Record a gravitational interaction between entities.
-        
-        Args:
-            interaction: GravitationalInteraction to record
-            
-        Returns:
-            ID of created interaction
-        """
-        async with self.pool.acquire() as conn:
-            # Convert geometry to WKB if present
-            force_vector_wkb = None
-            if interaction.force_vector:
-                force_vector_wkb = wkb.dumps(interaction.force_vector)
-            
-            query = """
-                INSERT INTO phenomenal.gravitational_interactions (
-                    entity1_mass_id, entity2_mass_id, force_magnitude,
-                    force_direction, force_vector, separation_distance,
-                    network_hops, potential_energy, binding_energy,
-                    interaction_type, is_significant, measured_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                RETURNING id
-            """
-            interaction_id = await conn.fetchval(
-                query,
-                interaction.entity1_mass_id,
-                interaction.entity2_mass_id,
-                interaction.force_magnitude,
-                interaction.force_direction,
-                force_vector_wkb,
-                interaction.separation_distance,
-                interaction.network_hops,
-                interaction.potential_energy,
-                interaction.binding_energy,
-                interaction.interaction_type,
-                interaction.is_significant,
-                interaction.measured_at or datetime.now()
-            )
-            return interaction_id
-    
     async def get_strong_interactions(
         self,
         min_force: Decimal = Decimal('0.1'),
-        limit: int = 20
+        limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Get strongest gravitational interactions in network.
+        Get strong gravitational interactions.
         
         Args:
-            min_force: Minimum force magnitude threshold
-            limit: Maximum number of results
+            min_force: Minimum force threshold
+            limit: Maximum results
             
         Returns:
-            List of interaction dictionaries with entity details
+            List of interaction dictionaries
         """
         async with self.pool.acquire() as conn:
             query = """
@@ -411,7 +369,7 @@ class QuantumGravityService:
         mass_id: int
     ) -> Decimal:
         """
-        Calculate spacetime curvature (Ricci scalar) for massive entity.
+        Calculate spacetime curvature (Ricci scalar) around a mass.
         
         Args:
             mass_id: ID of gravitational mass
@@ -507,34 +465,34 @@ class QuantumGravityService:
             entity_id: ID of entity
             
         Returns:
-            QuantumState or None if not found
+            QuantumState object or None if not found
         """
         async with self.pool.acquire() as conn:
             query = """
                 SELECT * FROM phenomenal.quantum_states
                 WHERE entity_type = $1 AND entity_id = $2
-                AND (state_valid_until IS NULL OR state_valid_until > NOW())
                 ORDER BY state_prepared_at DESC
                 LIMIT 1
             """
             row = await conn.fetchrow(query, entity_type, entity_id)
             
-            if row:
-                return QuantumState(
-                    id=row['id'],
-                    entity_type=row['entity_type'],
-                    entity_id=row['entity_id'],
-                    state_vector=row['state_vector'],
-                    energy_level=row['energy_level'],
-                    energy_value=row['energy_value'],
-                    possible_transitions=row['possible_transitions'],
-                    position_uncertainty=row['position_uncertainty'],
-                    momentum_uncertainty=row['momentum_uncertainty'],
-                    energy_time_uncertainty=row['energy_time_uncertainty'],
-                    decoherence_rate=row['decoherence_rate'],
-                    state_prepared_at=row['state_prepared_at']
-                )
-            return None
+            if not row:
+                return None
+            
+            return QuantumState(
+                id=row['id'],
+                entity_type=row['entity_type'],
+                entity_id=row['entity_id'],
+                state_vector=row['state_vector'],
+                energy_level=row['energy_level'],
+                energy_value=row['energy_value'],
+                possible_transitions=row['possible_transitions'],
+                position_uncertainty=row['position_uncertainty'],
+                momentum_uncertainty=row['momentum_uncertainty'],
+                energy_time_uncertainty=row['energy_time_uncertainty'],
+                decoherence_rate=row['decoherence_rate'],
+                state_prepared_at=row['state_prepared_at']
+            )
     
     # ========================================================================
     # QUANTUM ENTANGLEMENT OPERATIONS
@@ -553,7 +511,7 @@ class QuantumGravityService:
             state2_id: ID of second quantum state
             
         Returns:
-            Entanglement entropy (von Neumann entropy)
+            Entanglement entropy (0 = separable, 1 = maximally entangled)
         """
         async with self.pool.acquire() as conn:
             result = await conn.fetchval(
@@ -563,56 +521,17 @@ class QuantumGravityService:
             )
             return Decimal(str(result))
     
-    async def create_entanglement(
-        self,
-        entanglement: QuantumEntanglement
-    ) -> int:
-        """
-        Create quantum entanglement between two states.
-        
-        Args:
-            entanglement: QuantumEntanglement to create
-            
-        Returns:
-            ID of created entanglement
-        """
-        async with self.pool.acquire() as conn:
-            query = """
-                INSERT INTO phenomenal.quantum_entanglement (
-                    entity1_state_id, entity2_state_id, entanglement_entropy,
-                    correlation_coefficient, bell_parameter, violates_bell_inequality,
-                    joint_state, is_separable, separation_distance,
-                    instantaneous_correlation, entanglement_created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                RETURNING id
-            """
-            ent_id = await conn.fetchval(
-                query,
-                entanglement.entity1_state_id,
-                entanglement.entity2_state_id,
-                entanglement.entanglement_entropy,
-                entanglement.correlation_coefficient,
-                entanglement.bell_parameter,
-                entanglement.violates_bell_inequality,
-                json.dumps(entanglement.joint_state),
-                entanglement.is_separable,
-                entanglement.separation_distance,
-                entanglement.instantaneous_correlation,
-                entanglement.entanglement_created_at or datetime.now()
-            )
-            return ent_id
-    
-    async def get_active_entanglements(
+    async def find_entangled_states(
         self,
         min_entropy: Decimal = Decimal('0.5'),
-        limit: int = 20
+        limit: int = 50
     ) -> List[Dict[str, Any]]:
         """
-        Get active quantum entanglements in network.
+        Find strongly entangled quantum states.
         
         Args:
-            min_entropy: Minimum entanglement entropy threshold
-            limit: Maximum number of results
+            min_entropy: Minimum entanglement entropy
+            limit: Maximum results
             
         Returns:
             List of entanglement dictionaries
@@ -636,22 +555,21 @@ class QuantumGravityService:
         region: Polygon,
         violation_type: str,
         test_statistic: Decimal,
-        significance_level: Decimal
+        significance_level: Decimal = Decimal('0.05')
     ) -> Optional[int]:
         """
-        Record detection of Lorentz symmetry violation.
+        Detect and record Lorentz symmetry violation.
         
         Args:
-            region: Spatial region where violation detected
-            violation_type: Type of violation
-            test_statistic: Statistical test value
-            significance_level: p-value
+            region: Geographic region being tested
+            violation_type: Type of violation detected
+            test_statistic: Statistical test result
+            significance_level: P-value threshold
             
         Returns:
             ID of violation record or None if not significant
         """
-        # Check if statistically significant (p < 0.05)
-        is_significant = significance_level < Decimal('0.05')
+        is_significant = test_statistic > (1 / significance_level)
         
         if not is_significant:
             return None
@@ -832,6 +750,11 @@ class QuantumGravityService:
                 "curved_region_count": curved_regions,
                 "analysis_timestamp": datetime.now().isoformat()
             }
+    
+    async def close(self):
+        """Close database connection pool."""
+        if self.pool:
+            await self.pool.close()
 
 
 # ============================================================================
@@ -886,6 +809,9 @@ async def example_usage():
     # Get gravity network for visualization
     gravity_net = await service.get_gravity_network()
     print(f"Gravity network: {gravity_net['metadata']}")
+    
+    # Close connection pool
+    await service.close()
 
 
 if __name__ == "__main__":
