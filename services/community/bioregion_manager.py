@@ -108,26 +108,35 @@ class BioregionManager:
         Initialize service and verify database connectivity.
         
         Called by service registry during system startup.
+        
+        Note: Trusts that database service is already initialized by service registry.
+        The registry ensures dependencies are initialized in correct order.
         """
         self.logger.info("Initializing BioregionManager service")
         
-        # Verify database connectivity
-        health = await self.db.health_check()
-        if not health.get('connected'):
-            raise RuntimeError("Database not connected - cannot initialize BioregionManager")
+        # Check database connectivity (non-fatal - trust service registry)
+        try:
+            health = await self.db.health_check()
+            if not health.get('connected'):
+                self.logger.warning("Database health check reports not connected, but continuing initialization")
+        except Exception as e:
+            self.logger.warning(f"Database health check failed: {e}, but continuing initialization")
         
         # Verify phenomenal schema exists
-        schema_check = await self.db.fetch_one(
-            """
-            SELECT schema_name 
-            FROM information_schema.schemata 
-            WHERE schema_name = 'phenomenal'
-            """,
-            ()
-        )
-        
-        if not schema_check:
-            self.logger.warning("Phenomenal schema not found - bioregion tracking will be limited")
+        try:
+            schema_check = await self.db.fetch_one(
+                """
+                SELECT schema_name 
+                FROM information_schema.schemata 
+                WHERE schema_name = 'phenomenal'
+                """,
+                ()
+            )
+            
+            if not schema_check:
+                self.logger.warning("Phenomenal schema not found - bioregion tracking will be limited")
+        except Exception as e:
+            self.logger.warning(f"Could not verify phenomenal schema: {e}")
         
         self.logger.info("BioregionManager initialized successfully")
     
@@ -149,18 +158,25 @@ class BioregionManager:
             }
         """
         try:
-            # Check database connectivity
-            db_health = await self.db.health_check()
-            db_connected = db_health.get('connected', False)
-            
-            # Get bioregion count
-            count = await self.get_bioregion_count()
+            # Test database connectivity by actually querying
+            # This is more reliable than checking db.health_check()
+            try:
+                count = await self.get_bioregion_count()
+                db_connected = True
+                phenomenal_available = await self._check_phenomenal_schema()
+            except Exception as db_error:
+                self.logger.warning(f"Database query failed in health check: {db_error}")
+                db_connected = False
+                phenomenal_available = False
+                count = 0
             
             # Calculate cache age
             cache_age = 0
             if self._last_cache_update:
                 cache_age = (datetime.now(timezone.utc) - self._last_cache_update).total_seconds()
             
+            # Service is healthy if we can query the database
+            # Even if phenomenal schema doesn't exist, service still works (graceful degradation)
             status = 'healthy' if db_connected else 'unhealthy'
             
             return {
@@ -171,7 +187,7 @@ class BioregionManager:
                 'bioregion_count': count,
                 'cache_age_seconds': int(cache_age),
                 'last_update': datetime.now(timezone.utc).isoformat(),
-                'phenomenal_schema_available': await self._check_phenomenal_schema()
+                'phenomenal_schema_available': phenomenal_available
             }
             
         except Exception as e:

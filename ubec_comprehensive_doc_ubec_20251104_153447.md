@@ -4,27 +4,27 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-02T04:06:31.780279  
+**Generated:** 2025-11-04T15:34:47.023419  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
-**Database Size:** 80 MB  
+**Database Size:** 83 MB  
 
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 68  
-**Total Rows:** 87,567  
-**Total Columns:** 849  
+**Total Tables:** 69  
+**Total Rows:** 96,580  
+**Total Columns:** 855  
 **Total Views:** 29  
 **Total Functions:** 1133  
 **Total Relationships:** 9  
-**Total Indexes:** 427  
+**Total Indexes:** 428  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 47 | 79,067 | 20 | 80 |
+| ubec_main | Main schema for UBEC four-element protoc... | 48 | 88,080 | 20 | 80 |
 | phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -43,7 +43,7 @@
 - **Views:** 7
 - **Relationships:** 0
 - **Indexes:** 105
-- **Triggers:** 0
+- **Triggers:** 2
 - **Functions:** 10
 - **Custom Types:** 6
 
@@ -6378,12 +6378,12 @@
 
 ### Schema Statistics
 
-- **Tables:** 47
-- **Total Rows:** 79,067
-- **Columns:** 575
+- **Tables:** 48
+- **Total Rows:** 88,080
+- **Columns:** 581
 - **Views:** 20
 - **Relationships:** 9
-- **Indexes:** 317
+- **Indexes:** 318
 - **Triggers:** 23
 - **Functions:** 80
 - **Custom Types:** 8
@@ -6427,6 +6427,7 @@
 | Table | Rows | Columns | Size |
 |-------|------|---------|------|
 | stellar_transactions | 74,495 | 20 | 49 MB |
+| bioregion_analysis | 9,013 | 6 | 3048 kB |
 | stellar_accounts | 1,299 | 17 | 1032 kB |
 | holonic_metrics | 1,286 | 16 | 2624 kB |
 | account_balances | 651 | 6 | 1584 kB |
@@ -6445,7 +6446,6 @@
 | api_rate_limits | 4 | 6 | 56 kB |
 | scheduler_jobs | 2 | 10 | 80 kB |
 | account_order_positions | 0 | 10 | 56 kB |
-| agent_activity_history | 0 | 7 | 56 kB |
 
 #### ubec_main.account_balances
 
@@ -6653,6 +6653,20 @@
 - `asset_holders_pkey` (PRIMARY KEY)
 - `chk_balance_non_negative` (CHECK)
 - `unique_holder_asset` (UNIQUE)
+
+#### ubec_main.bioregion_analysis
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('bioregion_analysis... | - |
+| account_id | varchar(56) | ✗ | - | - |
+| community_id | integer | ✗ | - | - |
+| analysis_date | timestamp with time zone | ✓ | now() | - |
+| source_type | varchar(20) | ✓ | - | - |
+| metadata | jsonb | ✓ | - | - |
+
+**Constraints:**
+- `bioregion_analysis_pkey` (PRIMARY KEY)
 
 #### ubec_main.constraint_violations
 
