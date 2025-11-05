@@ -362,7 +362,7 @@ class UBECAnalyticsService:
         async def check_database_access():
             """Verify database access - returns None for success"""
             try:
-                query = f"SELECT 1 FROM {self.schema}.holonic_metrics LIMIT 1"
+                query = f"SELECT 1 FROM {self.db_schema}.holonic_metrics LIMIT 1"
                 await self.db.fetch_one(query, ())
                 return None  # Success
             except Exception as e:

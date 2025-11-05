@@ -515,7 +515,7 @@ class UBECHolonicEvaluator:
         # Define checks that return None/str/dict (NOT bool)
         async def check_schema():
             """Verify schema is detected - returns None for success"""
-            if self.schema_detected and self.table_exists:
+            if schema_info['detected'] and schema_info.get('table_exists', False): 
                 return None  # Success
             raise Exception("Schema not properly detected")
         
