@@ -511,28 +511,9 @@ class UBECHolonicEvaluator:
         }
         
         # Use standardized health check utility (Principle #12: Method Singularity)
-        
-        # Define checks that return None/str/dict (NOT bool)
-        async def check_schema():
-            """Verify schema is detected - returns None for success"""
-            if self.schema_detected and self.table_exists:
-                return None  # Success
-            raise Exception("Schema not properly detected")
-        
-        async def check_weights():
-            """Verify weights configuration - returns None for success"""
-            if abs(sum(self.weights.values()) - 1.0) < 0.001:
-                return None  # Success
-            return {
-                'status': 'degraded',
-                'message': f"Weights sum to {sum(self.weights.values()):.3f}, expected 1.0",
-                'action': 'Check weights configuration in database'
-            }
-        
         return await ServiceHealthCheck.database_dependent_health(
             service_name='holonic_evaluator',
             is_initialized=self._initialized,
-        additional_checks=[check_schema, check_weights],
             db_manager=self.db_manager,
             schema_info=schema_info,
             cache_info=cache_info,

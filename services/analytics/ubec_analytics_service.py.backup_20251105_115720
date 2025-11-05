@@ -351,28 +351,10 @@ class UBECAnalyticsService:
             >>> if health['status'] == 'healthy':
             ...     print(f"Analytics operational, {health['details']['query_count']} queries")
         """
-        
-        # Define additional checks that return proper format (NOT bool)
-        async def check_cache_health():
-            """Check cache health - returns None for success"""
-            if len(self._cache) > 0:
-                return None  # Success
-            return None  # Empty cache is OK
-        
-        async def check_database_access():
-            """Verify database access - returns None for success"""
-            try:
-                query = f"SELECT 1 FROM {self.schema}.holonic_metrics LIMIT 1"
-                await self.db.fetch_one(query, ())
-                return None  # Success
-            except Exception as e:
-                raise Exception(f"Database access failed: {e}")
-        
         return await ServiceHealthCheck.database_dependent_health(
             service_name='ubec_analytics_service',
             db_manager=self.db,
             is_initialized=self._initialized,
-        additional_checks=[check_cache_health, check_database_access],
             additional_context={
                 'schema': self.db_schema,
                 'query_count': self._query_count,

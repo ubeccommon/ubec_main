@@ -80,7 +80,6 @@ load_dotenv()
 
 from core.service_registry import ServiceRegistry
 from core.db.database_manager import AsyncDatabaseManager
-from core.utils.service_health import ServiceHealthCheck
 from config.logging import setup_logging
 
 # ========================================================================
@@ -630,11 +629,9 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
     logger.info("SYSTEM HEALTH CHECK")
     logger.info("=" * 70)
     
-    health_checker = ServiceHealthCheck()
-    
     # Check all registered services
     service_names = [
-        'database', 'config', 'stellar',
+        'database', 'config', 'stellar', 'rate_limiter',
         'air_protocol', 'water_protocol', 'earth_protocol', 'fire_protocol',
         'sync', 'analytics', 'holonic', 'visualizer', 'bioregion_manager', 
         'api_service', 'scheduler'
@@ -645,19 +642,32 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
     for service_name in service_names:
         try:
             service = await registry.get(service_name)
-            health = await health_checker.check_service_health(
-                service_name, 
-                service
-            )
             
-            status_symbol = "✅" if health['status'] == 'healthy' else "❌"
-            logger.info(f"\n{status_symbol} {service_name}: {health['status']}")
+            # Call the service's own health_check() method
+            if hasattr(service, 'health_check'):
+                health = await service.health_check()
+            else:
+                # Fallback for services without health_check method
+                health = {
+                    'status': 'unknown',
+                    'message': f'{service_name} has no health_check method'
+                }
+            
+            # Determine status symbol
+            status_symbol = {
+                'healthy': '✅',
+                'degraded': '⚠️',
+                'unhealthy': '❌',
+                'unknown': '❓'
+            }.get(health.get('status', 'unknown'), '❓')
+            
+            logger.info(f"\n{status_symbol} {service_name}: {health.get('status', 'unknown')}")
             
             if detailed and 'details' in health:
                 for key, value in health['details'].items():
                     logger.info(f"  {key}: {value}")
             
-            if health['status'] != 'healthy':
+            if health.get('status') not in ['healthy', 'unknown']:
                 all_healthy = False
                 
         except Exception as e:
@@ -726,22 +736,33 @@ async def handle_status(registry: ServiceRegistry):
 
 async def handle_discover(registry: ServiceRegistry, max_accounts: int = 100):
     """
-    Discover token holders.
+    Discover token holders for all UBEC tokens.
     
     Args:
         registry: Service registry
-        max_accounts: Maximum accounts to discover
+        max_accounts: Maximum accounts to discover per token
     """
     logger.info("=" * 70)
-    logger.info(f"DISCOVERING TOKEN HOLDERS (max: {max_accounts})")
+    logger.info(f"DISCOVERING TOKEN HOLDERS (max: {max_accounts} per token)")
     logger.info("=" * 70)
     
     sync = await registry.get('sync')
     
-    # Discovery is integrated into sync service
-    discovered = await sync.discover_holders(max_accounts=max_accounts)
+    # Discover holders for each token
+    token_codes = ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']
+    total_discovered = 0
     
-    logger.info(f"\n✅ Discovered {len(discovered)} token holders")
+    for token_code in token_codes:
+        try:
+            logger.info(f"\nDiscovering {token_code} holders...")
+            accounts = await sync.discover_accounts(token_code, max_accounts)
+            count = len(accounts) if isinstance(accounts, list) else accounts
+            logger.info(f"  ✅ Discovered {count} {token_code} holders")
+            total_discovered += count
+        except Exception as e:
+            logger.error(f"  ❌ Failed to discover {token_code} holders: {e}")
+    
+    logger.info(f"\n✅ Total discovered: {total_discovered} token holders")
     logger.info("=" * 70)
 
 
@@ -757,8 +778,8 @@ async def handle_sync(
     Args:
         registry: Service registry
         sync_type: Type of sync (all, UBEC, UBECrc, UBECgpi, UBECtt)
-        max_accounts: Maximum accounts to sync
-        force: Force full resync
+        max_accounts: Maximum accounts to sync per token
+        force: Force full resync (currently ignored - all syncs are full)
     """
     logger.info("=" * 70)
     logger.info(f"SYNCHRONIZING BLOCKCHAIN DATA (type: {sync_type})")
@@ -766,13 +787,47 @@ async def handle_sync(
     
     sync = await registry.get('sync')
     
-    if force:
-        logger.info("Force sync requested - performing full resync")
-        await sync.sync_full(sync_type=sync_type, max_accounts=max_accounts)
-    else:
-        await sync.sync_incremental(sync_type=sync_type, max_accounts=max_accounts)
+    # Default max accounts if not specified
+    max_accounts_per_token = max_accounts if max_accounts else 5000
     
-    logger.info("\n✅ Synchronization complete")
+    try:
+        if sync_type == 'all':
+            # Sync all 4 tokens
+            logger.info(f"Syncing all tokens (max {max_accounts_per_token} accounts per token)...")
+            results = await sync.sync_all(max_accounts_per_token=max_accounts_per_token)
+            
+            # Display results
+            logger.info(f"\n📊 Sync Results:")
+            logger.info(f"  Total accounts synced: {results.get('total_accounts', 0)}")
+            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
+            
+            if 'by_token' in results:
+                logger.info(f"\n  By Token:")
+                for token, data in results['by_token'].items():
+                    status_symbol = "✅" if data.get('status') == 'success' else "❌"
+                    logger.info(f"    {status_symbol} {token}: {data.get('accounts_synced', 0)} accounts")
+        
+        else:
+            # Sync specific token
+            token_code = sync_type.upper()
+            logger.info(f"Syncing {token_code} (max {max_accounts_per_token} accounts)...")
+            
+            # Use sync_accounts which accepts token_codes list
+            results = await sync.sync_accounts(
+                token_codes=[token_code],
+                max_accounts_per_token=max_accounts_per_token
+            )
+            
+            logger.info(f"\n📊 Sync Results:")
+            logger.info(f"  Total accounts synced: {results.get('total_accounts', 0)}")
+            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
+        
+        logger.info("\n✅ Synchronization complete")
+        
+    except Exception as e:
+        logger.error(f"\n❌ Synchronization failed: {e}", exc_info=True)
+        raise
+    
     logger.info("=" * 70)
 
 

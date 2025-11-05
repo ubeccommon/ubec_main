@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-05T04:17:59.456922  
+**Generated:** 2025-11-05T15:41:51.754837  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 309 MB  
@@ -13,7 +13,7 @@
 
 **Total Schemas:** 4  
 **Total Tables:** 71  
-**Total Rows:** 97,876  
+**Total Rows:** 97,881  
 **Total Columns:** 876  
 **Total Views:** 29  
 **Total Functions:** 1133  
@@ -24,7 +24,7 @@
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 48 | 88,080 | 20 | 80 |
+| ubec_main | Main schema for UBEC four-element protoc... | 48 | 88,085 | 20 | 80 |
 | phenomenal | Unified phenomenological blockchain mode... | 20 | 1,296 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6418,7 +6418,7 @@
 ### Schema Statistics
 
 - **Tables:** 48
-- **Total Rows:** 88,080
+- **Total Rows:** 88,085
 - **Columns:** 581
 - **Views:** 20
 - **Relationships:** 9
@@ -6481,9 +6481,9 @@
 | distribution_history | 10 | 15 | 152 kB |
 | liquidity_pools | 10 | 20 | 336 kB |
 | system_configuration | 10 | 8 | 96 kB |
+| scheduler_jobs | 7 | 10 | 80 kB |
 | monitored_accounts | 5 | 9 | 80 kB |
 | api_rate_limits | 4 | 6 | 56 kB |
-| scheduler_jobs | 2 | 10 | 80 kB |
 | account_order_positions | 0 | 10 | 56 kB |
 
 #### ubec_main.account_balances

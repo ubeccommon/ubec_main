@@ -42,16 +42,10 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 13.2.1 (Bool Return Fix - check_data_access)
-Date: November 5, 2025
+Version: 13.2.0 (Health Check Fix - ServiceHealthCheck Integration)
+Date: October 20, 2025
 
 Changelog:
-    v13.2.1 - CRITICAL BOOL RETURN FIX (check_data_access):
-            - 🔧 FIXED: check_data_access() now returns None instead of bool
-            - ✅ FIXED: Eliminated "Unexpected return type <class 'bool'>" warning
-            - ✅ CORRECTED: Now raises Exception on failure instead of returning False
-            - 🎯 VERIFIED: Full compliance with ServiceHealthCheck patterns
-            - 📊 IMPROVED: Proper exception handling with descriptive error messages
     v13.2.0 - HEALTH CHECK FIX (ServiceHealthCheck Integration):
             - 🔧 CRITICAL FIX: health_check() now uses ServiceHealthCheck.database_dependent_health()
             - ✅ FIXED: Returns standardized format with 'status' instead of 'healthy'
@@ -439,18 +433,18 @@ class HolonicVisualizer:
         
         # Additional health checks specific to visualizer
         async def check_matplotlib():
-            """Verify matplotlib is working properly - returns None for success"""
+            """Verify matplotlib is working properly"""
             try:
                 # Quick test to ensure matplotlib can create figures
                 fig, ax = plt.subplots(figsize=(1, 1))
                 plt.close(fig)
-                return None  # ✅ CORRECT - returns None for success
+                return True
             except Exception as e:
-                # ✅ CORRECT - raises exception for failure
-                raise Exception(f"Matplotlib check failed: {e}")
+                self.logger.error(f"Matplotlib check failed: {e}")
+                return False
         
         async def check_data_access():
-            """Verify we can access holonic metrics data - returns None for success"""
+            """Verify we can access holonic metrics data"""
             try:
                 query = f"""
                     SELECT COUNT(*) as count 
@@ -458,33 +452,17 @@ class HolonicVisualizer:
                     LIMIT 1
                 """
                 result = await self.db_manager.fetch_one(query, ())
-                if result is None:
-                    raise Exception("Could not query holonic_metrics table")
-                return None  # ✅ CORRECT - returns None for success
+                return result is not None
             except Exception as e:
-                # ✅ CORRECT - raises exception for failure
-                raise Exception(f"Data access check failed: {e}")
-        
-        async def check_output_directory():
-            """Verify output directory exists and is writable - returns None for success"""
-            try:
-                if not self.output_dir.exists():
-                    self.output_dir.mkdir(parents=True, exist_ok=True)
-                # Test write access
-                test_file = self.output_dir / ".health_check_test"
-                test_file.touch()
-                test_file.unlink()
-                return None  # ✅ CORRECT - returns None for success
-            except Exception as e:
-                # ✅ CORRECT - raises exception for failure
-                raise Exception(f"Output directory check failed: {e}")
+                self.logger.error(f"Data access check failed: {e}")
+                return False
         
         # Use standardized health check pattern (Principle #12: Method Singularity)
         return await ServiceHealthCheck.database_dependent_health(
             service_name='visualizer',
             db_manager=self.db_manager,
             is_initialized=self._initialized,
-            additional_checks=[check_matplotlib, check_data_access, check_output_directory],
+            additional_checks=[check_matplotlib, check_data_access],
             # Visualization-specific context
             charts_generated=self._charts_generated,
             reports_generated=0,  # Could track this if needed
