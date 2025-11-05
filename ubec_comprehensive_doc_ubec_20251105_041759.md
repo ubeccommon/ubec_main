@@ -4,28 +4,28 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-04T15:34:47.023419  
+**Generated:** 2025-11-05T04:17:59.456922  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
-**Database Size:** 83 MB  
+**Database Size:** 309 MB  
 
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 69  
-**Total Rows:** 96,580  
-**Total Columns:** 855  
+**Total Tables:** 71  
+**Total Rows:** 97,876  
+**Total Columns:** 876  
 **Total Views:** 29  
 **Total Functions:** 1133  
 **Total Relationships:** 9  
-**Total Indexes:** 428  
+**Total Indexes:** 432  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
 | ubec_main | Main schema for UBEC four-element protoc... | 48 | 88,080 | 20 | 80 |
-| phenomenal | Unified phenomenological blockchain mode... | 18 | 0 | 7 | 10 |
+| phenomenal | Unified phenomenological blockchain mode... | 20 | 1,296 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
 
@@ -37,12 +37,12 @@
 
 ### Schema Statistics
 
-- **Tables:** 18
-- **Total Rows:** 0
-- **Columns:** 256
+- **Tables:** 20
+- **Total Rows:** 1,296
+- **Columns:** 277
 - **Views:** 7
 - **Relationships:** 0
-- **Indexes:** 105
+- **Indexes:** 109
 - **Triggers:** 2
 - **Functions:** 10
 - **Custom Types:** 6
@@ -77,6 +77,8 @@
 
 | Table | Rows | Columns | Size |
 |-------|------|---------|------|
+| ecoregions_2017 | 847 | 17 | 206 MB |
+| feow_hydrosheds | 449 | 4 | 20 MB |
 | accounts | 0 | 19 | 80 kB |
 | assets | 0 | 17 | 88 kB |
 | geodesics | 0 | 10 | 56 kB |
@@ -153,6 +155,43 @@
 **Constraints:**
 - `assets_asset_code_issuer_address_key` (UNIQUE)
 - `assets_pkey` (PRIMARY KEY)
+
+#### phenomenal.ecoregions_2017
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('"Ecoregions2017_id... | - |
+| geom | enum | ✓ | - | - |
+| objectid | numeric | ✓ | - | - |
+| eco_name | varchar(150) | ✓ | - | - |
+| biome_num | numeric | ✓ | - | - |
+| biome_name | varchar(254) | ✓ | - | - |
+| realm | varchar(254) | ✓ | - | - |
+| eco_biome_ | varchar(254) | ✓ | - | - |
+| nnh | bigint | ✓ | - | - |
+| eco_id | bigint | ✓ | - | - |
+| shape_leng | numeric | ✓ | - | - |
+| shape_area | numeric | ✓ | - | - |
+| nnh_name | varchar(64) | ✓ | - | - |
+| color | varchar(7) | ✓ | - | - |
+| color_bio | varchar(7) | ✓ | - | - |
+| color_nnh | varchar(7) | ✓ | - | - |
+| license | varchar(64) | ✓ | - | - |
+
+**Constraints:**
+- `Ecoregions2017_pkey` (PRIMARY KEY)
+
+#### phenomenal.feow_hydrosheds
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| id | integer | ✗ | nextval('feow_hydrosheds_id... | - |
+| geom | enum | ✓ | - | - |
+| feow_id | bigint | ✓ | - | - |
+| area_skm | double precision | ✓ | - | - |
+
+**Constraints:**
+- `feow_hydrosheds_pkey` (PRIMARY KEY)
 
 #### phenomenal.geodesics
 

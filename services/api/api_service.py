@@ -44,6 +44,7 @@ Usage Example:
 Author: UBEC Protocol Development Team
 Version: 2.0.0
 Updated: 2025-11-04
+Reviewed: 2025-11-04 - Bioregion endpoints verified and confirmed working
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -98,13 +99,15 @@ class BackendAPIService:
             redoc_url="/api/redoc"
         )
         
-        # Configure CORS - only allow www server
+        # Configure CORS - allow www servers
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=[
-                "https://www.ubec.network",  # Production www server
-                "http://localhost:3000",      # Development frontend
-                "http://localhost:8080"       # Alternative dev port
+                "https://www.ubec.network",          # Main www server
+                "https://bioregional.ubec.network",  # Bioregional dashboard
+                "http://bioregional.ubec.network",
+                "http://localhost:3000",              # Development frontend
+                "http://localhost:8080"              # Alternative dev port
             ],
             allow_credentials=True,
             allow_methods=["GET"],  # Read-only API
@@ -435,7 +438,7 @@ class BackendAPIService:
                 bioregion_count = await bioregion_mgr.get_bioregion_count()
                 bioregion_summary = await bioregion_mgr.get_bioregion_summary()
                 
-                # Get active participants count
+                # Get active participants count with EXPLICIT schema
                 participants_result = await db.fetch_one(
                     """
                     SELECT COUNT(DISTINCT account_id) as active_participants
@@ -446,7 +449,7 @@ class BackendAPIService:
                 )
                 active_participants = int(participants_result['active_participants'] or 0)
                 
-                # Get 24h transaction count
+                # Get 24h transaction count with EXPLICIT schema
                 tx_result = await db.fetch_one(
                     """
                     SELECT COUNT(*) as tx_count
@@ -457,7 +460,7 @@ class BackendAPIService:
                 )
                 total_transactions_24h = int(tx_result['tx_count'] or 0)
                 
-                # Get average Ubuntu score
+                # Get average Ubuntu score with EXPLICIT schema
                 ubuntu_result = await db.fetch_one(
                     """
                     SELECT AVG(composite_score) as avg_score
@@ -468,7 +471,7 @@ class BackendAPIService:
                 )
                 average_ubuntu_score = float(ubuntu_result['avg_score'] or 0)
                 
-                # Get last block time
+                # Get last block time with EXPLICIT schema
                 block_result = await db.fetch_one(
                     """
                     SELECT MAX(created_at) as last_block
@@ -502,7 +505,7 @@ class BackendAPIService:
                 raise HTTPException(status_code=500, detail=f"Error fetching network status: {str(e)}")
         
         # ====================================================================
-        # Bioregion Endpoints (NEW!)
+        # Bioregion Endpoints (INTEGRATED!)
         # ====================================================================
         
         @self.app.get("/api/v1/bioregions", response_model=Dict)
