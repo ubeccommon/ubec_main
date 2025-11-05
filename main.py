@@ -215,12 +215,12 @@ def register_core_services():
             host=host,
             port=port,
             database=database,
+            schema=primary_schema,
+            search_path=search_path,
             user=user,
             password=password,
             min_pool_size=min_pool_size,
-            max_pool_size=max_pool_size,
-            primary_schema=primary_schema,
-            search_path=search_path
+            max_pool_size=max_pool_size
         )
         
         # Initialize connection pool
@@ -241,18 +241,24 @@ def register_core_services():
     
     async def create_config(registry: ServiceRegistry):
         """
-        Create configuration service.
+        Create configuration service (database-backed).
         
         Principle #4: Database as single source of truth
+        Principle #8: No duplicate configuration
         """
-        from config.config_service import ConfigService
-        
         logger.info("Creating configuration service...")
+        
+        from config.config import Config
+        from config.settings import ConfigurationService
         
         db = await registry.get('database')
         
-        config = ConfigService(db)
-        await config.initialize()
+        # Create actual configuration service
+        config_service = ConfigurationService(db)
+        await config_service.initialize()
+        
+        # Wrap in property-style interface
+        config = Config(config_service)
         
         logger.info("✓ Configuration service created")
         return config
@@ -264,30 +270,66 @@ def register_core_services():
     )
     
     # ========================================================================
+    # RATE LIMITER SERVICE
+    # ========================================================================
+    
+    async def create_rate_limiter(registry: ServiceRegistry):
+        """
+        Create rate limiter service with database-backed configuration.
+        
+        Principle #4: Single Source of Truth - Database configuration
+        Principle #9: Integrated Rate Limiting
+        """
+        logger.info("Creating rate limiter service...")
+        
+        from services.stellar.rate_limiter_service import RateLimiterService
+        
+        db = await registry.get('database')
+        
+        rate_limiter = RateLimiterService(db_manager=db)
+        await rate_limiter.initialize()
+        
+        logger.info("✓ Rate limiter service created")
+        return rate_limiter
+    
+    registry.register_factory(
+        'rate_limiter',
+        create_rate_limiter,
+        dependencies=['database']
+    )
+    
+
+
+    # ========================================================================
     # STELLAR CLIENT SERVICE
     # ========================================================================
     
-    async def create_stellar(registry: ServiceRegistry):
+    async def create_stellar_client(registry: ServiceRegistry):
         """
-        Create Stellar client service.
+        Create Stellar network client with rate limiting.
         
-        Principle #5: Async factory pattern
+        Principle #9: Integrated rate limiting for Stellar API
         """
-        from services.stellar.stellar_client_service import create_stellar_client
+        logger.info("Creating Stellar client service...")
         
-        logger.info("Creating Stellar client...")
+        from services.stellar.stellar_client_service import StellarClientService
         
         config = await registry.get('config')
+        rate_limiter = await registry.get('rate_limiter')
         
-        stellar = await create_stellar_client(config)
+        stellar = StellarClientService(
+            config=config,
+            rate_limiter=rate_limiter
+        )
+        await stellar.initialize()
         
-        logger.info("✓ Stellar client created")
+        logger.info("✓ Stellar client service created")
         return stellar
     
     registry.register_factory(
         'stellar',
-        create_stellar,
-        dependencies=['config']
+        create_stellar_client,
+        dependencies=['config', 'rate_limiter']
     )
     
     # ========================================================================
@@ -760,26 +802,25 @@ async def handle_status(registry: ServiceRegistry):
     
     # Database status using explicit schema name (Principle #4)
     logger.info("\nDatabase Status:")
-    logger.info(f"  Pool size: {db.pool.get_size() if db.pool else 0}")
-    logger.info(f"  Schema: {db.primary_schema}")
+    logger.info(f"  Pool size: {db._pool.get_size() if db._pool else 0}")
+    logger.info(f"  Schema: {db.schema}")
     
     # Count records from each table with explicit schema
-    async with db.pool.acquire() as conn:
-        # Use explicit schema names for clarity and reliability
-        accounts_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.stellar_accounts'
-        )
-        balances_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.balances'
-        )
-        transactions_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.stellar_transactions'
-        )
-        
-        logger.info(f"\nRecords:")
-        logger.info(f"  Accounts: {accounts_count:,}")
-        logger.info(f"  Balances: {balances_count:,}")
-        logger.info(f"  Transactions: {transactions_count:,}")
+    # Use database manager's query methods (Principle #12: Method Singularity)
+    accounts_count = await db.fetch_one(
+        'SELECT COUNT(*) as count FROM ubec_main.stellar_accounts'
+    )
+    balances_count = await db.fetch_one(
+        'SELECT COUNT(*) as count FROM ubec_main.account_balances'
+    )
+    transactions_count = await db.fetch_one(
+        'SELECT COUNT(*) as count FROM ubec_main.stellar_transactions'
+    )
+    
+    logger.info(f"\nRecords:")
+    logger.info(f"  Accounts: {accounts_count['count']:,}")
+    logger.info(f"  Balances: {balances_count['count']:,}")
+    logger.info(f"  Transactions: {transactions_count['count']:,}")
     
     # Protocol status
     logger.info("\nProtocol Services:")

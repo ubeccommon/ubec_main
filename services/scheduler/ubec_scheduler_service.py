@@ -52,7 +52,7 @@ Usage Example:
     ```
 
 Author: UBEC Protocol Development Team
-Version: 1.0.0
+Version: 1.0.2 (Fixed Config & Database Access)
 Updated: 2025-11-05
 """
 
@@ -200,22 +200,23 @@ class UBECSchedulerService:
             self.db_manager = await self.registry.get('database')
             config_service = await self.registry.get('config')
             
-            # Load configuration
-            self.check_interval = await config_service.get(
+            # Load configuration (NO AWAIT - config.get() is synchronous)
+            # Config service provides cached values via dictionary-style access
+            self.check_interval = config_service.get(
                 'scheduler_check_interval',
-                default=60
+                60  # default value
             )
-            self.max_concurrent_jobs = await config_service.get(
+            self.max_concurrent_jobs = config_service.get(
                 'scheduler_max_concurrent_jobs',
-                default=5
+                5  # default value
             )
-            self.error_threshold = await config_service.get(
+            self.error_threshold = config_service.get(
                 'scheduler_error_threshold',
-                default=3
+                3  # default value
             )
-            self.circuit_recovery_time = await config_service.get(
+            self.circuit_recovery_time = config_service.get(
                 'scheduler_circuit_recovery_time',
-                default=300
+                300  # default value
             )
             
             # Load jobs from database
@@ -317,9 +318,10 @@ class UBECSchedulerService:
         """
         
         try:
-            async with self.db_manager.pool.acquire() as conn:
-                rows = await conn.fetch(query)
-                
+            # Use database manager's fetch method (Principle #12: Method Singularity)
+            rows = await self.db_manager.fetch_all(query)
+            
+            if rows:
                 for row in rows:
                     # Parse interval (handle both seconds and cron-like strings)
                     interval_str = row['schedule_interval']
@@ -641,13 +643,10 @@ class UBECSchedulerService:
         """
         
         try:
-            async with self.db_manager.pool.acquire() as conn:
-                await conn.execute(
-                    query,
-                    job.next_run,
-                    job.last_run,
-                    job.id
-                )
+            await self.db_manager.execute(
+                query,
+                (job.next_run, job.last_run, job.id)
+            )
         except Exception as e:
             self.logger.error(
                 f"Error updating job schedule for '{job.job_name}': {e}"
@@ -662,9 +661,8 @@ class UBECSchedulerService:
         """
         
         try:
-            async with self.db_manager.pool.acquire() as conn:
-                await conn.execute(query, job.id)
-                self.logger.info(f"Job '{job.job_name}' disabled in database")
+            await self.db_manager.execute(query, (job.id,))
+            self.logger.info(f"Job '{job.job_name}' disabled in database")
         except Exception as e:
             self.logger.error(f"Error disabling job '{job.job_name}': {e}")
     
@@ -677,9 +675,8 @@ class UBECSchedulerService:
         """
         
         try:
-            async with self.db_manager.pool.acquire() as conn:
-                await conn.execute(query, job.id)
-                self.logger.info(f"Job '{job.job_name}' enabled in database")
+            await self.db_manager.execute(query, (job.id,))
+            self.logger.info(f"Job '{job.job_name}' enabled in database")
         except Exception as e:
             self.logger.error(f"Error enabling job '{job.job_name}': {e}")
     

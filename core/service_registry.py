@@ -52,6 +52,7 @@ Supported Services:
 - Audit Service: Compliance and auditing
 - Distribution: Token distribution management
 - Visualizer: Reporting and visualization
+- Scheduler: Automated task scheduling and execution
 
 Usage Examples:
     # Basic usage
