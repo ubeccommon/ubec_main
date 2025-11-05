@@ -44,15 +44,12 @@ Usage:
     # Protocol health
     python main.py protocol-health
     
-    # Scheduler status
-    python main.py scheduler-status
-    
-    # API Server with Scheduler
+    # API Server (NEW)
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.0
-Updated: 2025-11-05
+Version: 3.0.0
+Updated: 2025-11-04
 """
 
 import asyncio
@@ -208,26 +205,26 @@ def register_core_services():
         user = os.getenv('DB_USER', 'ubec_app')
         password = os.getenv('DB_PASSWORD', '')
         min_pool_size = int(os.getenv('DB_MIN_POOL', '2'))
-        max_pool_size = int(os.getenv('DB_MAX_POOL', '20'))
+        max_pool_size = int(os.getenv('DB_MAX_POOL', '10'))
         
-        # Create database service
-        db_manager = AsyncDatabaseManager(
+        # Create database manager
+        db = AsyncDatabaseManager(
             host=host,
             port=port,
             database=database,
+            schema=primary_schema,
+            search_path=search_path,
             user=user,
             password=password,
             min_pool_size=min_pool_size,
-            max_pool_size=max_pool_size,
-            primary_schema=primary_schema,
-            search_path=search_path
+            max_pool_size=max_pool_size
         )
         
-        # Initialize connection pool
-        await db_manager.initialize()
+        # Initialize with two-stage bootstrap
+        await db.initialize()
         
-        logger.info("✓ Database service created")
-        return db_manager
+        logger.info(f"✓ Database service created (Schema: {primary_schema})")
+        return db
     
     registry.register_factory(
         'database',
@@ -241,18 +238,24 @@ def register_core_services():
     
     async def create_config(registry: ServiceRegistry):
         """
-        Create configuration service.
+        Create configuration service (database-backed).
         
         Principle #4: Database as single source of truth
+        Principle #8: No duplicate configuration
         """
-        from config.config_service import ConfigService
-        
         logger.info("Creating configuration service...")
+        
+        from config.config import Config
+        from config.settings import ConfigurationService
         
         db = await registry.get('database')
         
-        config = ConfigService(db)
-        await config.initialize()
+        # Create actual configuration service
+        config_service = ConfigurationService(db)
+        await config_service.initialize()
+        
+        # Wrap in property-style interface
+        config = Config(config_service)
         
         logger.info("✓ Configuration service created")
         return config
@@ -264,34 +267,68 @@ def register_core_services():
     )
     
     # ========================================================================
+    # RATE LIMITER SERVICE
+    # ========================================================================
+    
+    async def create_rate_limiter(registry: ServiceRegistry):
+        """
+        Create rate limiter service with database-backed configuration.
+        
+        Principle #4: Single Source of Truth - Database configuration
+        Principle #9: Integrated Rate Limiting
+        """
+        logger.info("Creating rate limiter service...")
+        
+        from services.stellar.rate_limiter_service import RateLimiterService
+        
+        db = await registry.get('database')
+        
+        rate_limiter = RateLimiterService(db_manager=db)
+        await rate_limiter.initialize()
+        
+        logger.info("✓ Rate limiter service created")
+        return rate_limiter
+    
+    registry.register_factory(
+        'rate_limiter',
+        create_rate_limiter,
+        dependencies=['database']
+    )
+    
+    # ========================================================================
     # STELLAR CLIENT SERVICE
     # ========================================================================
     
-    async def create_stellar(registry: ServiceRegistry):
+    async def create_stellar_client(registry: ServiceRegistry):
         """
-        Create Stellar client service.
+        Create Stellar network client with rate limiting.
         
-        Principle #5: Async factory pattern
+        Principle #9: Integrated rate limiting for Stellar API
         """
-        from services.stellar.stellar_client_service import create_stellar_client
+        logger.info("Creating Stellar client service...")
         
-        logger.info("Creating Stellar client...")
+        from services.stellar.stellar_client_service import StellarClientService
         
         config = await registry.get('config')
+        rate_limiter = await registry.get('rate_limiter')
         
-        stellar = await create_stellar_client(config)
+        stellar = StellarClientService(
+            config=config,
+            rate_limiter=rate_limiter
+        )
+        await stellar.initialize()
         
-        logger.info("✓ Stellar client created")
+        logger.info("✓ Stellar client service created")
         return stellar
     
     registry.register_factory(
         'stellar',
-        create_stellar,
-        dependencies=['config']
+        create_stellar_client,
+        dependencies=['config', 'rate_limiter']
     )
     
     # ========================================================================
-    # PROTOCOL SERVICES (Air/Water/Earth/Fire)
+    # PROTOCOL SERVICES (Air, Water, Earth, Fire)
     # ========================================================================
     
     async def create_air_protocol(registry: ServiceRegistry):
@@ -309,7 +346,7 @@ def register_core_services():
         
         logger.info("  ├─ Air Protocol: UBEC (Gateway/Diversity)")
         
-        # Use async factory (MUST await)
+        # Use async factory
         service = await create_ubec_service(
             db_manager=db,
             config={
@@ -344,7 +381,7 @@ def register_core_services():
         config = await registry.get('config')
         stellar = await registry.get('stellar')
         
-        logger.info("  ├─ Water Protocol: UBECrc (Flow/Reciprocity)")
+        logger.info("  ├─ Water Protocol: UBECrc (Reciprocity/Flow)")
         
         # Use async factory
         service = await create_ubecrc_service(
@@ -636,47 +673,6 @@ def register_core_services():
         dependencies=['database', 'config', 'bioregion_manager']
     )
     
-    # ========================================================================
-    # SCHEDULER SERVICE (NEW)
-    # ========================================================================
-    
-    async def create_scheduler_service(registry: ServiceRegistry):
-        """
-        Create scheduler service for automated task execution.
-        
-        Manages periodic execution of critical system tasks including
-        blockchain synchronization, analytics updates, holonic evaluation,
-        and report generation.
-        
-        Principle #2: Service pattern with factory function
-        Principle #4: Database-driven job configuration
-        Principle #5: Async factory pattern
-        Principle #12: Uses standardized factory function
-        """
-        from services.scheduler.ubec_scheduler_service import create_scheduler_service
-        
-        logger.info("  ├─ Scheduler Service: Automated periodic tasks")
-        
-        # Use the factory function from scheduler service module
-        scheduler_service = await create_scheduler_service(registry)
-        
-        logger.info("✓ Scheduler service created")
-        return scheduler_service
-    
-    registry.register_factory(
-        'scheduler',
-        create_scheduler_service,
-        dependencies=[
-            'database',
-            'config',
-            'sync',
-            'analytics',
-            'holonic',
-            'visualizer',
-            'bioregion_manager'
-        ]
-    )
-    
     logger.info("=" * 70)
     logger.info(f"✓ Registered {len(registry._factories)} services")
     logger.info("=" * 70)
@@ -707,8 +703,7 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
     service_names = [
         'database', 'config', 'stellar',
         'air_protocol', 'water_protocol', 'earth_protocol', 'fire_protocol',
-        'sync', 'analytics', 'holonic', 'visualizer', 'bioregion_manager', 
-        'api_service', 'scheduler'
+        'sync', 'analytics', 'holonic', 'visualizer', 'bioregion_manager', 'api_service'
     ]
     
     all_healthy = True
@@ -755,73 +750,93 @@ async def handle_status(registry: ServiceRegistry):
     logger.info("SYSTEM STATUS")
     logger.info("=" * 70)
     
-    # Get database service
     db = await registry.get('database')
+    config = await registry.get('config')
     
-    # Database status using explicit schema name (Principle #4)
-    logger.info("\nDatabase Status:")
-    logger.info(f"  Pool size: {db.pool.get_size() if db.pool else 0}")
-    logger.info(f"  Schema: {db.primary_schema}")
+    # Database status
+    logger.info("\n📊 Database:")
+    logger.info(f"  Schema: {db.schema}")
+    logger.info(f"  Search Path: {db.search_path}")
+    logger.info(f"  Initialized: {db._initialized}")
     
-    # Count records from each table with explicit schema
-    async with db.pool.acquire() as conn:
-        # Use explicit schema names for clarity and reliability
-        accounts_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.stellar_accounts'
-        )
-        balances_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.balances'
-        )
-        transactions_count = await conn.fetchval(
-            'SELECT COUNT(*) FROM ubec_main.stellar_transactions'
-        )
-        
-        logger.info(f"\nRecords:")
-        logger.info(f"  Accounts: {accounts_count:,}")
-        logger.info(f"  Balances: {balances_count:,}")
-        logger.info(f"  Transactions: {transactions_count:,}")
+    # Configuration status
+    logger.info("\n⚙️  Configuration:")
+    try:
+        # Try to access a config value to verify it's working
+        test_value = getattr(config, 'DB_SCHEMA', None)
+        logger.info(f"  Status: Operational")
+        logger.info(f"  Schema: {test_value if test_value else 'N/A'}")
+    except Exception as e:
+        logger.info(f"  Status: Error - {e}")
     
     # Protocol status
-    logger.info("\nProtocol Services:")
-    for protocol_name in ['air_protocol', 'water_protocol', 'earth_protocol', 'fire_protocol']:
+    protocols = [
+        ('air_protocol', 'Air (UBEC)'),
+        ('water_protocol', 'Water (UBECrc)'),
+        ('earth_protocol', 'Earth (UBECgpi)'),
+        ('fire_protocol', 'Fire (UBECtt)')
+    ]
+    
+    logger.info("\n🌟 Protocols:")
+    for service_name, display_name in protocols:
         try:
-            protocol = await registry.get(protocol_name)
-            health = await protocol.check_health()
-            status = "✅" if health['status'] == 'healthy' else "❌"
-            logger.info(f"  {status} {protocol_name}: {health['status']}")
+            protocol = await registry.get(service_name)
+            logger.info(f"  {display_name}: Initialized")
         except Exception as e:
-            logger.error(f"  ❌ {protocol_name}: ERROR - {e}")
+            logger.info(f"  {display_name}: Not available")
+    
+    # Additional services status
+    additional_services = [
+        ('sync', 'Synchronization'),
+        ('analytics', 'Analytics'),
+        ('holonic', 'Holonic Evaluator'),
+        ('visualizer', 'Visualizer'),
+        ('bioregion_manager', 'Bioregion Manager'),
+        ('api_service', 'API Service')
+    ]
+    
+    logger.info("\n🔧 Services:")
+    for service_name, display_name in additional_services:
+        try:
+            service = await registry.get(service_name)
+            logger.info(f"  {display_name}: Initialized")
+        except Exception as e:
+            logger.info(f"  {display_name}: Not available")
     
     logger.info("\n" + "=" * 70)
-    print("DEBUG: handle_status() completed")
 
 
-async def handle_discover(registry: ServiceRegistry, max_accounts: int = 100):
+async def handle_discover(registry: ServiceRegistry, max_accounts: int):
     """
-    Discover token holders.
+    Discover token holders using the synchronizer service.
+    
+    Discovery functionality is integrated into the sync service.
     
     Args:
         registry: Service registry
         max_accounts: Maximum accounts to discover
     """
     logger.info("=" * 70)
-    logger.info(f"DISCOVERING TOKEN HOLDERS (max: {max_accounts})")
+    logger.info(f"DISCOVERING TOKEN HOLDERS (Max: {max_accounts})")
     logger.info("=" * 70)
     
+    # Discovery is handled by the sync service
     sync = await registry.get('sync')
     
-    # Discovery is integrated into sync service
-    discovered = await sync.discover_holders(max_accounts=max_accounts)
+    # Use the synchronizer's discover_accounts method
+    results = await sync.discover_accounts(max_accounts=max_accounts)
     
-    logger.info(f"\n✅ Discovered {len(discovered)} token holders")
+    logger.info(f"\n✅ Discovery complete:")
+    logger.info(f"  Total discovered: {results.get('accounts_discovered', 0)}")
+    logger.info(f"  Accounts processed: {results.get('accounts_processed', 0)}")
     logger.info("=" * 70)
 
 
 async def handle_sync(
     registry: ServiceRegistry,
-    sync_type: str = 'all',
-    max_accounts: Optional[int] = None,
-    force: bool = False
+    sync_type: str,
+    max_accounts: Optional[int],
+    force: bool
 ):
     """
     Synchronize blockchain data.
@@ -833,22 +848,31 @@ async def handle_sync(
         force: Force full resync
     """
     logger.info("=" * 70)
-    logger.info(f"SYNCHRONIZING BLOCKCHAIN DATA (type: {sync_type})")
+    logger.info(f"SYNCHRONIZING BLOCKCHAIN DATA (Type: {sync_type})")
     logger.info("=" * 70)
     
     sync = await registry.get('sync')
     
-    if force:
-        logger.info("Force sync requested - performing full resync")
-        await sync.sync_full(sync_type=sync_type, max_accounts=max_accounts)
+    if sync_type == 'all':
+        results = await sync.sync_all(
+            max_accounts=max_accounts,
+            force=force
+        )
     else:
-        await sync.sync_incremental(sync_type=sync_type, max_accounts=max_accounts)
+        results = await sync.sync_protocol(
+            protocol=sync_type,
+            max_accounts=max_accounts,
+            force=force
+        )
     
-    logger.info("\n✅ Synchronization complete")
+    logger.info(f"\n✅ Sync complete:")
+    logger.info(f"  Accounts synced: {results.get('accounts_synced', 0)}")
+    logger.info(f"  Transactions: {results.get('transactions', 0)}")
+    logger.info(f"  Duration: {results.get('duration', 'N/A')}")
     logger.info("=" * 70)
 
 
-async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'overview'):
+async def handle_analytics(registry: ServiceRegistry, analysis_type: str):
     """
     Run analytics.
     
@@ -857,32 +881,31 @@ async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'over
         analysis_type: Type of analysis
     """
     logger.info("=" * 70)
-    logger.info(f"RUNNING ANALYTICS (type: {analysis_type})")
+    logger.info(f"RUNNING ANALYTICS (Type: {analysis_type})")
     logger.info("=" * 70)
     
     analytics = await registry.get('analytics')
     
     if analysis_type == 'overview':
-        results = await analytics.get_overview()
+        results = await analytics.generate_overview()
     elif analysis_type == 'holders':
-        results = await analytics.get_holder_stats()
+        results = await analytics.analyze_holders()
     elif analysis_type == 'metrics':
-        results = await analytics.get_network_metrics()
+        results = await analytics.calculate_metrics()
     else:
-        results = await analytics.get_overview()
+        results = {'error': f'Unknown analysis type: {analysis_type}'}
     
-    logger.info(f"\n✅ Analytics complete")
+    logger.info("\n📊 Analytics Results:")
     for key, value in results.items():
         logger.info(f"  {key}: {value}")
-    
     logger.info("=" * 70)
 
 
 async def handle_visualize(
     registry: ServiceRegistry,
-    action: str = 'report',
-    format: str = 'html',
-    include_advanced: bool = False
+    action: str,
+    format: str,
+    include_advanced: bool
 ):
     """
     Generate visualizations.
@@ -947,75 +970,12 @@ async def handle_protocol_health(registry: ServiceRegistry):
     logger.info("\n" + "=" * 70)
 
 
-async def handle_scheduler_status(registry: ServiceRegistry):
+async def handle_serve(registry: ServiceRegistry, host: str = '0.0.0.0', 
+                      port: int = 8000, reload: bool = False):
     """
-    Display scheduler status and job information.
+    Start the FastAPI backend server.
     
-    Args:
-        registry: Service registry
-    """
-    logger.info("=" * 70)
-    logger.info("SCHEDULER STATUS")
-    logger.info("=" * 70)
-    
-    try:
-        scheduler = await registry.get('scheduler')
-        health = await scheduler.health_check()
-        
-        # Overall status
-        status_symbol = {
-            'healthy': '✅',
-            'degraded': '⚠️',
-            'unhealthy': '❌'
-        }.get(health['status'], '❓')
-        
-        logger.info(f"\n{status_symbol} Status: {health['status'].upper()}")
-        logger.info(f"Running: {'Yes' if health.get('running', False) else 'No'}")
-        
-        # Metrics
-        if 'metrics' in health:
-            metrics = health['metrics']
-            logger.info(f"\nMetrics:")
-            logger.info(f"  Total Jobs: {metrics.get('total_jobs', 0)}")
-            logger.info(f"  Enabled: {metrics.get('enabled_jobs', 0)}")
-            logger.info(f"  Currently Running: {metrics.get('running_jobs', 0)}")
-            logger.info(f"  Success Rate: {metrics.get('overall_success_rate', 0):.1%}")
-        
-        # Job details
-        if 'jobs' in health:
-            logger.info(f"\nJobs:")
-            for job in health['jobs']:
-                job_status = '✅' if job.get('enabled', False) else '❌'
-                circuit = job.get('circuit_state', 'unknown')
-                circuit_symbol = {
-                    'closed': '✅',
-                    'half_open': '⚠️',
-                    'open': '❌'
-                }.get(circuit, '❓')
-                
-                logger.info(f"\n  {job_status} {job.get('name', 'Unknown')}")
-                logger.info(f"     Next Run: {job.get('next_run', 'N/A')}")
-                logger.info(f"     Success Rate: {job.get('success_rate', 0):.1%}")
-                logger.info(f"     Avg Duration: {job.get('avg_duration_ms', 0):.0f}ms")
-                logger.info(f"     Circuit: {circuit_symbol} {circuit}")
-        
-    except Exception as e:
-        logger.error(f"Error getting scheduler status: {e}", exc_info=True)
-    
-    logger.info("\n" + "=" * 70)
-
-
-async def handle_serve(
-    registry: ServiceRegistry, 
-    host: str = '0.0.0.0', 
-    port: int = 8000, 
-    reload: bool = False
-):
-    """
-    Start the FastAPI backend server with scheduler.
-    
-    This exposes REST endpoints for the www server to consume and
-    starts the background scheduler for automated tasks.
+    This exposes REST endpoints for the www server to consume.
     
     Args:
         registry: Service registry
@@ -1024,32 +984,20 @@ async def handle_serve(
         reload: Enable auto-reload for development
     """
     logger.info("=" * 70)
-    logger.info(f"STARTING UBEC PROTOCOL SERVER")
-    logger.info(f"API: http://{host}:{port}")
+    logger.info(f"STARTING API SERVER (http://{host}:{port})")
     logger.info("=" * 70)
     
     # Get the API service
     api_service = await registry.get('api_service')
+    
+    # The FastAPI app is available at api_service.app
     app = api_service.app
     
-    # Start scheduler service
-    scheduler = None
-    try:
-        logger.info("\n🔄 Initializing Scheduler Service...")
-        scheduler = await registry.get('scheduler')
-        await scheduler.start()
-        logger.info("✅ Scheduler started - automated tasks active")
-    except Exception as e:
-        logger.error(f"⚠️  Failed to start scheduler: {e}", exc_info=True)
-        logger.warning("Server will continue without scheduler")
-    
-    logger.info(f"\n✅ Server ready")
-    logger.info(f"📊 Swagger docs: http://{host}:{port}/docs")
-    logger.info(f"📖 ReDoc: http://{host}:{port}/redoc")
-    logger.info(f"💚 Health: http://{host}:{port}/health")
-    if scheduler:
-        logger.info(f"⏰ Scheduler: Active (background tasks running)")
-    logger.info("\n👉 Press Ctrl+C to stop")
+    logger.info(f"\n✅ API Server ready")
+    logger.info(f"Swagger docs: http://{host}:{port}/docs")
+    logger.info(f"ReDoc: http://{host}:{port}/redoc")
+    logger.info(f"Health: http://{host}:{port}/health")
+    logger.info("\nPress Ctrl+C to stop")
     logger.info("=" * 70)
     
     # Run the server
@@ -1061,23 +1009,7 @@ async def handle_serve(
         log_level="info"
     )
     server = uvicorn.Server(config)
-    
-    try:
-        await server.serve()
-    except KeyboardInterrupt:
-        logger.info("\n\n⚠️  Shutting down...")
-        
-        # Stop scheduler gracefully
-        if scheduler:
-            try:
-                logger.info("Stopping scheduler...")
-                await scheduler.stop()
-                logger.info("✅ Scheduler stopped")
-            except Exception as e:
-                logger.error(f"Error stopping scheduler: {e}")
-        
-        logger.info("✅ Server stopped")
-        raise  # Re-raise to ensure proper cleanup
+    await server.serve()
 
 
 # ========================================================================
@@ -1145,11 +1077,8 @@ async def main():
     # Protocol health command
     subparsers.add_parser('protocol-health', help='Check protocol health')
     
-    # Scheduler status command
-    subparsers.add_parser('scheduler-status', help='Display scheduler status')
-    
-    # Serve command
-    serve_parser = subparsers.add_parser('serve', help='Start API server with scheduler')
+    # Serve command (NEW)
+    serve_parser = subparsers.add_parser('serve', help='Start API server')
     serve_parser.add_argument('--host', default='0.0.0.0',
                             help='Host to bind to')
     serve_parser.add_argument('--port', type=int, default=8000,
@@ -1166,7 +1095,7 @@ async def main():
     print("DEBUG: About to display banner")
     logger.info("")
     logger.info("╔" + "═" * 68 + "╗")
-    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.1.0" + " " * 27 + "║")
+    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.0.0" + " " * 27 + "║")
     logger.info("║" + " " * 18 + "Main Orchestrator" + " " * 33 + "║")
     logger.info("╚" + "═" * 68 + "╝")
     logger.info("")
@@ -1217,9 +1146,6 @@ async def main():
                 
             elif args.command == 'protocol-health':
                 await handle_protocol_health(registry)
-                
-            elif args.command == 'scheduler-status':
-                await handle_scheduler_status(registry)
                 
             elif args.command == 'serve':
                 await handle_serve(
