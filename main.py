@@ -846,13 +846,13 @@ async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'over
     analytics = await registry.get('analytics')
     
     if analysis_type == 'overview':
-        results = await analytics.get_overview()
+        results = await analytics.get_distribution_overview()
     elif analysis_type == 'holders':
-        results = await analytics.get_holder_stats()
+        results = await analytics.get_top_holders(limit=50)
     elif analysis_type == 'metrics':
         results = await analytics.get_network_metrics()
     else:
-        results = await analytics.get_overview()
+        results = await analytics.get_distribution_overview()
     
     logger.info(f"\n✅ Analytics complete")
     for key, value in results.items():
