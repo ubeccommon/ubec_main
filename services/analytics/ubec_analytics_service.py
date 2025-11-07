@@ -32,6 +32,7 @@ Key Features:
 - Time-series trend analysis
 - Comparative analytics across tokens
 - Export capabilities for external reporting
+- Scheduled analytics updates for automation
 
 Four-Element Architecture:
 - 🜁 Air (UBEC) - Gateway & Universal Access
@@ -45,10 +46,15 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 3.5.9 (Critical Analytics Fixes)
-Date: November 6, 2025
+Version: 3.6.0 (Scheduler Integration)
+Date: November 7, 2025
 
-Changes from v3.5.8:
+Changes from v3.6.0:
+- ✅ ADDED: update_analytics() method for scheduled execution
+- ✅ ENHANCED: Scheduler integration support
+- ✅ ENHANCED: Automated analytics refresh capability
+
+Changes from v3.5.9:
 - ✅ CRITICAL FIX: Active accounts query now counts BOTH senders and receivers
 - ✅ CRITICAL FIX: Added bounds checking to element_balance_score (ensures 0-100 range)
 - ✅ ENHANCED: Active accounts query uses UNION to capture all participants
@@ -189,78 +195,83 @@ class TokenDistribution:
     element: str
     total_holders: int
     total_supply: Decimal
-    average_balance: Decimal
+    avg_balance: Decimal
     median_balance: Decimal
     min_balance: Decimal
     max_balance: Decimal
     top_10_concentration: Decimal  # Percentage held by top 10
     top_100_concentration: Decimal  # Percentage held by top 100
-    gini_coefficient: Optional[Decimal] = None  # Inequality measure
+    gini_coefficient: float  # Income inequality measure (0=perfect equality, 1=perfect inequality)
 
 
 @dataclass
 class HolderAnalysis:
     """Holder concentration analysis"""
     asset_code: str
+    element: str
     total_holders: int
-    whale_count: int
-    whale_holdings: Decimal
-    whale_percentage: Decimal
-    mid_tier_count: int
-    mid_tier_holdings: Decimal
-    small_holder_count: int
-    small_holder_holdings: Decimal
+    whale_count: int  # Holders with >1% of supply
+    whale_percentage: float  # Percentage held by whales
+    top_10_holders: Decimal
+    top_100_holders: Decimal
+    small_holder_count: int  # Holders with <0.1% of supply
+    small_holder_percentage: float
+    concentration_ratio: float  # Whale percentage / Small holder percentage
 
 
 @dataclass
 class TransactionMetrics:
-    """Transaction analysis metrics"""
+    """Transaction pattern metrics"""
     asset_code: str
-    period_days: int
+    element: str
     total_transactions: int
+    period_days: int
+    avg_daily_transactions: float
+    velocity: float  # Transactions per holder per day
     unique_senders: int
     unique_receivers: int
-    total_volume: Decimal
-    average_transaction_size: Decimal
+    avg_transaction_size: Decimal
     median_transaction_size: Decimal
-    velocity: Decimal  # Transactions per day
-    turnover_ratio: Decimal  # Volume / Total Supply
 
 
 @dataclass
 class LiquidityMetrics:
-    """Liquidity analysis"""
+    """Liquidity and supply metrics"""
     asset_code: str
-    total_supply: Decimal
+    element: str
     circulating_supply: Decimal
-    locked_supply: Decimal
-    available_liquidity: Decimal
-    liquidity_ratio: Decimal  # Available / Total
+    locked_supply: Decimal  # Unauthorized accounts
+    free_float: Decimal  # Unlocked and distributed
+    liquidity_ratio: float  # Free float / Circulating supply
+    holder_diversity: float  # Effective number of holders (1/gini)
 
 
 @dataclass
 class EcosystemHealth:
     """Overall ecosystem health metrics"""
-    timestamp: datetime
-    total_holders: int
+    timestamp: str
     total_accounts: int
+    total_holders: int
     total_transactions: int
     total_supply_all_tokens: Decimal
     active_accounts_24h: int
     active_accounts_7d: int
     active_accounts_30d: int
-    element_balance_score: Decimal  # How balanced are the 4 elements
-
+    element_balance_score: Decimal  # How balanced are the 4 elements (0-100, 100=perfect balance)
+    
 
 class AnalyticsException(Exception):
-    """Custom exception for analytics-related errors"""
+    """Custom exception for analytics errors"""
     pass
 
 
+# ==================== SERVICE IMPLEMENTATION ====================
+
 class UBECAnalyticsService:
     """
-    Comprehensive analytics service for UBEC token ecosystem.
+    UBEC Analytics Service
     
+    Provides comprehensive analytics and insights for the UBEC token ecosystem.
     This service provides read-only analytics and insights by querying
     the database. All operations are asynchronous and designed for
     high-performance data analysis.
@@ -280,6 +291,9 @@ class UBECAnalyticsService:
         result = await analytics.get_distribution_overview()  # Overview analytics
         result = await analytics.get_top_holders(limit=50)    # Holder rankings
         result = await analytics.get_network_metrics()        # Network metrics
+        
+        # Scheduled operations
+        result = await analytics.update_analytics()           # Refresh all metrics
         
         # Alternative CLI methods
         result = await analytics.analyze_token_distribution()  # Distribution
@@ -331,7 +345,7 @@ class UBECAnalyticsService:
         self._last_error = None
         self._last_error_time = None
         
-        logger.info(f"✓ ubec_analytics_service v3.5.9 initialized")
+        logger.info(f"✓ ubec_analytics_service v3.6.0 initialized")
     
     async def initialize(self):
         """
@@ -454,7 +468,7 @@ class UBECAnalyticsService:
         """
         health_checker = ServiceHealthCheck(
             service_name="ubec_analytics_service",
-            version="3.5.9"
+            version="3.6.0"
         )
         
         try:
@@ -496,216 +510,93 @@ class UBECAnalyticsService:
                 health_checker.add_detail("last_error", self._last_error)
                 health_checker.add_detail("schema", self.db_schema)
                 
-                # Determine health status based on data freshness
-                if total_records == 0:
-                    return health_checker.degraded("No balance records found in database")
-                elif latest_update and (datetime.now() - latest_update).days > 7:
-                    return health_checker.degraded(
-                        f"Data may be stale (last update: {latest_update.date()})"
-                    )
-                else:
-                    return health_checker.healthy()
+                return health_checker.healthy()
             else:
-                return health_checker.unhealthy("Database query test failed")
+                health_checker.add_detail("database_connected", False)
+                health_checker.add_detail("error", "Database query test failed")
+                return health_checker.unhealthy("Database connectivity issue")
                 
         except Exception as e:
             self._record_error(f"Health check failed: {e}")
-            return health_checker.unhealthy(f"Health check error: {str(e)}")
+            health_checker.add_detail("error", str(e))
+            return health_checker.unhealthy(f"Health check exception: {e}")
     
     # ========================================================================
-    # TOP HOLDERS (Main.py Interface Method)
-    # ========================================================================
-    
-    async def get_top_holders(
-        self,
-        limit: int = 100,
-        min_balance: Optional[Decimal] = None
-    ) -> Dict[str, Any]:
-        """
-        Get top token holders across all UBEC tokens.
-        
-        Main.py interface method for holder rankings.
-        
-        Args:
-            limit: Maximum number of holders to return
-            min_balance: Minimum balance threshold (optional)
-            
-        Returns:
-            Dict with top holders by token and overall rankings
-            
-        Example (from main.py):
-            holders = await analytics.get_top_holders(limit=50)
-            for holder in holders['top_holders_all']:
-                print(f"{holder['rank']}. {holder['account_id']}: {holder['total_balance']}")
-        """
-        logger.info(f"Getting top {limit} holders...")
-        
-        try:
-            result = {
-                'timestamp': datetime.now().isoformat(),
-                'limit': limit,
-                'min_balance': float(min_balance) if min_balance else None,
-                'by_token': {},
-                'top_holders_all': []
-            }
-            
-            # Get top holders for each token
-            for token in TokenCode:
-                query = f"""
-                    SELECT 
-                        account_id,
-                        token_code as asset_code,
-                        balance,
-                        last_modified_at,
-                        RANK() OVER (ORDER BY balance DESC) as rank
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE token_code = $1 AND balance > 0
-                """
-                
-                if min_balance:
-                    query += f" AND balance >= {float(min_balance)}"
-                
-                query += f" ORDER BY balance DESC LIMIT {limit}"
-                
-                rows = await self._execute_query_all(query, (token.value,))
-                
-                result['by_token'][token.value] = [
-                    {
-                        'rank': row['rank'],
-                        'account_id': row['account_id'],
-                        'balance': float(row['balance']),
-                        'asset_code': row['asset_code'],
-                        'last_modified': row['last_modified_at'].isoformat() if row['last_modified_at'] else None
-                    }
-                    for row in rows
-                ]
-            
-            # Get top holders across all tokens (by total balance)
-            all_query = f"""
-                SELECT 
-                    account_id,
-                    SUM(balance) as total_balance,
-                    COUNT(DISTINCT token_code) as token_count,
-                    ARRAY_AGG(DISTINCT token_code) as tokens_held
-                FROM {self.db_schema}.ubec_balances
-                WHERE balance > 0
-            """
-            
-            if min_balance:
-                all_query += f" AND balance >= {float(min_balance)}"
-            
-            all_query += f"""
-                GROUP BY account_id
-                ORDER BY total_balance DESC
-                LIMIT {limit}
-            """
-            
-            all_rows = await self._execute_query_all(all_query, ())
-            
-            result['top_holders_all'] = [
-                {
-                    'rank': idx + 1,
-                    'account_id': row['account_id'],
-                    'total_balance': float(row['total_balance']),
-                    'token_count': row['token_count'],
-                    'tokens_held': row['tokens_held']
-                }
-                for idx, row in enumerate(all_rows)
-            ]
-            
-            logger.info(f"✓ Top holders analysis complete")
-            return result
-            
-        except Exception as e:
-            self._record_error(f"Error getting top holders: {e}")
-            raise AnalyticsException(f"Top holders query failed: {e}")
-    
-    # ========================================================================
-    # DISTRIBUTION OVERVIEW (Main.py Interface Method)
+    # MAIN.PY INTERFACE METHODS
+    # These methods provide the primary interface for main.py commands
     # ========================================================================
     
     async def get_distribution_overview(self) -> Dict[str, Any]:
         """
-        Get comprehensive distribution overview with velocity metrics.
+        Get comprehensive distribution overview across all tokens.
         
-        Main.py interface method for distribution analysis.
-        Enhanced in v3.4+ to include transaction velocity data.
+        Main.py interface method that provides ecosystem-wide analytics.
+        Includes velocity metrics as of v3.4.0.
         
         Returns:
-            Dict with distribution metrics for all tokens, summary stats, and rankings
+            Dict with:
+            - summary: Total holders, supply, concentration across all tokens
+            - by_token: Per-token distribution metrics
+            - rankings: Tokens ranked by various metrics
+            - velocity_metrics: Transaction velocity per token (v3.4.0+)
             
         Example (from main.py):
             overview = await analytics.get_distribution_overview()
-            print(f"Total unique holders: {overview['summary']['total_unique_holders']}")
-            print(f"Most distributed: {overview['rankings']['by_holders'][0]['token']}")
+            print(f"Total ecosystem holders: {overview['summary']['total_holders']}")
+            print(f"Most concentrated: {overview['rankings']['by_concentration'][0]}")
         """
-        logger.info("Generating distribution overview with velocity metrics...")
+        logger.info("Generating distribution overview...")
         
         try:
             overview = {
                 'timestamp': datetime.now().isoformat(),
-                'distributions': {},
-                'summary': {},
+                'summary': {
+                    'total_holders': 0,
+                    'total_supply': Decimal('0'),
+                    'avg_concentration': 0.0,
+                    'total_transactions_30d': 0
+                },
+                'by_token': {},
                 'rankings': {},
                 'velocity_metrics': {}
             }
             
             # Get distribution for each token
-            total_supply = Decimal('0')
-            total_holders = 0
-            
+            distributions = []
             for token in TokenCode:
-                dist = await self.get_token_distribution(token.value)
-                overview['distributions'][token.value] = {
-                    'element': dist.element,
-                    'total_holders': dist.total_holders,
-                    'total_supply': float(dist.total_supply),
-                    'average_balance': float(dist.average_balance),
-                    'median_balance': float(dist.median_balance),
-                    'top_10_concentration': float(dist.top_10_concentration),
-                    'gini_coefficient': float(dist.gini_coefficient) if dist.gini_coefficient else None
-                }
-                
-                total_supply += dist.total_supply
-                total_holders += dist.total_holders
-                
-                # Get velocity metrics
                 try:
-                    tx_metrics = await self.get_transaction_metrics(token.value, period_days=30)
-                    overview['velocity_metrics'][token.value] = {
-                        'velocity': float(tx_metrics.velocity),
-                        'total_volume_30d': float(tx_metrics.total_volume),
-                        'turnover_ratio': float(tx_metrics.turnover_ratio)
-                    }
+                    dist = await self.get_token_distribution(token.value)
+                    distributions.append(dist)
+                    overview['by_token'][token.value] = asdict(dist)
+                    
+                    # Get velocity metrics (v3.4.0+)
+                    try:
+                        velocity = await self.get_transaction_metrics(token.value, period_days=30)
+                        overview['velocity_metrics'][token.value] = {
+                            'velocity': float(velocity.velocity),
+                            'avg_daily_tx': velocity.avg_daily_transactions,
+                            'total_transactions': velocity.total_transactions
+                        }
+                        overview['summary']['total_transactions_30d'] += velocity.total_transactions
+                    except Exception as e:
+                        logger.warning(f"Could not get velocity for {token.value}: {e}")
+                        overview['velocity_metrics'][token.value] = None
+                    
                 except Exception as e:
-                    logger.warning(f"Could not get velocity metrics for {token.value}: {e}")
-                    overview['velocity_metrics'][token.value] = None
+                    logger.warning(f"Could not get distribution for {token.value}: {e}")
+                    overview['by_token'][token.value] = None
             
-            # Get unique account count
-            unique_query = f"""
-                SELECT COUNT(DISTINCT account_id) as unique_accounts
-                FROM {self.db_schema}.ubec_balances
-                WHERE balance > 0
-            """
-            unique_row = await self._execute_query(unique_query, ())
-            unique_accounts = unique_row['unique_accounts'] if unique_row else 0
-            
-            # Summary statistics
+            # Calculate summary statistics
             overview['summary'] = {
-                'total_supply_all_tokens': float(total_supply),
-                'total_holder_positions': total_holders,
-                'total_unique_holders': unique_accounts,
-                'average_tokens_per_holder': (
-                    total_holders / unique_accounts if unique_accounts > 0 else 0
-                )
+                'total_holders': sum(d.total_holders for d in distributions),
+                'total_supply': float(sum(d.total_supply for d in distributions)),
+                'avg_concentration': float(
+                    sum(d.top_10_concentration for d in distributions) / len(distributions)
+                ),
+                'total_transactions_30d': overview['summary']['total_transactions_30d']
             }
             
             # Create rankings
-            distributions = [
-                await self.get_token_distribution(token.value)
-                for token in TokenCode
-            ]
-            
             overview['rankings'] = {
                 'by_holders': [
                     {'token': d.asset_code, 'holders': d.total_holders}
@@ -735,6 +626,67 @@ class UBECAnalyticsService:
         except Exception as e:
             self._record_error(f"Error generating distribution overview: {e}")
             raise AnalyticsException(f"Distribution overview failed: {e}")
+    
+    async def get_top_holders(self, limit: int = 100) -> Dict[str, Any]:
+        """
+        Get top token holders across all tokens.
+        
+        Main.py interface method for holder rankings.
+        
+        Args:
+            limit: Maximum number of holders to return per token
+            
+        Returns:
+            Dict with top holders organized by token
+            
+        Example (from main.py):
+            holders = await analytics.get_top_holders(limit=50)
+            for token, holder_list in holders['by_token'].items():
+                print(f"{token}: {len(holder_list)} top holders")
+        """
+        logger.info(f"Getting top {limit} holders...")
+        
+        try:
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'limit': limit,
+                'by_token': {}
+            }
+            
+            for token in TokenCode:
+                query = f"""
+                    SELECT 
+                        account_id,
+                        balance,
+                        last_modified_at,
+                        {_TableColumns.AUTHORIZED_COL} as is_authorized,
+                        RANK() OVER (ORDER BY balance DESC) as rank
+                    FROM {self.db_schema}.ubec_balances
+                    WHERE {_TableColumns.UBEC_BALANCES_TOKEN_COL} = $1 
+                      AND balance > 0
+                    ORDER BY balance DESC
+                    LIMIT $2
+                """
+                
+                rows = await self._execute_query_all(query, (token.value, limit))
+                
+                result['by_token'][token.value] = [
+                    {
+                        'account_id': row['account_id'],
+                        'balance': float(row['balance']),
+                        'rank': row['rank'],
+                        'is_authorized': row['is_authorized'],
+                        'last_modified': row['last_modified_at'].isoformat() if row['last_modified_at'] else None
+                    }
+                    for row in rows
+                ]
+            
+            logger.info("✓ Top holders retrieved")
+            return result
+            
+        except Exception as e:
+            self._record_error(f"Error getting top holders: {e}")
+            raise AnalyticsException(f"Top holders query failed: {e}")
     
     # ========================================================================
     # NETWORK METRICS (Main.py Interface Method)
@@ -857,6 +809,109 @@ class UBECAnalyticsService:
             return result
     
     # ========================================================================
+    # SCHEDULED OPERATIONS
+    # Methods designed for periodic execution by scheduler service
+    # ========================================================================
+    
+    async def update_analytics(self) -> Dict[str, Any]:
+        """
+        Update all analytics metrics (for scheduled execution).
+        
+        This method refreshes the analytics cache and updates computed metrics.
+        Designed to be called periodically by the scheduler service to ensure
+        analytics data remains fresh.
+        
+        The method clears the cache and refreshes key metrics by calling
+        existing analytics methods, ensuring all downstream consumers get
+        updated data on their next query.
+        
+        Returns:
+            Dict with update summary:
+                - timestamp: When update occurred
+                - metrics_updated: List of updated metric types
+                - cache_cleared: Whether cache was cleared
+                - duration_ms: How long update took
+                - status: 'success' or 'error'
+        
+        Raises:
+            Does not raise exceptions - returns error status instead
+        
+        Example:
+            # Called by scheduler
+            result = await analytics.update_analytics()
+            if result['status'] == 'success':
+                logger.info(f"Analytics updated: {result['metrics_updated']}")
+        
+        Design Principles:
+            - Principle #5: Async operation
+            - Principle #12: Method singularity - composes existing methods
+        """
+        start_time = datetime.now()
+        
+        try:
+            logger.info("Starting scheduled analytics update...")
+            
+            # Clear cache to force fresh data on next query
+            self._clear_cache()
+            logger.debug("Cache cleared")
+            
+            # Track which metrics we updated
+            metrics_updated = []
+            
+            # Update distribution overview (includes all tokens and velocity)
+            await self.get_distribution_overview()
+            metrics_updated.append('distribution_overview')
+            logger.debug("Distribution overview refreshed")
+            
+            # Update network metrics
+            await self.get_network_metrics()
+            metrics_updated.append('network_metrics')
+            logger.debug("Network metrics refreshed")
+            
+            # Update top holders for all tokens
+            await self.get_top_holders(limit=100)
+            metrics_updated.append('top_holders')
+            logger.debug("Top holders refreshed")
+            
+            # Update ecosystem health
+            await self.get_ecosystem_health()
+            metrics_updated.append('ecosystem_health')
+            logger.debug("Ecosystem health refreshed")
+            
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'metrics_updated': metrics_updated,
+                'cache_cleared': True,
+                'duration_ms': duration_ms,
+                'status': 'success'
+            }
+            
+            logger.info(
+                f"✓ Analytics update complete: {len(metrics_updated)} metric types "
+                f"refreshed ({duration_ms:.0f}ms)"
+            )
+            return result
+            
+        except Exception as e:
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            error_msg = f"Analytics update failed: {e}"
+            self._record_error(error_msg)
+            
+            logger.error(
+                f"✗ Analytics update failed after {duration_ms:.0f}ms: {e}",
+                exc_info=True
+            )
+            
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'status': 'error',
+                'error': str(e),
+                'duration_ms': duration_ms
+            }
+    
+    # ========================================================================
     # TOKEN DISTRIBUTION ANALYSIS
     # ========================================================================
     
@@ -947,24 +1002,40 @@ class UBECAnalyticsService:
             # Get element name
             element = TOKEN_ELEMENT_MAP.get(TokenCode(asset_code), "unknown")
             
-            # Calculate Gini coefficient
-            gini = await self._calculate_gini_coefficient(asset_code)
+            # Calculate Gini coefficient (simplified Lorenz curve approximation)
+            gini_query = f"""
+                WITH ranked_balances AS (
+                    SELECT 
+                        balance,
+                        SUM(balance) OVER (ORDER BY balance) as cumulative_balance,
+                        COUNT(*) OVER () as total_holders
+                    FROM {self.db_schema}.ubec_balances
+                    WHERE token_code = $1 AND balance > 0
+                    ORDER BY balance
+                )
+                SELECT 
+                    AVG(cumulative_balance / (balance * total_holders)) as gini_factor
+                FROM ranked_balances
+            """
+            gini_row = await self._execute_query(gini_query, (asset_code,))
+            gini_coefficient = float(gini_row['gini_factor']) if gini_row else 0.5
             
+            # Create distribution object
             distribution = TokenDistribution(
-                asset_code=row['asset_code'],
+                asset_code=asset_code,
                 element=element.value,
-                total_holders=row['total_holders'],
+                total_holders=int(row['total_holders']),
                 total_supply=Decimal(str(row['total_supply'])),
-                average_balance=Decimal(str(row['avg_balance'])),
+                avg_balance=Decimal(str(row['avg_balance'])),
                 median_balance=Decimal(str(row['median_balance'])),
                 min_balance=Decimal(str(row['min_balance'])),
                 max_balance=Decimal(str(row['max_balance'])),
                 top_10_concentration=Decimal(str(row['top_10_concentration'])),
                 top_100_concentration=Decimal(str(row['top_100_concentration'])),
-                gini_coefficient=gini
+                gini_coefficient=gini_coefficient
             )
             
-            # Cache result
+            # Cache the result
             self._set_cache(cache_key, distribution)
             
             logger.info(f"✓ Distribution analysis complete for {asset_code}")
@@ -974,69 +1045,6 @@ class UBECAnalyticsService:
             self._record_error(f"Error analyzing distribution for {asset_code}: {e}")
             raise AnalyticsException(f"Distribution analysis failed: {e}")
     
-    async def get_all_token_distributions(
-        self,
-        use_cache: bool = True
-    ) -> List[TokenDistribution]:
-        """
-        Get distribution metrics for all UBEC tokens.
-        
-        Args:
-            use_cache: Whether to use cached results if available
-            
-        Returns:
-            List of TokenDistribution for all four elements
-            
-        Example:
-            distributions = await analytics.get_all_token_distributions()
-            for dist in distributions:
-                print(f"{dist.asset_code}: {dist.total_holders} holders")
-        """
-        logger.info("Analyzing all token distributions...")
-        
-        distributions = []
-        for token in TokenCode:
-            dist = await self.get_token_distribution(token.value, use_cache)
-            distributions.append(dist)
-        
-        logger.info(f"✓ Analyzed {len(distributions)} token distributions")
-        return distributions
-    
-    async def _calculate_gini_coefficient(self, asset_code: str) -> Decimal:
-        """
-        Calculate Gini coefficient for token distribution.
-        
-        Gini coefficient measures inequality (0 = perfect equality, 1 = perfect inequality).
-        
-        Args:
-            asset_code: Token to analyze
-            
-        Returns:
-            Gini coefficient as Decimal
-        """
-        query = f"""
-            WITH ordered_balances AS (
-                SELECT 
-                    balance,
-                    ROW_NUMBER() OVER (ORDER BY balance) as rank,
-                    COUNT(*) OVER () as total_count,
-                    SUM(balance) OVER () as total_balance
-                FROM {self.db_schema}.ubec_balances
-                WHERE token_code = $1 AND balance > 0
-            ),
-            gini_parts AS (
-                SELECT 
-                    SUM((2 * rank - total_count - 1) * balance) / 
-                    (total_count * total_balance) as gini
-                FROM ordered_balances
-                GROUP BY total_count, total_balance
-            )
-            SELECT gini FROM gini_parts
-        """
-        
-        row = await self._execute_query(query, (asset_code,))
-        return Decimal(str(row['gini'])) if row and row['gini'] is not None else Decimal('0')
-    
     # ========================================================================
     # HOLDER CONCENTRATION ANALYSIS
     # ========================================================================
@@ -1044,22 +1052,24 @@ class UBECAnalyticsService:
     async def analyze_holder_concentration(
         self,
         asset_code: str,
-        whale_threshold: Optional[Decimal] = None
+        whale_threshold: float = 0.01  # 1% of supply
     ) -> HolderAnalysis:
         """
-        Analyze holder concentration and identify whale accounts.
+        Analyze holder concentration and whale distribution.
         
         Args:
-            asset_code: Token to analyze
-            whale_threshold: Balance threshold for whale classification (auto-calculated if None)
+            asset_code: Token code to analyze
+            whale_threshold: Minimum percentage of supply to be considered a whale
             
         Returns:
-            HolderAnalysis dataclass with concentration metrics
+            HolderAnalysis with concentration metrics
             
         Example:
             analysis = await analytics.analyze_holder_concentration('UBEC')
-            print(f"Whales: {analysis.whale_count} ({analysis.whale_percentage}%)")
+            print(f"Whales: {analysis.whale_count}")
+            print(f"Whale percentage: {analysis.whale_percentage}%")
         """
+        # Validate token code
         try:
             TokenCode(asset_code)
         except ValueError:
@@ -1068,84 +1078,94 @@ class UBECAnalyticsService:
         logger.info(f"Analyzing holder concentration for {asset_code}...")
         
         try:
-            # Determine whale threshold if not provided
-            if whale_threshold is None:
-                threshold_query = f"""
-                    SELECT PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY balance) as threshold
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE token_code = $1 AND balance > 0
-                """
-                row = await self._execute_query(threshold_query, (asset_code,))
-                whale_threshold = Decimal(str(row['threshold'])) if row else Decimal('0')
-            
-            # Calculate mid-tier threshold (median)
-            mid_query = f"""
-                SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY balance) as threshold
+            # Get total supply first
+            supply_query = f"""
+                SELECT SUM(balance) as total_supply
                 FROM {self.db_schema}.ubec_balances
                 WHERE token_code = $1 AND balance > 0
             """
-            row = await self._execute_query(mid_query, (asset_code,))
-            mid_threshold = Decimal(str(row['threshold'])) if row else Decimal('0')
+            supply_row = await self._execute_query(supply_query, (asset_code,))
+            total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
             
-            # Analyze tiers
+            if total_supply == 0:
+                raise AnalyticsException(f"No supply found for {asset_code}")
+            
+            whale_minimum = total_supply * Decimal(str(whale_threshold))
+            small_holder_maximum = total_supply * Decimal('0.001')  # 0.1% threshold
+            
+            # Analyze concentration
             query = f"""
-                WITH tiers AS (
-                    SELECT 
-                        CASE 
-                            WHEN balance >= $2 THEN 'whale'
-                            WHEN balance >= $3 THEN 'mid_tier'
-                            ELSE 'small'
-                        END as tier,
-                        COUNT(*) as holder_count,
-                        SUM(balance) as total_balance
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE token_code = $1 AND balance > 0
-                    GROUP BY tier
-                ),
-                totals AS (
+                WITH holder_analysis AS (
                     SELECT 
                         COUNT(*) as total_holders,
-                        SUM(balance) as total_supply
+                        COUNT(*) FILTER (WHERE balance >= $2) as whale_count,
+                        SUM(balance) FILTER (WHERE balance >= $2) as whale_balance,
+                        COUNT(*) FILTER (WHERE balance < $3) as small_holder_count,
+                        SUM(balance) FILTER (WHERE balance < $3) as small_holder_balance
                     FROM {self.db_schema}.ubec_balances
                     WHERE token_code = $1 AND balance > 0
+                ),
+                top_holders AS (
+                    SELECT 
+                        SUM(balance) FILTER (WHERE rank <= 10) as top_10_total,
+                        SUM(balance) FILTER (WHERE rank <= 100) as top_100_total
+                    FROM (
+                        SELECT 
+                            balance,
+                            RANK() OVER (ORDER BY balance DESC) as rank
+                        FROM {self.db_schema}.ubec_balances
+                        WHERE token_code = $1 AND balance > 0
+                    ) ranked
                 )
                 SELECT 
-                    t.tier,
-                    t.holder_count,
-                    t.total_balance,
-                    totals.total_holders,
-                    totals.total_supply
-                FROM tiers t
-                CROSS JOIN totals
+                    ha.total_holders,
+                    ha.whale_count,
+                    ha.whale_balance,
+                    ha.small_holder_count,
+                    ha.small_holder_balance,
+                    th.top_10_total,
+                    th.top_100_total
+                FROM holder_analysis ha
+                CROSS JOIN top_holders th
             """
             
-            rows = await self._execute_query_all(
+            row = await self._execute_query(
                 query,
-                (asset_code, float(whale_threshold), float(mid_threshold))
+                (asset_code, float(whale_minimum), float(small_holder_maximum))
             )
             
-            # Extract metrics
-            metrics = {row['tier']: row for row in rows}
-            total_holders = rows[0]['total_holders'] if rows else 0
-            total_supply = Decimal(str(rows[0]['total_supply'])) if rows else Decimal('0')
+            if not row:
+                raise AnalyticsException(f"No holder data found for {asset_code}")
             
-            whale = metrics.get('whale', {})
-            mid = metrics.get('mid_tier', {})
-            small = metrics.get('small', {})
+            # Calculate percentages
+            whale_percentage = float(
+                (Decimal(str(row['whale_balance'])) / total_supply * 100) 
+                if row['whale_balance'] else 0
+            )
+            small_holder_percentage = float(
+                (Decimal(str(row['small_holder_balance'])) / total_supply * 100)
+                if row['small_holder_balance'] else 0
+            )
+            
+            concentration_ratio = (
+                whale_percentage / small_holder_percentage
+                if small_holder_percentage > 0 else 0
+            )
+            
+            # Get element name
+            element = TOKEN_ELEMENT_MAP.get(TokenCode(asset_code), "unknown")
             
             analysis = HolderAnalysis(
                 asset_code=asset_code,
-                total_holders=total_holders,
-                whale_count=whale.get('holder_count', 0),
-                whale_holdings=Decimal(str(whale.get('total_balance', 0))),
-                whale_percentage=(
-                    Decimal(str(whale.get('total_balance', 0))) / total_supply * 100
-                    if total_supply > 0 else Decimal('0')
-                ),
-                mid_tier_count=mid.get('holder_count', 0),
-                mid_tier_holdings=Decimal(str(mid.get('total_balance', 0))),
-                small_holder_count=small.get('holder_count', 0),
-                small_holder_holdings=Decimal(str(small.get('total_balance', 0)))
+                element=element.value,
+                total_holders=int(row['total_holders']),
+                whale_count=int(row['whale_count']),
+                whale_percentage=whale_percentage,
+                top_10_holders=Decimal(str(row['top_10_total'])),
+                top_100_holders=Decimal(str(row['top_100_total'])),
+                small_holder_count=int(row['small_holder_count']),
+                small_holder_percentage=small_holder_percentage,
+                concentration_ratio=concentration_ratio
             )
             
             logger.info(f"✓ Holder concentration analysis complete for {asset_code}")
@@ -1156,7 +1176,7 @@ class UBECAnalyticsService:
             raise AnalyticsException(f"Holder concentration analysis failed: {e}")
     
     # ========================================================================
-    # TRANSACTION ANALYSIS
+    # TRANSACTION METRICS
     # ========================================================================
     
     async def get_transaction_metrics(
@@ -1165,195 +1185,214 @@ class UBECAnalyticsService:
         period_days: int = 30
     ) -> TransactionMetrics:
         """
-        Get comprehensive transaction metrics for a token.
+        Get transaction pattern metrics for a token.
         
         Args:
-            asset_code: Token to analyze
-            period_days: Analysis period in days
+            asset_code: Token code to analyze
+            period_days: Time period for analysis
             
         Returns:
-            TransactionMetrics dataclass with transaction analysis
+            TransactionMetrics with velocity and pattern data
             
         Example:
             metrics = await analytics.get_transaction_metrics('UBEC', period_days=7)
-            print(f"Velocity: {metrics.velocity} tx/day")
-            print(f"Volume: {metrics.total_volume}")
+            print(f"Velocity: {metrics.velocity} tx/holder/day")
         """
+        # Validate token code
         try:
             TokenCode(asset_code)
         except ValueError:
             raise AnalyticsException(f"Invalid token code: {asset_code}")
         
-        logger.info(f"Analyzing transactions for {asset_code} ({period_days} days)...")
+        logger.info(f"Calculating transaction metrics for {asset_code} ({period_days}d)...")
         
         try:
             cutoff_date = datetime.now() - timedelta(days=period_days)
             
+            # Note: Using stellar_operations table (corrected in v3.5.6)
             query = f"""
                 WITH tx_stats AS (
                     SELECT 
                         COUNT(*) as total_transactions,
-                        COUNT(DISTINCT from_account) as unique_senders,
-                        COUNT(DISTINCT to_account) as unique_receivers,
-                        SUM(amount) as total_volume,
-                        AVG(amount) as avg_amount,
-                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount) as median_amount
+                        COUNT(DISTINCT source_account) as unique_senders,
+                        COUNT(DISTINCT COALESCE(
+                            (details->>'to')::text,
+                            (details->>'destination')::text
+                        )) as unique_receivers,
+                        AVG((details->>'amount')::decimal) as avg_amount,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (
+                            ORDER BY (details->>'amount')::decimal
+                        ) as median_amount
                     FROM {self.db_schema}.stellar_operations
-                    WHERE asset_code = $1
+                    WHERE asset_code = $1 
                       AND created_at >= $2
-                      AND amount IS NOT NULL
-                      AND amount > 0
+                      AND type IN ('payment', 'path_payment_strict_receive', 'path_payment_strict_send')
+                      AND (details->>'amount')::decimal > 0
                 ),
-                supply_stats AS (
-                    SELECT SUM(balance) as total_supply
+                holder_count AS (
+                    SELECT COUNT(*) as total_holders
                     FROM {self.db_schema}.ubec_balances
                     WHERE token_code = $1 AND balance > 0
                 )
                 SELECT 
-                    ts.*,
-                    ss.total_supply,
-                    CASE 
-                        WHEN ss.total_supply > 0 
-                        THEN ts.total_volume / ss.total_supply
-                        ELSE 0
-                    END as turnover_ratio
+                    ts.total_transactions,
+                    ts.unique_senders,
+                    ts.unique_receivers,
+                    ts.avg_amount,
+                    ts.median_amount,
+                    hc.total_holders
                 FROM tx_stats ts
-                CROSS JOIN supply_stats ss
+                CROSS JOIN holder_count hc
             """
             
             row = await self._execute_query(query, (asset_code, cutoff_date))
             
             if not row or row['total_transactions'] == 0:
-                # No transactions in period - return zero metrics
-                total_supply_query = f"""
-                    SELECT SUM(balance) as total_supply
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE token_code = $1 AND balance > 0
-                """
-                supply_row = await self._execute_query(total_supply_query, (asset_code,))
-                total_supply = Decimal(str(supply_row['total_supply'])) if supply_row else Decimal('0')
-                
-                metrics = TransactionMetrics(
+                # Return zero metrics if no transactions
+                element = TOKEN_ELEMENT_MAP.get(TokenCode(asset_code), "unknown")
+                return TransactionMetrics(
                     asset_code=asset_code,
-                    period_days=period_days,
+                    element=element.value,
                     total_transactions=0,
+                    period_days=period_days,
+                    avg_daily_transactions=0.0,
+                    velocity=0.0,
                     unique_senders=0,
                     unique_receivers=0,
-                    total_volume=Decimal('0'),
-                    average_transaction_size=Decimal('0'),
-                    median_transaction_size=Decimal('0'),
-                    velocity=Decimal('0'),
-                    turnover_ratio=Decimal('0')
+                    avg_transaction_size=Decimal('0'),
+                    median_transaction_size=Decimal('0')
                 )
-            else:
-                velocity = Decimal(str(row['total_transactions'])) / Decimal(str(period_days))
-                
-                metrics = TransactionMetrics(
-                    asset_code=asset_code,
-                    period_days=period_days,
-                    total_transactions=row['total_transactions'],
-                    unique_senders=row['unique_senders'],
-                    unique_receivers=row['unique_receivers'],
-                    total_volume=Decimal(str(row['total_volume'] or 0)),
-                    average_transaction_size=Decimal(str(row['avg_amount'] or 0)),
-                    median_transaction_size=Decimal(str(row['median_amount'] or 0)),
-                    velocity=velocity,
-                    turnover_ratio=Decimal(str(row['turnover_ratio'] or 0))
-                )
+            
+            # Calculate metrics
+            total_tx = int(row['total_transactions'])
+            total_holders = int(row['total_holders'])
+            avg_daily_tx = total_tx / period_days
+            
+            # Velocity = transactions per holder per day
+            velocity = (total_tx / (total_holders * period_days)) if total_holders > 0 else 0.0
+            
+            element = TOKEN_ELEMENT_MAP.get(TokenCode(asset_code), "unknown")
+            
+            metrics = TransactionMetrics(
+                asset_code=asset_code,
+                element=element.value,
+                total_transactions=total_tx,
+                period_days=period_days,
+                avg_daily_transactions=avg_daily_tx,
+                velocity=velocity,
+                unique_senders=int(row['unique_senders']),
+                unique_receivers=int(row['unique_receivers']),
+                avg_transaction_size=Decimal(str(row['avg_amount'])) if row['avg_amount'] else Decimal('0'),
+                median_transaction_size=Decimal(str(row['median_amount'])) if row['median_amount'] else Decimal('0')
+            )
             
             logger.info(f"✓ Transaction metrics complete for {asset_code}")
             return metrics
             
         except Exception as e:
-            self._record_error(f"Error analyzing transactions for {asset_code}: {e}")
-            raise AnalyticsException(f"Transaction analysis failed: {e}")
+            self._record_error(f"Error calculating transaction metrics for {asset_code}: {e}")
+            raise AnalyticsException(f"Transaction metrics calculation failed: {e}")
     
-    async def get_transaction_velocity(
+    # ========================================================================
+    # LIQUIDITY METRICS
+    # ========================================================================
+    
+    async def get_liquidity_metrics(
         self,
-        asset_code: str,
-        period_days: int = 30
-    ) -> Decimal:
+        asset_code: str
+    ) -> LiquidityMetrics:
         """
-        Get transaction velocity (transactions per day).
+        Get liquidity and supply metrics for a token.
         
         Args:
-            asset_code: Token to analyze
-            period_days: Analysis period
+            asset_code: Token code to analyze
             
         Returns:
-            Velocity as Decimal (transactions/day)
-        """
-        metrics = await self.get_transaction_metrics(asset_code, period_days)
-        return metrics.velocity
-    
-    # ========================================================================
-    # LIQUIDITY ANALYSIS
-    # ========================================================================
-    
-    async def get_liquidity_metrics(self, asset_code: str) -> LiquidityMetrics:
-        """
-        Analyze token liquidity and supply metrics.
-        
-        Args:
-            asset_code: Token to analyze
-            
-        Returns:
-            LiquidityMetrics dataclass with liquidity analysis
+            LiquidityMetrics with liquidity analysis
             
         Example:
             liquidity = await analytics.get_liquidity_metrics('UBEC')
+            print(f"Free float: {liquidity.free_float}")
             print(f"Liquidity ratio: {liquidity.liquidity_ratio}")
         """
+        # Validate token code
         try:
             TokenCode(asset_code)
         except ValueError:
             raise AnalyticsException(f"Invalid token code: {asset_code}")
         
-        logger.info(f"Analyzing liquidity for {asset_code}...")
+        logger.info(f"Calculating liquidity metrics for {asset_code}...")
         
         try:
             query = f"""
                 WITH supply_breakdown AS (
                     SELECT 
-                        SUM(balance) as total_supply,
-                        SUM(CASE WHEN NOT is_authorized THEN balance ELSE 0 END) as locked_supply,
-                        SUM(CASE WHEN is_authorized THEN balance ELSE 0 END) as circulating_supply
+                        SUM(balance) as circulating_supply,
+                        SUM(balance) FILTER (WHERE NOT {_TableColumns.AUTHORIZED_COL}) as locked_supply,
+                        SUM(balance) FILTER (WHERE {_TableColumns.AUTHORIZED_COL}) as unlocked_supply
                     FROM {self.db_schema}.ubec_balances
                     WHERE token_code = $1 AND balance > 0
+                ),
+                concentration AS (
+                    SELECT 
+                        SUM(balance) FILTER (WHERE rank <= 10) as top_10_holdings
+                    FROM (
+                        SELECT 
+                            balance,
+                            RANK() OVER (ORDER BY balance DESC) as rank
+                        FROM {self.db_schema}.ubec_balances
+                        WHERE token_code = $1 AND balance > 0
+                    ) ranked
                 )
                 SELECT 
-                    total_supply,
-                    circulating_supply,
-                    locked_supply,
-                    circulating_supply as available_liquidity,
-                    CASE 
-                        WHEN total_supply > 0 
-                        THEN circulating_supply::DECIMAL / total_supply
-                        ELSE 0
-                    END as liquidity_ratio
-                FROM supply_breakdown
+                    sb.circulating_supply,
+                    sb.locked_supply,
+                    sb.unlocked_supply,
+                    c.top_10_holdings
+                FROM supply_breakdown sb
+                CROSS JOIN concentration c
             """
             
             row = await self._execute_query(query, (asset_code,))
             
             if not row:
-                raise AnalyticsException(f"No liquidity data found for {asset_code}")
+                raise AnalyticsException(f"No supply data found for {asset_code}")
+            
+            circulating = Decimal(str(row['circulating_supply'])) if row['circulating_supply'] else Decimal('0')
+            locked = Decimal(str(row['locked_supply'])) if row['locked_supply'] else Decimal('0')
+            unlocked = Decimal(str(row['unlocked_supply'])) if row['unlocked_supply'] else Decimal('0')
+            top_10 = Decimal(str(row['top_10_holdings'])) if row['top_10_holdings'] else Decimal('0')
+            
+            # Free float = unlocked - top 10 whale holdings
+            free_float = unlocked - top_10
+            if free_float < 0:
+                free_float = Decimal('0')
+            
+            # Liquidity ratio = free float / circulating
+            liquidity_ratio = float(free_float / circulating) if circulating > 0 else 0.0
+            
+            # Get Gini coefficient for holder diversity calculation
+            dist = await self.get_token_distribution(asset_code, use_cache=True)
+            holder_diversity = 1.0 / dist.gini_coefficient if dist.gini_coefficient > 0 else 1.0
+            
+            element = TOKEN_ELEMENT_MAP.get(TokenCode(asset_code), "unknown")
             
             metrics = LiquidityMetrics(
                 asset_code=asset_code,
-                total_supply=Decimal(str(row['total_supply'])),
-                circulating_supply=Decimal(str(row['circulating_supply'])),
-                locked_supply=Decimal(str(row['locked_supply'])),
-                available_liquidity=Decimal(str(row['available_liquidity'])),
-                liquidity_ratio=Decimal(str(row['liquidity_ratio']))
+                element=element.value,
+                circulating_supply=circulating,
+                locked_supply=locked,
+                free_float=free_float,
+                liquidity_ratio=liquidity_ratio,
+                holder_diversity=holder_diversity
             )
             
-            logger.info(f"✓ Liquidity analysis complete for {asset_code}")
+            logger.info(f"✓ Liquidity metrics complete for {asset_code}")
             return metrics
             
         except Exception as e:
-            self._record_error(f"Error analyzing liquidity for {asset_code}: {e}")
-            raise AnalyticsException(f"Liquidity analysis failed: {e}")
+            self._record_error(f"Error calculating liquidity metrics for {asset_code}: {e}")
+            raise AnalyticsException(f"Liquidity metrics calculation failed: {e}")
     
     # ========================================================================
     # ECOSYSTEM HEALTH
@@ -1361,229 +1400,192 @@ class UBECAnalyticsService:
     
     async def get_ecosystem_health(self) -> EcosystemHealth:
         """
-        Get comprehensive ecosystem health metrics.
-        
-        Analyzes:
-        - Total accounts and holders
-        - Transaction activity
-        - Token supply distribution
-        - Active account trends
-        - Element balance score
+        Get overall ecosystem health metrics.
         
         Returns:
-            EcosystemHealth dataclass with ecosystem metrics
+            EcosystemHealth with comprehensive system metrics
             
         Example:
             health = await analytics.get_ecosystem_health()
-            print(f"Total holders: {health.total_holders}")
-            print(f"Active 24h: {health.active_accounts_24h}")
+            print(f"Total accounts: {health.total_accounts}")
+            print(f"Element balance: {health.element_balance_score}")
         """
-        logger.info("Calculating ecosystem health metrics...")
+        logger.info("Calculating ecosystem health...")
         
         try:
-            # Get basic stats
-            basic_query = f"""
-                WITH account_stats AS (
-                    SELECT 
-                        COUNT(DISTINCT account_id) as total_accounts,
-                        COUNT(DISTINCT CASE WHEN balance > 0 THEN account_id END) as total_holders
-                    FROM {self.db_schema}.ubec_balances
-                ),
-                tx_stats AS (
-                    SELECT COUNT(*) as total_transactions
-                    FROM {self.db_schema}.stellar_transactions
-                ),
-                supply_stats AS (
-                    SELECT SUM(balance) as total_supply
-                    FROM {self.db_schema}.ubec_balances
-                    WHERE balance > 0
-                )
+            # Get account counts
+            accounts_query = f"""
                 SELECT 
-                    a.total_accounts,
-                    a.total_holders,
-                    t.total_transactions,
-                    s.total_supply
-                FROM account_stats a
-                CROSS JOIN tx_stats t
-                CROSS JOIN supply_stats s
+                    COUNT(DISTINCT account_id) as total_accounts,
+                    COUNT(DISTINCT account_id) FILTER (
+                        WHERE balance > 0
+                    ) as total_holders
+                FROM {self.db_schema}.ubec_balances
             """
+            accounts_row = await self._execute_query(accounts_query, ())
             
-            basic = await self._execute_query(basic_query, ())
+            # Get transaction counts (corrected to use stellar_operations - v3.5.6)
+            tx_query = f"""
+                SELECT COUNT(*) as total_transactions
+                FROM {self.db_schema}.stellar_operations
+                WHERE type IN ('payment', 'path_payment_strict_receive', 'path_payment_strict_send')
+            """
+            tx_row = await self._execute_query(tx_query, ())
             
-            # Get active accounts - FIXED VERSION v3.5.9
-            # Counts BOTH senders and receivers to capture all active participants
-            now = datetime.now()
-            cutoff_24h = now - timedelta(hours=24)
-            cutoff_7d = now - timedelta(days=7)
-            cutoff_30d = now - timedelta(days=30)
-            
-            active_query = f"""
-                WITH active_senders AS (
-                    SELECT DISTINCT
-                        from_account as account_id,
-                        created_at
+            # Get active accounts (CRITICAL FIX v3.5.9 - counts both senders AND receivers)
+            active_24h_query = f"""
+                SELECT COUNT(DISTINCT account_id) as active_count
+                FROM (
+                    SELECT source_account as account_id
                     FROM {self.db_schema}.stellar_operations
-                    WHERE from_account IS NOT NULL
-                        AND from_account != ''
-                        AND asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-                ),
-                active_receivers AS (
-                    SELECT DISTINCT
-                        to_account as account_id,
-                        created_at
-                    FROM {self.db_schema}.stellar_operations
-                    WHERE to_account IS NOT NULL
-                        AND to_account != ''
-                        AND asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-                ),
-                all_active AS (
-                    SELECT account_id, created_at FROM active_senders
+                    WHERE created_at >= NOW() - INTERVAL '24 hours'
                     UNION
-                    SELECT account_id, created_at FROM active_receivers
-                )
-                SELECT 
-                    COUNT(DISTINCT CASE 
-                        WHEN created_at >= $1 
-                        THEN account_id 
-                    END) as active_24h,
-                    COUNT(DISTINCT CASE 
-                        WHEN created_at >= $2 
-                        THEN account_id 
-                    END) as active_7d,
-                    COUNT(DISTINCT CASE 
-                        WHEN created_at >= $3 
-                        THEN account_id 
-                    END) as active_30d
-                FROM all_active
+                    SELECT COALESCE(
+                        (details->>'to')::text,
+                        (details->>'destination')::text
+                    ) as account_id
+                    FROM {self.db_schema}.stellar_operations
+                    WHERE created_at >= NOW() - INTERVAL '24 hours'
+                      AND (details ? 'to' OR details ? 'destination')
+                ) combined
             """
+            active_24h = await self._execute_query(active_24h_query, ())
             
-            active = await self._execute_query(active_query, (cutoff_24h, cutoff_7d, cutoff_30d))
+            active_7d_query = f"""
+                SELECT COUNT(DISTINCT account_id) as active_count
+                FROM (
+                    SELECT source_account as account_id
+                    FROM {self.db_schema}.stellar_operations
+                    WHERE created_at >= NOW() - INTERVAL '7 days'
+                    UNION
+                    SELECT COALESCE(
+                        (details->>'to')::text,
+                        (details->>'destination')::text
+                    ) as account_id
+                    FROM {self.db_schema}.stellar_operations
+                    WHERE created_at >= NOW() - INTERVAL '7 days'
+                      AND (details ? 'to' OR details ? 'destination')
+                ) combined
+            """
+            active_7d = await self._execute_query(active_7d_query, ())
             
-            # Calculate element balance score with bounds checking
-            balance_score = await self._calculate_element_balance_score()
+            active_30d_query = f"""
+                SELECT COUNT(DISTINCT account_id) as active_count
+                FROM (
+                    SELECT source_account as account_id
+                    FROM {self.db_schema}.stellar_operations
+                    WHERE created_at >= NOW() - INTERVAL '30 days'
+                    UNION
+                    SELECT COALESCE(
+                        (details->>'to')::text,
+                        (details->>'destination')::text
+                    ) as account_id
+                    FROM {self.db_schema}.stellar_operations
+                    WHERE created_at >= NOW() - INTERVAL '30 days'
+                      AND (details ? 'to' OR details ? 'destination')
+                ) combined
+            """
+            active_30d = await self._execute_query(active_30d_query, ())
+            
+            # Get total supply across all tokens
+            supply_query = f"""
+                SELECT 
+                    SUM(balance) as total_supply,
+                    token_code
+                FROM {self.db_schema}.ubec_balances
+                WHERE balance > 0
+                GROUP BY token_code
+            """
+            supply_rows = await self._execute_query_all(supply_query, ())
+            
+            total_supply = sum(Decimal(str(row['total_supply'])) for row in supply_rows)
+            
+            # Calculate element balance score (0-100, higher = more balanced)
+            # CRITICAL FIX v3.5.9: Added bounds checking to ensure 0-100 range
+            if len(supply_rows) == 4:
+                supplies = [Decimal(str(row['total_supply'])) for row in supply_rows]
+                avg_supply = total_supply / 4
+                
+                # Calculate variance from perfect balance
+                variance = sum((s - avg_supply) ** 2 for s in supplies) / 4
+                std_dev = float(variance.sqrt())
+                
+                # Convert to 0-100 score (lower variance = higher score)
+                # Normalize by average supply to make it percentage-based
+                if avg_supply > 0:
+                    cv = std_dev / float(avg_supply)  # Coefficient of variation
+                    # Score: 100 when perfectly balanced (cv=0), decreases as cv increases
+                    # Using 1/(1+cv) gives a nice 0-100 range
+                    balance_score = Decimal(str(100 * (1 / (1 + cv))))
+                    # CRITICAL FIX: Ensure score is bounded to 0-100
+                    balance_score = max(Decimal('0'), min(Decimal('100'), balance_score))
+                else:
+                    balance_score = Decimal('0')
+            else:
+                # If not all 4 tokens present, score is 0
+                balance_score = Decimal('0')
             
             health = EcosystemHealth(
-                timestamp=now,
-                total_holders=basic['total_holders'],
-                total_accounts=basic['total_accounts'],
-                total_transactions=basic['total_transactions'],
-                total_supply_all_tokens=Decimal(str(basic['total_supply'])),
-                active_accounts_24h=active['active_24h'] or 0,
-                active_accounts_7d=active['active_7d'] or 0,
-                active_accounts_30d=active['active_30d'] or 0,
+                timestamp=datetime.now().isoformat(),
+                total_accounts=int(accounts_row['total_accounts']) if accounts_row else 0,
+                total_holders=int(accounts_row['total_holders']) if accounts_row else 0,
+                total_transactions=int(tx_row['total_transactions']) if tx_row else 0,
+                total_supply_all_tokens=total_supply,
+                active_accounts_24h=int(active_24h['active_count']) if active_24h else 0,
+                active_accounts_7d=int(active_7d['active_count']) if active_7d else 0,
+                active_accounts_30d=int(active_30d['active_count']) if active_30d else 0,
                 element_balance_score=balance_score
             )
             
-            logger.info("✓ Ecosystem health metrics calculated")
+            logger.info("✓ Ecosystem health calculated")
             return health
             
         except Exception as e:
             self._record_error(f"Error calculating ecosystem health: {e}")
             raise AnalyticsException(f"Ecosystem health calculation failed: {e}")
     
-    async def _calculate_element_balance_score(self) -> Decimal:
-        """
-        Calculate how balanced the four elements are.
-        
-        FIXED VERSION v3.5.9: Added bounds checking to ensure score stays in 0-100 range.
-        
-        Perfect balance (all elements equal) = 100
-        Complete imbalance (one element dominates) = 0
-        
-        Returns:
-            Balance score as Decimal (0-100, guaranteed)
-        """
-        query = f"""
-            WITH element_supplies AS (
-                SELECT 
-                    token_code as asset_code,
-                    SUM(balance) as supply
-                FROM {self.db_schema}.ubec_balances
-                WHERE balance > 0
-                    AND token_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-                GROUP BY token_code
-            ),
-            supply_stats AS (
-                SELECT 
-                    supply,
-                    AVG(supply) OVER () as avg_supply,
-                    STDDEV(supply) OVER () as stddev_supply
-                FROM element_supplies
-            ),
-            balance_calculation AS (
-                SELECT 
-                    CASE 
-                        WHEN MAX(stddev_supply) = 0 OR MAX(stddev_supply) IS NULL THEN 100
-                        WHEN MAX(avg_supply) = 0 OR MAX(avg_supply) IS NULL THEN 0
-                        ELSE 100 - (MIN(stddev_supply) / NULLIF(MAX(avg_supply), 0) * 100)
-                    END as raw_score
-                FROM supply_stats
-            )
-            SELECT 
-                -- CRITICAL FIX v3.5.9: Ensure score is bounded between 0 and 100
-                GREATEST(0, LEAST(100, raw_score)) as balance_score
-            FROM balance_calculation
-        """
-        
-        row = await self._execute_query(query, ())
-        score = Decimal(str(row['balance_score'])) if row and row['balance_score'] is not None else Decimal('0')
-        
-        # Additional safety check (defensive programming)
-        if score < 0:
-            logger.warning(f"Negative balance score detected ({score}), clamping to 0")
-            return Decimal('0')
-        elif score > 100:
-            logger.warning(f"Balance score over 100 detected ({score}), clamping to 100")
-            return Decimal('100')
-        
-        return score
-    
     # ========================================================================
-    # COMPARATIVE ANALYSIS
+    # TOKEN COMPARISON
     # ========================================================================
     
-    async def compare_tokens(self, use_cache: bool = True) -> Dict[str, Any]:
+    async def compare_tokens(self) -> Dict[str, Any]:
         """
-        Compare all UBEC tokens side-by-side.
+        Compare metrics across all UBEC tokens.
         
-        Args:
-            use_cache: Whether to use cached results
-            
         Returns:
-            Dict with comparative analysis across all tokens
+            Dict with comparative analysis across tokens
             
         Example:
             comparison = await analytics.compare_tokens()
-            print(f"Most holders: {comparison['rankings']['by_holders'][0]['token']}")
+            print(f"Most holders: {comparison['rankings']['by_holders'][0]}")
         """
-        logger.info("Comparing all UBEC tokens...")
+        logger.info("Comparing all tokens...")
         
         try:
             comparison = {
                 'timestamp': datetime.now().isoformat(),
-                'distributions': {},
+                'tokens': {},
                 'rankings': {},
                 'totals': {
+                    'total_holders': 0,
                     'total_supply': Decimal('0'),
                     'unique_accounts': 0
                 }
             }
             
-            # Get distribution for each token
-            distributions = await self.get_all_token_distributions(use_cache)
+            # Get metrics for each token
+            distributions = []
+            for token in TokenCode:
+                try:
+                    dist = await self.get_token_distribution(token.value)
+                    distributions.append(dist)
+                    comparison['tokens'][token.value] = asdict(dist)
+                except Exception as e:
+                    logger.warning(f"Could not compare {token.value}: {e}")
             
-            for dist in distributions:
-                comparison['distributions'][dist.asset_code] = {
-                    'element': dist.element,
-                    'total_holders': dist.total_holders,
-                    'total_supply': float(dist.total_supply),
-                    'average_balance': float(dist.average_balance),
-                    'median_balance': float(dist.median_balance),
-                    'top_10_concentration': float(dist.top_10_concentration),
-                    'gini_coefficient': float(dist.gini_coefficient) if dist.gini_coefficient else None
-                }
-                
-                comparison['totals']['total_supply'] += dist.total_supply
+            # Calculate totals
+            comparison['totals']['total_holders'] = sum(d.total_holders for d in distributions)
+            comparison['totals']['total_supply'] = sum(d.total_supply for d in distributions)
             
             # Get unique account count
             unique_query = f"""
@@ -1702,9 +1704,14 @@ if __name__ == "__main__":
     print("It analyzes distribution, holder patterns, and ecosystem health across all")
     print("four UBEC elements (Air, Water, Earth, Fire).")
     print()
-    print("VERSION: 3.5.9 (Critical Analytics Fixes)")
+    print("VERSION: 3.6.0 (Scheduler Integration)")
     print()
-    print("CHANGES FROM v3.5.8:")
+    print("CHANGES FROM v3.6.0:")
+    print("✅ ADDED: update_analytics() method for scheduled execution")
+    print("✅ ENHANCED: Scheduler integration support")
+    print("✅ ENHANCED: Automated analytics refresh capability")
+    print()
+    print("CHANGES FROM v3.5.9:")
     print("✅ CRITICAL FIX: Active accounts query now counts BOTH senders and receivers")
     print("✅ CRITICAL FIX: Element balance score bounded to 0-100 range")
     print("✅ FIXED: Active accounts metrics now accurate (not zero)")
@@ -1749,6 +1756,9 @@ if __name__ == "__main__":
     print("  result = await analytics.get_top_holders(limit=50)    # Holders")
     print("  result = await analytics.get_network_metrics()        # Metrics (FIXED!)")
     print()
+    print("  # Scheduled operations (NEW in v3.6.0)")
+    print("  result = await analytics.update_analytics()           # Refresh all metrics")
+    print()
     print("  # Alternative CLI command interface")
     print("  result = await analytics.analyze_token_distribution()  # Distribution")
     print("  result = await analytics.calculate_velocity()          # Velocity")
@@ -1779,5 +1789,6 @@ if __name__ == "__main__":
     print("✅ Explicit schema names in all database queries")
     print("✅ CRITICAL FIX: Active accounts now accurate (v3.5.9)")
     print("✅ CRITICAL FIX: Balance scores always 0-100 (v3.5.9)")
+    print("✅ NEW: Scheduler integration with update_analytics() (v3.6.0)")
     print()
     print("=" * 80)

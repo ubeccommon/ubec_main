@@ -52,8 +52,15 @@ Usage Example:
     ```
 
 Author: UBEC Protocol Development Team
-Version: 1.0.2 (Fixed Config & Database Access)
-Updated: 2025-11-05
+Version: 1.0.3 (Fixed Parameters Parsing & Type Safety)
+Updated: 2025-11-07
+
+CHANGELOG v1.0.3:
+    - CRITICAL FIX: Added _parse_job_parameters() for robust JSONB parsing
+    - CRITICAL FIX: Safe parameter extraction with type checking in _execute_job()
+    - CRITICAL FIX: Exclude 'timeout' from method execution parameters
+    - Enhanced error handling in job loading with per-job try-catch
+    - Improved debug logging for parameter types
 """
 
 import asyncio
@@ -296,12 +303,85 @@ class UBECSchedulerService:
     # Job Loading and Management
     # ========================================================================
     
+    def _parse_job_parameters(self, params_value: Any) -> Dict[str, Any]:
+        """
+        Parse job parameters from database value.
+        
+        Handles multiple formats to ensure parameters are always a dict:
+        - None/NULL → {}
+        - Dict → return as-is
+        - String (JSON) → parse to dict
+        - String (non-JSON) → {}
+        - Other types → {} with warning
+        
+        This implements Principle #12 (Method Singularity) by providing
+        a single, reusable parameter parsing method for all job loads.
+        
+        Args:
+            params_value: Raw parameters value from database JSONB column
+            
+        Returns:
+            Dict[str, Any]: Parsed parameters dictionary (never None)
+            
+        Example:
+            >>> params = self._parse_job_parameters(None)
+            >>> assert params == {}
+            
+            >>> params = self._parse_job_parameters('{"timeout": 300}')
+            >>> assert params == {'timeout': 300}
+            
+            >>> params = self._parse_job_parameters({'timeout': 300})
+            >>> assert params == {'timeout': 300}
+        """
+        # Handle None/NULL from database
+        if params_value is None:
+            return {}
+        
+        # Already a dict - return as-is (expected case)
+        if isinstance(params_value, dict):
+            return params_value
+        
+        # String value - attempt JSON parsing
+        if isinstance(params_value, str):
+            # Empty string → empty dict
+            if not params_value.strip():
+                return {}
+            
+            try:
+                parsed = json.loads(params_value)
+                if isinstance(parsed, dict):
+                    return parsed
+                else:
+                    # Parsed successfully but not a dict
+                    self.logger.warning(
+                        f"Parameters parsed to {type(parsed).__name__}, "
+                        f"expected dict. Returning empty dict."
+                    )
+                    return {}
+            except (json.JSONDecodeError, TypeError) as e:
+                # Invalid JSON
+                self.logger.warning(
+                    f"Failed to parse parameters as JSON: {e}. "
+                    f"Returning empty dict."
+                )
+                return {}
+        
+        # Unexpected type (shouldn't happen with JSONB column)
+        self.logger.warning(
+            f"Unexpected parameter type: {type(params_value).__name__}. "
+            f"Expected dict or JSON string. Returning empty dict."
+        )
+        return {}
+    
     async def _load_jobs(self) -> None:
         """
-        Load jobs from database.
+        Load jobs from database with robust parameter parsing.
         
         Reads scheduler_jobs table and creates ScheduledJob instances.
+        Implements proper error handling and parameter validation.
+        
         Principle #4: Database is single source of truth.
+        Principle #12: Uses shared _parse_job_parameters() method.
         """
         query = """
             SELECT 
@@ -323,28 +403,46 @@ class UBECSchedulerService:
             
             if rows:
                 for row in rows:
-                    # Parse interval (handle both seconds and cron-like strings)
-                    interval_str = row['schedule_interval']
-                    interval_seconds = self._parse_interval(interval_str)
-                    
-                    job = ScheduledJob(
-                        id=row['id'],
-                        job_name=row['job_name'],
-                        schedule_interval=interval_seconds,
-                        next_run=row['next_run'],
-                        last_run=row['last_run'],
-                        job_function=row['job_function'],
-                        parameters=row['parameters'] or {},
-                        enabled=row['enabled']
-                    )
-                    
-                    self.jobs[job.job_name] = job
-                    self.logger.debug(
-                        f"Loaded job: {job.job_name} "
-                        f"(interval={interval_seconds}s, enabled={job.enabled})"
-                    )
+                    try:
+                        # Parse interval (handle both seconds and cron-like strings)
+                        interval_str = row['schedule_interval']
+                        interval_seconds = self._parse_interval(interval_str)
+                        
+                        # CRITICAL FIX: Properly parse parameters using new parser
+                        raw_parameters = row['parameters']
+                        parsed_parameters = self._parse_job_parameters(raw_parameters)
+                        
+                        job = ScheduledJob(
+                            id=row['id'],
+                            job_name=row['job_name'],
+                            schedule_interval=interval_seconds,
+                            next_run=row['next_run'],
+                            last_run=row['last_run'],
+                            job_function=row['job_function'],
+                            parameters=parsed_parameters,  # ← FIXED: Use parsed version
+                            enabled=row['enabled']
+                        )
+                        
+                        self.jobs[job.job_name] = job
+                        self.logger.debug(
+                            f"Loaded job: {job.job_name} "
+                            f"(interval={interval_seconds}s, enabled={job.enabled}, "
+                            f"params={len(parsed_parameters)} keys)"
+                        )
+                        
+                    except Exception as e:
+                        # Log error but continue with other jobs
+                        job_name = row.get('job_name', 'unknown')
+                        self.logger.error(
+                            f"Error loading job '{job_name}': {e}",
+                            exc_info=True
+                        )
+                        # Don't raise - continue loading other jobs
+                        continue
                 
                 self.logger.info(f"Loaded {len(self.jobs)} jobs from database")
+            else:
+                self.logger.warning("No jobs found in database")
                 
         except Exception as e:
             self.logger.error(f"Error loading jobs: {e}", exc_info=True)
@@ -453,10 +551,10 @@ class UBECSchedulerService:
     
     async def _execute_job(self, job: ScheduledJob) -> None:
         """
-        Execute a scheduled job.
+        Execute a scheduled job with proper parameter handling.
         
         Handles job execution, error recovery, metrics tracking, and
-        database updates.
+        database updates. Includes robust parameter type checking.
         
         Args:
             job: ScheduledJob instance to execute
@@ -469,11 +567,35 @@ class UBECSchedulerService:
             # Get service and method
             service, method = await self._resolve_job_function(job.job_function)
             
+            # CRITICAL FIX: Safe timeout extraction with type checking
+            # Ensure parameters is a dict before accessing
+            if not isinstance(job.parameters, dict):
+                self.logger.warning(
+                    f"Job '{job.job_name}' has invalid parameters type: "
+                    f"{type(job.parameters).__name__}. Using defaults."
+                )
+                timeout_seconds = 3600  # 1 hour default
+                execution_params = {}
+            else:
+                # Extract timeout, don't pass it to the method
+                timeout_seconds = job.parameters.get('timeout', 3600)
+                
+                # CRITICAL FIX: Create execution parameters without timeout
+                # The 'timeout' parameter is for asyncio.wait_for, not the job method
+                execution_params = {
+                    k: v for k, v in job.parameters.items() 
+                    if k != 'timeout'
+                }
+            
+            self.logger.debug(
+                f"Executing {job.job_function} "
+                f"(timeout={timeout_seconds}s, params={execution_params})"
+            )
+            
             # Execute with timeout
-            timeout = job.parameters.get('timeout', 3600)  # 1 hour default
             await asyncio.wait_for(
-                method(**job.parameters),
-                timeout=timeout
+                method(**execution_params),  # ← FIXED: Pass cleaned parameters
+                timeout=timeout_seconds
             )
             
             # Record success
@@ -485,7 +607,7 @@ class UBECSchedulerService:
             )
             
         except asyncio.TimeoutError:
-            error_msg = f"Job '{job.job_name}' timed out"
+            error_msg = f"Job '{job.job_name}' timed out after {timeout_seconds}s"
             self.logger.error(error_msg)
             await self._record_failure(job, error_msg)
             

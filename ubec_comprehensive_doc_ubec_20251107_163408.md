@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-05T15:41:51.754837  
+**Generated:** 2025-11-07T16:34:08.168111  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 309 MB  
@@ -6481,7 +6481,7 @@
 | distribution_history | 10 | 15 | 152 kB |
 | liquidity_pools | 10 | 20 | 336 kB |
 | system_configuration | 10 | 8 | 96 kB |
-| scheduler_jobs | 7 | 10 | 80 kB |
+| scheduler_jobs | 7 | 10 | 112 kB |
 | monitored_accounts | 5 | 9 | 80 kB |
 | api_rate_limits | 4 | 6 | 56 kB |
 | account_order_positions | 0 | 10 | 56 kB |

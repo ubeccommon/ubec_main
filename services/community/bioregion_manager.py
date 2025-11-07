@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Bioregion Manager Service - Production Version 1.0
+UBEC Bioregion Manager Service - Production Version 1.1
 =========================================================
 Tracks and manages bioregional holons representing geographic economic communities.
 
@@ -42,13 +42,22 @@ Usage Example:
     # Get bioregion details
     regions = await bioregion_mgr.get_all_bioregions()
     
+    # Scheduled update (for automated refresh)
+    result = await bioregion_mgr.update_bioregions()
+    
     # Create/update bioregion from network analysis
     await bioregion_mgr.identify_and_create_bioregions()
     ```
 
 Author: UBEC Protocol Development Team
-Version: 1.0.0
+Version: 1.1.0
 Created: 2025-11-04
+Updated: 2025-11-07
+
+Changes from v1.1.0:
+- ✅ ADDED: update_bioregions() method for scheduled execution
+- ✅ ENHANCED: Scheduler integration support
+- ✅ ENHANCED: Automated bioregion refresh capability
 """
 
 import logging
@@ -77,6 +86,7 @@ class BioregionManager:
     - Tracks bioregion membership and boundaries
     - Calculates bioregion health metrics (autonomy, integration, ubuntu scores)
     - Provides bioregion analytics for dashboard and reporting
+    - Supports automated updates via scheduler integration
     
     Attributes:
         db: Database manager instance (injected via registry)
@@ -181,7 +191,7 @@ class BioregionManager:
             
             return {
                 'service': 'BioregionManager',
-                'version': '1.0.0',
+                'version': '1.1.0',
                 'status': status,
                 'database_connected': db_connected,
                 'bioregion_count': count,
@@ -194,7 +204,7 @@ class BioregionManager:
             self.logger.error(f"Health check failed: {e}")
             return {
                 'service': 'BioregionManager',
-                'version': '1.0.0',
+                'version': '1.1.0',
                 'status': 'unhealthy',
                 'error': str(e),
                 'last_update': datetime.now(timezone.utc).isoformat()
@@ -510,6 +520,106 @@ class BioregionManager:
                 'average_size': 0,
                 'average_autonomy': 0,
                 'average_integration': 0
+            }
+    
+    # ========================================================================
+    # Scheduled Operations
+    # Methods designed for periodic execution by scheduler service
+    # ========================================================================
+    
+    async def update_bioregions(self) -> Dict[str, Any]:
+        """
+        Update bioregion analysis (for scheduled execution).
+        
+        This method refreshes bioregion data and identifies new bioregional
+        patterns in the network. Designed to be called periodically by the 
+        scheduler service to maintain current bioregion information.
+        
+        The method clears the cache, analyzes current bioregions, attempts to
+        identify new bioregional patterns, and returns a summary of the update.
+        
+        Returns:
+            Dict with update summary:
+                - timestamp: When update occurred
+                - bioregions_analyzed: Number of bioregions checked
+                - new_bioregions: Number of new bioregions identified
+                - total_bioregions: Total bioregion count after update
+                - cache_cleared: Whether cache was cleared
+                - duration_ms: How long update took
+                - status: 'success' or 'error'
+        
+        Raises:
+            Does not raise exceptions - returns error status instead
+        
+        Example:
+            # Called by scheduler
+            result = await bioregion_mgr.update_bioregions()
+            if result['status'] == 'success':
+                logger.info(f"Bioregions updated: {result['new_bioregions']} new")
+        
+        Design Principles:
+            - Principle #5: Async operation
+            - Principle #12: Method singularity - composes existing methods
+        """
+        start_time = datetime.now()
+        
+        try:
+            self.logger.info("Starting scheduled bioregion update...")
+            
+            # Clear cache to force fresh analysis
+            self._cache.clear()
+            self._last_cache_update = None
+            self.logger.debug("Cache cleared")
+            
+            # Get current bioregion count
+            current_count = await self.get_bioregion_count()
+            self.logger.debug(f"Current bioregion count: {current_count}")
+            
+            # Attempt to identify new bioregions
+            # Note: identify_and_create_bioregions is currently a placeholder
+            # This will be fully implemented when clustering algorithms are ready
+            new_bioregions = await self.identify_and_create_bioregions(
+                min_members=10,
+                min_density=0.3,
+                algorithm='spatial_clustering'
+            )
+            
+            # Clear cache again after potential updates
+            self._cache.clear()
+            self._last_cache_update = None
+            
+            # Get updated count
+            new_count = await self.get_bioregion_count()
+            self.logger.debug(f"New bioregion count: {new_count}")
+            
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            
+            result = {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'bioregions_analyzed': current_count,
+                'new_bioregions': len(new_bioregions),
+                'total_bioregions': new_count,
+                'cache_cleared': True,
+                'duration_ms': duration_ms,
+                'status': 'success'
+            }
+            
+            self.logger.info(
+                f"✓ Bioregion update complete: {len(new_bioregions)} new, "
+                f"{new_count} total ({duration_ms:.0f}ms)"
+            )
+            return result
+            
+        except Exception as e:
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            error_msg = f"Bioregion update failed: {e}"
+            self.logger.error(error_msg, exc_info=True)
+            
+            return {
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'status': 'error',
+                'error': str(e),
+                'duration_ms': duration_ms
             }
     
     # ========================================================================

@@ -229,52 +229,77 @@ class BackendAPIService:
         # Token Endpoints
         # ====================================================================
         
+# FINAL CORRECT FIX - Remove last_updated column that doesn't exist
+# Replace the get_tokens() function in api_service.py
+
         @self.app.get("/api/v1/tokens", response_model=List[Dict])
         async def get_tokens() -> List[Dict]:
             """
             Get overview of all four UBEC tokens.
             
-            Returns token information including:
-            - Token code (UBEC, UBECrc, UBECgpi, UBECtt)
-            - Element type (Air, Water, Earth, Fire)
-            - Total supply
-            - Number of holders
-            - Daily trading volume
+            Queries ubec_balances table to get real data for all tokens.
             
             Returns:
-                List of token information dictionaries
-                
-            Example Response:
-                [
-                    {
-                        "token_code": "UBEC",
-                        "element_type": "Air",
-                        "ubuntu_principle": "Diversity",
-                        "total_supply": 152025699,
-                        "holders_count": 495,
-                        "daily_volume": 1234567
-                    },
-                    ...
-                ]
+                List of token information for UBEC, UBECrc, UBECgpi, UBECtt
             """
+            # Element mapping for display info
+            ELEMENT_MAP = {
+                'UBEC': {
+                    'element_display': 'Air',
+                    'element_symbol': '🌬️',
+                    'ubuntu_principle': 'Diversity',
+                    'description': 'Gateway & Universal Access',
+                    'color': '#87CEEB'
+                },
+                'UBECrc': {
+                    'element_display': 'Water',
+                    'element_symbol': '💧',
+                    'ubuntu_principle': 'Reciprocity',
+                    'description': 'Flow & Exchange',
+                    'color': '#4FC3F7'
+                },
+                'UBECgpi': {
+                    'element_display': 'Earth',
+                    'element_symbol': '🌍',
+                    'ubuntu_principle': 'Mutualism',
+                    'description': 'Stability & Value',
+                    'color': '#8BC34A'
+                },
+                'UBECtt': {
+                    'element_display': 'Fire',
+                    'element_symbol': '🔥',
+                    'ubuntu_principle': 'Regeneration',
+                    'description': 'Transformation & Action',
+                    'color': '#FF6B6B'
+                }
+            }
+            
+            # Issuer addresses for each token
+            ISSUERS = {
+                'UBEC': 'GDPNB7S3IOM2J6C3NA2QG4TQAUCRZXPJJ4HSCCSIKELEH7ORUCX5UB2VN',
+                'UBECrc': 'GBYOTGM27KLFNQQU3G6QWVEK7LQB36N6OX2YLYMN4WU3AFM4VRFZUBEC',
+                'UBECgpi': 'GCPU3LUGRIYLWMPOQEEGIL2HI5Z637PQVK42Z5PYRRQMPFDTNT5SUBEC',
+                'UBECtt': 'GBWYGECRQ7R5E6QQKWBTVNYSCFVTIYZLF6MGDHJQBHP2KU2U65Z5UBEC'
+            }
+            
             try:
                 db = await self.registry.get('database')
                 
-                # Query with EXPLICIT schema name
+                # Query ubec_balances table (correct table with all tokens!)
+                # NOTE: last_updated column doesn't exist in ubec_balances
                 results = await db.fetch_all(
                     """
                     SELECT 
-                        ab.asset_code as token_code,
-                        ab.element_type,
-                        ab.ubuntu_principle,
-                        ab.total_supply,
-                        ab.holders_count,
-                        ab.daily_volume,
-                        ab.last_updated
-                    FROM ubec_main.asset_holder_analysis ab
-                    WHERE ab.asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                        ub.token_code,
+                        ub.element,
+                        COUNT(DISTINCT ub.account_id) as total_holders,
+                        SUM(ub.balance) as total_supply
+                    FROM ubec_main.ubec_balances ub
+                    WHERE ub.token_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                        AND ub.balance > 0
+                    GROUP BY ub.token_code, ub.element
                     ORDER BY 
-                        CASE ab.asset_code
+                        CASE ub.token_code
                             WHEN 'UBEC' THEN 1
                             WHEN 'UBECrc' THEN 2
                             WHEN 'UBECgpi' THEN 3
@@ -284,24 +309,39 @@ class BackendAPIService:
                     ()
                 )
                 
-                # Convert to list of dicts
+                # Convert to list of dicts with element mapping
                 tokens = []
                 for row in results:
+                    token_code = row['token_code']
+                    element_info = ELEMENT_MAP.get(token_code, {})
+                    
                     token = {
-                        'token_code': row['token_code'],
-                        'element_type': row['element_type'],
-                        'ubuntu_principle': row['ubuntu_principle'],
+                        'token_code': token_code,
+                        'element': element_info.get('element_display', row['element'].capitalize()),
+                        'element_symbol': element_info.get('element_symbol', '❓'),
+                        'ubuntu_principle': element_info.get('ubuntu_principle', 'Unknown'),
+                        'description': element_info.get('description', ''),
+                        'issuer': ISSUERS.get(token_code, ''),
                         'total_supply': int(row['total_supply']) if row['total_supply'] else 0,
-                        'holders_count': int(row['holders_count']) if row['holders_count'] else 0,
-                        'daily_volume': float(row['daily_volume']) if row['daily_volume'] else 0.0,
-                        'last_updated': row['last_updated'].isoformat() if row['last_updated'] else None
+                        'holders_count': int(row['total_holders']) if row['total_holders'] else 0,
+                        'status': 'live',
+                        'color': element_info.get('color', '#000000'),
+                        'daily_volume': 0,  # Not tracked in ubec_balances
+                        'last_updated': None  # Not available in ubec_balances
                     }
                     tokens.append(token)
+                
+                self.logger.info(f"✓ Retrieved {len(tokens)} tokens from ubec_balances")
+                
+                # If we don't have all 4 tokens, log a warning
+                if len(tokens) < 4:
+                    missing = set(['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']) - set(t['token_code'] for t in tokens)
+                    self.logger.warning(f"Missing tokens in ubec_balances: {missing}")
                 
                 return tokens
                 
             except Exception as e:
-                logger.error(f"Error fetching tokens: {e}")
+                logger.error(f"Error fetching tokens: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching token data: {str(e)}")
         
         # ====================================================================
@@ -311,92 +351,64 @@ class BackendAPIService:
         @self.app.get("/api/v1/holonic-scores", response_model=Dict)
         async def get_holonic_scores() -> Dict:
             """
-            Get latest holonic evaluation scores.
+            Get latest holonic evaluation scores grouped by Ubuntu principle.
             
             Returns network-wide Ubuntu principle alignment scores:
-            - Autonomy-Integration balance
-            - Ubuntu alignment
-            - Reciprocity health
-            - Mutualism capacity
-            - Regeneration impact
+            - Diversity (Air)
+            - Reciprocity (Water)
+            - Mutualism (Earth)
+            - Regeneration (Fire)
+            - Holism (integration of all)
             
-            Returns:
-                Dictionary with holonic metrics
-                
-            Example Response:
-                {
-                    "network_average": {
-                        "autonomy_integration": 0.78,
-                        "ubuntu_alignment": 0.85,
-                        "reciprocity_health": 0.72,
-                        "mutualism_capacity": 0.81,
-                        "regeneration_impact": 0.68
-                    },
-                    "overall_health": 0.77,
-                    "category_distribution": {
-                        "exemplar": 65,
-                        "integrator": 130,
-                        "contributor": 260,
-                        "participant": 840
-                    }
-                }
+            Queries ubec_holonic_metrics table with correct schema.
             """
             try:
                 db = await self.registry.get('database')
                 
-                # Get network averages with EXPLICIT schema
-                avg_result = await db.fetch_one(
+                # Query using ACTUAL columns: principle and score
+                results = await db.fetch_all(
                     """
                     SELECT 
-                        AVG(autonomy_integration_score) as autonomy_integration,
-                        AVG(ubuntu_alignment_score) as ubuntu_alignment,
-                        AVG(reciprocity_health_score) as reciprocity_health,
-                        AVG(mutualism_capacity_score) as mutualism_capacity,
-                        AVG(regeneration_impact_score) as regeneration_impact,
-                        AVG(composite_score) as overall_health,
-                        COUNT(*) as total_accounts
+                        principle,
+                        AVG(score) as avg_score,
+                        COUNT(*) as total_assessments,
+                        MAX(calculated_at) as last_updated
                     FROM ubec_main.ubec_holonic_metrics
-                    WHERE evaluated_at > NOW() - INTERVAL '7 days'
+                    WHERE calculated_at > NOW() - INTERVAL '7 days'
+                    GROUP BY principle
                     """,
                     ()
                 )
                 
-                # Get category distribution
-                category_result = await db.fetch_all(
-                    """
-                    SELECT 
-                        holonic_category,
-                        COUNT(*) as count
-                    FROM ubec_main.ubec_holonic_metrics
-                    WHERE evaluated_at > NOW() - INTERVAL '7 days'
-                    GROUP BY holonic_category
-                    ORDER BY holonic_category
-                    """,
-                    ()
-                )
+                # Build response with principle scores
+                scores = {}
+                for row in results:
+                    principle = row['principle']
+                    scores[principle] = {
+                        'score': float(row['avg_score']) if row['avg_score'] else 0.0,
+                        'assessments': int(row['total_assessments']),
+                        'last_updated': row['last_updated'].isoformat() if row['last_updated'] else None
+                    }
                 
-                # Format response
+                # Calculate overall health from all principles
+                all_scores = [s['score'] for s in scores.values() if s['score'] > 0]
+                overall = sum(all_scores) / len(all_scores) if all_scores else 0.0
+                
                 response = {
-                    'network_average': {
-                        'autonomy_integration': float(avg_result['autonomy_integration'] or 0),
-                        'ubuntu_alignment': float(avg_result['ubuntu_alignment'] or 0),
-                        'reciprocity_health': float(avg_result['reciprocity_health'] or 0),
-                        'mutualism_capacity': float(avg_result['mutualism_capacity'] or 0),
-                        'regeneration_impact': float(avg_result['regeneration_impact'] or 0)
-                    },
-                    'overall_health': float(avg_result['overall_health'] or 0),
-                    'total_accounts': int(avg_result['total_accounts'] or 0),
-                    'category_distribution': {
-                        row['holonic_category']: int(row['count'])
-                        for row in category_result
-                    },
-                    'calculated_at': datetime.now(timezone.utc).isoformat()
+                    'diversity': scores.get('diversity', {'score': 0.0}),
+                    'reciprocity': scores.get('reciprocity', {'score': 0.0}),
+                    'mutualism': scores.get('mutualism', {'score': 0.0}),
+                    'regeneration': scores.get('regeneration', {'score': 0.0}),
+                    'holism': scores.get('holism', {'score': 0.0}),
+                    'overall_health': overall,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
+                self.logger.info(f"✓ Retrieved holonic scores for {len(scores)} principles")
                 return response
                 
             except Exception as e:
-                logger.error(f"Error fetching holonic scores: {e}")
+                logger.error(f"Error fetching holonic scores: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching holonic scores: {str(e)}")
         
         # ====================================================================
@@ -406,50 +418,48 @@ class BackendAPIService:
         @self.app.get("/api/v1/network-status", response_model=Dict)
         async def get_network_status() -> Dict:
             """
-            Get real-time network status with ACTUAL bioregion count.
-            
-            This endpoint now provides REAL bioregion data from the
-            BioregionManager service instead of mock data.
+            Get current network status and health metrics.
             
             Returns:
-                Dictionary with network metrics including real bioregion count
-                
-            Example Response:
-                {
-                    "active_participants": 495,
-                    "total_transactions_24h": 1247,
-                    "average_ubuntu_score": 0.77,
-                    "bioregions_count": 12,  # REAL COUNT from database!
-                    "bioregions_summary": {
-                        "total_members": 68,
-                        "average_size": 5.67,
-                        "largest_bioregion": "Pacific Northwest Economic Commons"
-                    },
-                    "last_block_time": "2025-11-04T...",
-                    "network_health": "healthy",
-                    "data_source": "real"
-                }
+            - Total token supply across all elements
+            - Total unique holders
+            - Active bioregion count
+            - Overall health score from holonic metrics
+            - Recent transaction activity
             """
             try:
                 db = await self.registry.get('database')
-                bioregion_mgr = await self.registry.get('bioregion_manager')
                 
-                # Get REAL bioregion count
-                bioregion_count = await bioregion_mgr.get_bioregion_count()
-                bioregion_summary = await bioregion_mgr.get_bioregion_summary()
-                
-                # Get active participants count with EXPLICIT schema
-                participants_result = await db.fetch_one(
+                # Get total supply and holders from ubec_balances
+                supply_result = await db.fetch_one(
                     """
-                    SELECT COUNT(DISTINCT account_id) as active_participants
-                    FROM ubec_main.stellar_accounts
-                    WHERE account_id IS NOT NULL
+                    SELECT 
+                        SUM(balance) as total_supply,
+                        COUNT(DISTINCT account_id) as total_holders
+                    FROM ubec_main.ubec_balances
+                    WHERE balance > 0
                     """,
                     ()
                 )
-                active_participants = int(participants_result['active_participants'] or 0)
                 
-                # Get 24h transaction count with EXPLICIT schema
+                # Get average holonic score from last 7 days
+                health_result = await db.fetch_one(
+                    """
+                    SELECT AVG(score) as avg_score
+                    FROM ubec_main.ubec_holonic_metrics
+                    WHERE calculated_at > NOW() - INTERVAL '7 days'
+                    """,
+                    ()
+                )
+                
+                # Get bioregion count (if available)
+                try:
+                    bioregion_manager = await self.registry.get('bioregion_manager')
+                    bioregion_count = await bioregion_manager.get_bioregion_count()
+                except:
+                    bioregion_count = 0
+                
+                # Get recent transaction count (last 24 hours)
                 tx_result = await db.fetch_one(
                     """
                     SELECT COUNT(*) as tx_count
@@ -458,50 +468,22 @@ class BackendAPIService:
                     """,
                     ()
                 )
-                total_transactions_24h = int(tx_result['tx_count'] or 0)
                 
-                # Get average Ubuntu score with EXPLICIT schema
-                ubuntu_result = await db.fetch_one(
-                    """
-                    SELECT AVG(composite_score) as avg_score
-                    FROM ubec_main.ubec_holonic_metrics
-                    WHERE evaluated_at > NOW() - INTERVAL '7 days'
-                    """,
-                    ()
-                )
-                average_ubuntu_score = float(ubuntu_result['avg_score'] or 0)
-                
-                # Get last block time with EXPLICIT schema
-                block_result = await db.fetch_one(
-                    """
-                    SELECT MAX(created_at) as last_block
-                    FROM ubec_main.stellar_transactions
-                    """,
-                    ()
-                )
-                last_block_time = block_result['last_block'].isoformat() if block_result['last_block'] else None
-                
-                # Determine network health
-                network_health = self._calculate_network_health(
-                    bioregion_count,
-                    active_participants,
-                    average_ubuntu_score
-                )
-                
-                return {
-                    'active_participants': active_participants,
-                    'total_transactions_24h': total_transactions_24h,
-                    'average_ubuntu_score': round(average_ubuntu_score, 2),
-                    'bioregions_count': bioregion_count,  # REAL DATA!
-                    'bioregions_summary': bioregion_summary,
-                    'last_block_time': last_block_time,
-                    'network_health': network_health,
-                    'data_source': 'real',  # Indicator this is actual data
+                response = {
+                    'network_health': 'healthy',
+                    'total_supply': float(supply_result['total_supply']) if supply_result['total_supply'] else 0.0,
+                    'total_holders': int(supply_result['total_holders']) if supply_result['total_holders'] else 0,
+                    'active_bioregions': bioregion_count,
+                    'overall_health_score': float(health_result['avg_score']) if health_result and health_result['avg_score'] else 0.0,
+                    'transactions_24h': int(tx_result['tx_count']) if tx_result else 0,
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
+                self.logger.info("✓ Retrieved network status")
+                return response
+                
             except Exception as e:
-                logger.error(f"Error fetching network status: {e}")
+                logger.error(f"Error fetching network status: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching network status: {str(e)}")
         
         # ====================================================================
@@ -568,62 +550,160 @@ class BackendAPIService:
         # Transaction Endpoints
         # ====================================================================
         
-        @self.app.get("/api/v1/transactions/recent", response_model=List[Dict])
-        async def get_recent_transactions(limit: int = 20) -> List[Dict]:
+        @self.app.get("/api/v1/transactions", response_model=Dict)
+        async def get_recent_transactions(limit: int = 20) -> Dict:
             """
-            Get recent transactions for blockchain explorer.
+            Get recent UBEC token transactions from Stellar blockchain.
             
-            Args:
-                limit: Maximum number of transactions to return (max 100)
-                
-            Returns:
-                List of recent transaction dictionaries
+            Query Parameters:
+            - limit: Number of transactions to return (default: 20, max: 100)
+            
+            Returns list of recent transactions with element context.
             """
-            if limit > 100:
-                raise HTTPException(status_code=400, detail="Limit cannot exceed 100")
-            
             try:
+                # Validate and cap limit
+                limit = min(max(limit, 1), 100)
+                
                 db = await self.registry.get('database')
                 
-                # Query with EXPLICIT schema
+                # Query stellar_transactions table
                 results = await db.fetch_all(
                     """
                     SELECT 
                         st.transaction_hash,
                         st.ledger_sequence,
+                        st.primary_element,
+                        st.involves_tokens,
                         st.source_account,
                         st.operation_count,
-                        st.successful,
                         st.created_at,
-                        st.memo_type,
-                        st.memo
+                        st.successful
                     FROM ubec_main.stellar_transactions st
+                    WHERE st.successful = true
                     ORDER BY st.created_at DESC
                     LIMIT $1
                     """,
                     (limit,)
                 )
                 
-                # Format transactions
                 transactions = []
                 for row in results:
                     tx = {
                         'hash': row['transaction_hash'],
                         'ledger': int(row['ledger_sequence']),
+                        'element': row['primary_element'],
+                        'tokens': row['involves_tokens'],
                         'source': row['source_account'],
                         'operations': int(row['operation_count']),
-                        'successful': bool(row['successful']),
-                        'timestamp': row['created_at'].isoformat() if row['created_at'] else None,
-                        'memo_type': row['memo_type'],
-                        'memo': row['memo']
+                        'timestamp': row['created_at'].isoformat() if row['created_at'] else None
                     }
                     transactions.append(tx)
                 
-                return transactions
+                response = {
+                    'transactions': transactions,
+                    'count': len(transactions),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+                self.logger.info(f"✓ Retrieved {len(transactions)} recent transactions")
+                return response
                 
             except Exception as e:
-                logger.error(f"Error fetching transactions: {e}")
+                logger.error(f"Error fetching transactions: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching transactions: {str(e)}")
+
+        # ====================================================================
+        # Distribution Stats Endpoint - NEW
+        # ====================================================================
+        
+        @self.app.get("/api/v1/distribution", response_model=Dict)
+        async def get_distribution_stats() -> Dict:
+            """
+            Get token distribution statistics for 75/20/5 compliance.
+            
+            Returns distribution breakdown by category:
+            - General Circulation (75%)
+            - Stewardship (20%)
+            - Administration (5%)
+            
+            Shows compliance status for each token.
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Query ubec_distributions table
+                results = await db.fetch_all(
+                    """
+                    SELECT 
+                        token_code,
+                        element,
+                        category,
+                        target_percentage,
+                        current_percentage,
+                        current_amount,
+                        total_supply,
+                        is_compliant,
+                        deviation,
+                        snapshot_time
+                    FROM ubec_main.ubec_distributions
+                    ORDER BY 
+                        CASE token_code
+                            WHEN 'UBEC' THEN 1
+                            WHEN 'UBECrc' THEN 2
+                            WHEN 'UBECgpi' THEN 3
+                            WHEN 'UBECtt' THEN 4
+                        END,
+                        CASE category
+                            WHEN 'general_circulation' THEN 1
+                            WHEN 'stewardship' THEN 2
+                            WHEN 'administration' THEN 3
+                        END
+                    """,
+                    ()
+                )
+                
+                # Group by token
+                distributions = {}
+                for row in results:
+                    token = row['token_code']
+                    if token not in distributions:
+                        distributions[token] = {
+                            'token_code': token,
+                            'element': row['element'],
+                            'total_supply': float(row['total_supply']),
+                            'categories': {},
+                            'is_compliant': True,
+                            'snapshot_time': None
+                        }
+                    
+                    category = row['category']
+                    distributions[token]['categories'][category] = {
+                        'target_percentage': float(row['target_percentage']),
+                        'current_percentage': float(row['current_percentage']),
+                        'current_amount': float(row['current_amount']),
+                        'is_compliant': bool(row['is_compliant']),
+                        'deviation': float(row['deviation']) if row['deviation'] else 0.0
+                    }
+                    
+                    # Overall compliance is false if any category is non-compliant
+                    if not row['is_compliant']:
+                        distributions[token]['is_compliant'] = False
+                    
+                    if row['snapshot_time']:
+                        distributions[token]['snapshot_time'] = row['snapshot_time'].isoformat()
+                
+                response = {
+                    'distributions': list(distributions.values()),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+                self.logger.info(f"✓ Retrieved distribution stats for {len(distributions)} tokens")
+                return response
+                
+            except Exception as e:
+                logger.error(f"Error fetching distribution stats: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error fetching distribution stats: {str(e)}")
+
         
         # ====================================================================
         # Health Check Endpoint

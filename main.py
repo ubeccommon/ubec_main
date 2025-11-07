@@ -876,6 +876,10 @@ async def handle_visualize(
         format: Output format
         include_advanced: Include advanced visualizations
     """
+    from pathlib import Path
+    import base64
+    from datetime import datetime
+    
     logger.info("=" * 70)
     logger.info(f"GENERATING VISUALIZATIONS (Action: {action}, Format: {format})")
     logger.info("=" * 70)
@@ -889,8 +893,39 @@ async def handle_visualize(
         )
         logger.info(f"\n✅ Report generated: {output_file}")
     elif action == 'all':
-        results = await visualizer.generate_all(format=format)
-        logger.info(f"\n✅ Generated {len(results)} visualizations")
+        # FIXED: generate_all() returns base64 images, need to save them to files
+        output_path = Path('./visualizations')
+        reports_path = Path('./reports')
+        output_path.mkdir(parents=True, exist_ok=True)
+        reports_path.mkdir(parents=True, exist_ok=True)
+        
+        # Generate all visualizations (returns dict of base64 images)
+        results = await visualizer.generate_all(output_path=output_path)
+        # Saves PNG files
+        
+        # ✅ Also generate HTML if format='html'
+        if format.lower() == 'html':
+            report = await visualizer.generate_html_report(reports_path)
+
+        # Save each chart to a file
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        saved_files = []
+        
+        for chart_name, base64_data in results.items():
+            if base64_data is not None:
+                try:
+                    # Decode base64 and save to file
+                    image_data = base64.b64decode(base64_data)
+                    filename = output_path / f"{chart_name}_{timestamp}.png"
+                    filename.write_bytes(image_data)
+                    saved_files.append(str(filename))
+                    logger.info(f"  ✓ Saved: {filename}")
+                except Exception as e:
+                    logger.warning(f"  ✗ Failed to save {chart_name}: {e}")
+        
+        logger.info(f"\n✅ Generated {len(saved_files)}/{len(results)} visualizations")
+        logger.info(f"   Saved to: {output_path.absolute()}")
+        
     elif action == 'chart':
         chart_file = await visualizer.generate_chart()
         logger.info(f"\n✅ Chart generated: {chart_file}")
