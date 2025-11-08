@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Protocol Scheduler Service - Production Version 1.0
+UBEC Protocol Scheduler Service - Production Version 1.0.4
 =========================================================
 Automated task scheduling and execution for continuous protocol operation.
 
@@ -35,6 +35,7 @@ Features:
     - Health monitoring and metrics
     - Graceful shutdown
     - Dynamic job reloading
+    - Enhanced status detection for NOT RUNNING state
 
 Usage Example:
     ```python
@@ -52,9 +53,16 @@ Usage Example:
     ```
 
 Author: UBEC Protocol Development Team
-Version: 1.0.3 (Fixed Parameters Parsing & Type Safety)
-Updated: 2025-11-07
+Version: 1.0.4 (Enhanced Health Monitoring & Wait Support)
+Updated: 2025-11-08
 
+CHANGELOG v1.0.4:
+    - ENHANCEMENT: Health check now explicitly detects NOT RUNNING state
+    - ENHANCEMENT: Added wait_for_completion() method for proper shutdown handling
+    - ENHANCEMENT: Status determination considers scheduler._running state
+    - ENHANCEMENT: Better diagnostic information when scheduler not started
+    - FIX: Health check now returns 'not_started' status when initialized but not running
+    
 CHANGELOG v1.0.3:
     - CRITICAL FIX: Added _parse_job_parameters() for robust JSONB parsing
     - CRITICAL FIX: Safe parameter extraction with type checking in _execute_job()
@@ -288,6 +296,35 @@ class UBECSchedulerService:
             await asyncio.gather(*running_jobs, return_exceptions=True)
         
         self.logger.info("✓ Scheduler stopped")
+    
+    async def wait_for_completion(self) -> None:
+        """
+        Wait for scheduler to complete (until manually stopped).
+        
+        This method blocks until the scheduler is stopped via stop() or
+        an interrupt signal. Useful for keeping the scheduler running in
+        standalone mode.
+        
+        Example:
+            scheduler = await registry.get('scheduler')
+            await scheduler.start()
+            await scheduler.wait_for_completion()  # Blocks until Ctrl+C
+        """
+        if not self._running:
+            self.logger.warning("Scheduler not running, nothing to wait for")
+            return
+        
+        if not self._main_task:
+            self.logger.error("Scheduler main task not found")
+            return
+        
+        try:
+            # Wait for the main scheduler loop to complete
+            await self._main_task
+        except asyncio.CancelledError:
+            self.logger.info("Scheduler cancelled")
+        except Exception as e:
+            self.logger.error(f"Scheduler error: {e}", exc_info=True)
     
     async def close(self) -> None:
         """
@@ -813,6 +850,9 @@ class UBECSchedulerService:
         Returns detailed status of scheduler and all jobs.
         Compatible with ServiceHealthCheck utility (Principle #12).
         
+        ENHANCED: Now explicitly detects NOT RUNNING state when scheduler
+        is initialized but start() has not been called.
+        
         Returns:
             Health status dictionary with scheduler and job metrics
         """
@@ -822,6 +862,21 @@ class UBECSchedulerService:
                     'service': 'UBECSchedulerService',
                     'status': 'initializing',
                     'initialized': False
+                }
+            
+            # ENHANCEMENT: Check if scheduler is initialized but not started
+            if self._initialized and not self._running:
+                return {
+                    'service': 'UBECSchedulerService',
+                    'status': 'not_started',
+                    'initialized': True,
+                    'running': False,
+                    'message': (
+                        'Scheduler is initialized but not started. '
+                        'Call scheduler.start() to begin job execution.'
+                    ),
+                    'jobs_loaded': len(self.jobs),
+                    'timestamp': datetime.now().isoformat()
                 }
             
             # Calculate aggregate metrics
@@ -855,8 +910,10 @@ class UBECSchedulerService:
                 for job in self.jobs.values()
             ]
             
-            # Determine overall status
-            if overall_success_rate >= 0.9 and running_jobs < self.max_concurrent_jobs:
+            # ENHANCEMENT: Determine status considering _running state
+            if not self._running:
+                status = 'not_started'
+            elif overall_success_rate >= 0.9 and running_jobs < self.max_concurrent_jobs:
                 status = 'healthy'
             elif overall_success_rate >= 0.7:
                 status = 'degraded'
