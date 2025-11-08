@@ -51,14 +51,8 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.5
+Version: 3.1.4
 Updated: 2025-11-08
-CHANGELOG v3.1.5:
-    - ENHANCED: Implemented Option 3 Enhanced Health Reporting
-    - Added nuanced health status classification
-    - Distinguishes between operational and unhealthy states
-    - Tracks not_started services separately for better visibility
-    - Provides actionable status messages for different scenarios
 CHANGELOG v3.1.4:
     - Enhanced scheduler error diagnostics in handle_serve()
     - Added scheduler initialization status logging
@@ -629,30 +623,11 @@ def register_core_services():
 
 async def handle_health_check(registry: ServiceRegistry, detailed: bool = False):
     """
-    Perform comprehensive health check on all services with enhanced reporting.
-    
-    ENHANCED v3.1.5: Implements Option 3 (Enhanced Reporting) for better
-    status classification and more nuanced reporting.
-    
-    Status Classification:
-        - healthy: Service fully operational
-        - not_started: Service initialized but not activated (informational)
-        - degraded: Service operational with issues
-        - unhealthy: Service not operational
-        - unknown: Cannot determine status
-        - error: Service in error state
-    
-    Reporting Categories:
-        1. All systems healthy: All services report healthy
-        2. Operational with attention: Some services not_started or degraded
-        3. Systems unhealthy: Some services unhealthy or in error
+    Perform comprehensive health check on all services.
     
     Args:
         registry: Service registry
         detailed: Show detailed health information
-        
-    Principle #7: Per-Asset Monitoring - Individual service health checks
-    Principle #10: Separation of Concerns - Clear health check logic
     """
     logger.info("=" * 70)
     logger.info("SYSTEM HEALTH CHECK")
@@ -666,12 +641,7 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
         'api_service', 'scheduler'
     ]
     
-    # Track different status categories for enhanced reporting
     all_healthy = True
-    needs_attention = False
-    services_not_started = []
-    services_degraded = []
-    services_unhealthy = []
     
     for service_name in service_names:
         try:
@@ -687,9 +657,6 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
                     'message': f'{service_name} has no health_check method'
                 }
             
-            # Get status
-            status = health.get('status', 'unknown')
-            
             # Determine status symbol
             status_symbol = {
                 'healthy': '✅',
@@ -697,63 +664,30 @@ async def handle_health_check(registry: ServiceRegistry, detailed: bool = False)
                 'unhealthy': '❌',
                 'not_started': '⏸️',
                 'unknown': '❓'
-            }.get(status, '❓')
+            }.get(health.get('status', 'unknown'), '❓')
             
-            logger.info(f"\n{status_symbol} {service_name}: {status}")
+            logger.info(f"\n{status_symbol} {service_name}: {health.get('status', 'unknown')}")
             
             # Show message if present (especially for not_started status)
-            if 'message' in health and status == 'not_started':
+            if 'message' in health and health.get('status') == 'not_started':
                 logger.info(f"  ℹ️  {health['message']}")
             
             if detailed and 'details' in health:
                 for key, value in health['details'].items():
                     logger.info(f"  {key}: {value}")
             
-            # Classify service status for enhanced reporting
-            if status in ['unhealthy', 'error']:
+            if health.get('status') not in ['healthy', 'unknown', 'not_started']:
                 all_healthy = False
-                services_unhealthy.append(service_name)
-            elif status == 'degraded':
-                all_healthy = False
-                needs_attention = True
-                services_degraded.append(service_name)
-            elif status == 'not_started':
-                needs_attention = True
-                services_not_started.append(service_name)
                 
         except Exception as e:
             logger.error(f"\n❌ {service_name}: ERROR - {e}")
             all_healthy = False
-            services_unhealthy.append(service_name)
     
-    # Enhanced reporting with nuanced status messages
     logger.info("\n" + "=" * 70)
-    
-    if all_healthy and not needs_attention:
-        # All services healthy - best case
+    if all_healthy:
         logger.info("✅ ALL SYSTEMS HEALTHY")
-        
-    elif all_healthy and needs_attention:
-        # Services operational but some need attention
-        if services_not_started:
-            logger.info(f"ℹ️  ALL SYSTEMS OPERATIONAL ({len(services_not_started)} service(s) not started)")
-            logger.info(f"   Not started: {', '.join(services_not_started)}")
-        elif services_degraded:
-            logger.info(f"⚠️  ALL SYSTEMS OPERATIONAL ({len(services_degraded)} service(s) degraded)")
-            logger.info(f"   Degraded: {', '.join(services_degraded)}")
-        else:
-            logger.info("⚠️  ALL SYSTEMS OPERATIONAL (some issues detected)")
-            
     else:
-        # Some services unhealthy - critical issues
         logger.info("⚠️  SOME SYSTEMS UNHEALTHY")
-        if services_unhealthy:
-            logger.info(f"   Unhealthy: {', '.join(services_unhealthy)}")
-        if services_degraded:
-            logger.info(f"   Degraded: {', '.join(services_degraded)}")
-        if services_not_started:
-            logger.info(f"   Not started: {', '.join(services_not_started)}")
-    
     logger.info("=" * 70)
 
 
@@ -834,6 +768,7 @@ async def handle_discover(registry: ServiceRegistry, max_accounts: int = 100):
         
     except Exception as e:
         logger.error(f"Discovery failed: {e}", exc_info=True)
+        raise
 
 
 async def handle_sync(
@@ -843,110 +778,105 @@ async def handle_sync(
     force: bool = False
 ):
     """
-    Synchronize blockchain data for specified token(s).
-    
-    Uses the correct UBECDataSynchronizer method signatures:
-    - sync_accounts(token_codes=None, max_accounts_per_token=5000) for all tokens
-    - sync_accounts(token_codes=[code], max_accounts_per_token=N) for specific token
+    Synchronize blockchain data.
     
     Args:
         registry: Service registry
-        sync_type: Type of sync ('all', 'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-        max_accounts: Maximum accounts to sync per token
-        force: Force full resync (reserved for future use)
-        
-    Principle #3: Service Registry - Access via registry only
-    Principle #5: Strict Async - All operations async/await
-    Principle #12: Method Singularity - Use actual synchronizer methods
+        sync_type: Type of sync (all, UBEC, UBECrc, UBECgpi, UBECtt)
+        max_accounts: Maximum accounts to discover per token
+        force: Force full resync (currently unused - reserved for future)
     """
     logger.info("=" * 70)
-    logger.info("BLOCKCHAIN SYNCHRONIZATION")
+    logger.info("SYNCHRONIZING BLOCKCHAIN DATA")
     logger.info(f"Sync Type: {sync_type}")
     if max_accounts:
-        logger.info(f"Max Accounts Per Token: {max_accounts}")
+        logger.info(f"Max Accounts: {max_accounts}")
     if force:
-        logger.info("Mode: FORCE RESYNC (note: currently uses incremental sync)")
+        logger.info("Mode: FORCE RESYNC (note: sync service uses incremental by default)")
     logger.info("=" * 70)
     
     sync_service = await registry.get('sync')
     
-    # Default max accounts if not specified
-    max_accounts_per_token = max_accounts if max_accounts else 5000
-    
     try:
         if sync_type == 'all':
-            # Sync all 4 UBEC tokens using sync_accounts() with no token filter
-            logger.info(f"Syncing all tokens (max {max_accounts_per_token} accounts per token)...")
-            results = await sync_service.sync_accounts(
-                token_codes=None,  # None = sync all tokens
-                max_accounts_per_token=max_accounts_per_token
-            )
+            # Sync all tokens - sync_all() doesn't accept parameters
+            # It uses configuration from database for limits
+            logger.info("Synchronizing all UBEC protocol tokens...")
+            results = await sync_service.sync_all()
             
-            # Display results
-            logger.info(f"\n📊 Sync Results:")
-            logger.info(f"  Total accounts synced: {results.get('total_accounts', 0)}")
-            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
+            # Results format: dict with token-specific results
+            logger.info("\n✅ Synchronization completed")
             
-            if 'by_token' in results:
-                logger.info(f"\n  By Token:")
-                for token, data in results['by_token'].items():
-                    status_symbol = "✅" if data.get('status') == 'success' else "❌"
-                    logger.info(f"    {status_symbol} {token}: {data.get('accounts_synced', 0)} accounts")
-        
+            # Display results for each token if available
+            if isinstance(results, dict):
+                total_accounts = 0
+                for token, token_results in results.items():
+                    if isinstance(token_results, dict):
+                        accounts = token_results.get('accounts_discovered', 0)
+                        total_accounts += accounts
+                        logger.info(f"  {token}: {accounts} accounts")
+                
+                logger.info(f"  Total accounts: {total_accounts}")
+            else:
+                logger.info(f"  Results: {results}")
         else:
-            # Sync specific token using sync_accounts() with token filter
-            token_code = sync_type.upper()
-            logger.info(f"Syncing {token_code} (max {max_accounts_per_token} accounts)...")
+            # Discover holders for specific token
+            # Use discover_accounts(asset_code, max_accounts) method
+            logger.info(f"Discovering {sync_type} token holders...")
             
-            results = await sync_service.sync_accounts(
-                token_codes=[token_code],  # List with specific token
-                max_accounts_per_token=max_accounts_per_token
-            )
+            # Call discover_accounts with proper parameters
+            if max_accounts:
+                results = await sync_service.discover_accounts(
+                    asset_code=sync_type,
+                    max_accounts=max_accounts
+                )
+            else:
+                results = await sync_service.discover_accounts(
+                    asset_code=sync_type,
+                    max_accounts=5000  # Default limit
+                )
             
-            logger.info(f"\n📊 Sync Results:")
-            logger.info(f"  Total accounts synced: {results.get('total_accounts', 0)}")
-            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
-        
-        logger.info("\n✅ Synchronization complete")
-        
+            logger.info("\n✅ Discovery completed")
+            logger.info(f"  Accounts discovered: {results.get('accounts_discovered', 0)}")
+            logger.info(f"  New accounts: {results.get('new_accounts', 0)}")
+            
     except Exception as e:
-        logger.error(f"\n❌ Synchronization failed: {e}", exc_info=True)
+        logger.error(f"Sync failed: {e}", exc_info=True)
         raise
 
 
 async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'overview'):
     """
-    Run analytics on token data.
+    Run analytics on protocol data.
     
     Args:
         registry: Service registry
-        analysis_type: Type of analysis to run
+        analysis_type: Type of analysis
     """
     logger.info("=" * 70)
-    logger.info("ANALYTICS")
+    logger.info("RUNNING ANALYTICS")
     logger.info(f"Analysis Type: {analysis_type}")
     logger.info("=" * 70)
     
-    analytics = await registry.get('analytics')
+    analytics_service = await registry.get('analytics')
     
     try:
         if analysis_type == 'overview':
-            results = await analytics.get_overview()
+            results = await analytics_service.generate_overview()
         elif analysis_type == 'holders':
-            results = await analytics.get_holder_analysis()
+            results = await analytics_service.analyze_holders()
         elif analysis_type == 'metrics':
-            results = await analytics.get_token_metrics()
+            results = await analytics_service.calculate_metrics()
         else:
             logger.error(f"Unknown analysis type: {analysis_type}")
             return
         
         logger.info("\n✅ Analysis completed")
-        # Display results
-        for key, value in results.items():
-            logger.info(f"  {key}: {value}")
+        logger.info(f"  Results: {results}")
         
     except Exception as e:
         logger.error(f"Analytics failed: {e}", exc_info=True)
+        raise
 
 
 async def handle_visualize(
@@ -956,42 +886,41 @@ async def handle_visualize(
     include_advanced: bool = False
 ):
     """
-    Generate visualizations and reports.
+    Generate visualizations.
     
     Args:
         registry: Service registry
-        action: Visualization action ('report', 'all', 'chart')
-        format: Output format ('html', 'pdf')
+        action: Visualization action
+        format: Output format
         include_advanced: Include advanced visualizations
     """
     logger.info("=" * 70)
-    logger.info("VISUALIZATION")
+    logger.info("GENERATING VISUALIZATIONS")
     logger.info(f"Action: {action}")
     logger.info(f"Format: {format}")
-    if include_advanced:
-        logger.info("Mode: Include advanced visualizations")
     logger.info("=" * 70)
     
     visualizer = await registry.get('visualizer')
     
     try:
         if action == 'report':
-            output_path = await visualizer.generate_html_report(
+            output_path = await visualizer.generate_report(
+                format=format,
                 include_advanced=include_advanced
             )
             logger.info(f"\n✅ Report generated: {output_path}")
-            
         elif action == 'all':
-            results = await visualizer.generate_all_visualizations()
+            output_paths = await visualizer.generate_all_visualizations()
             logger.info("\n✅ All visualizations generated")
-            for chart_type, path in results.items():
-                logger.info(f"  {chart_type}: {path}")
-                
-        elif action == 'chart':
-            logger.info("Chart generation not yet implemented")
+            for path in output_paths:
+                logger.info(f"  {path}")
+        else:
+            logger.error(f"Unknown visualization action: {action}")
+            return
         
     except Exception as e:
         logger.error(f"Visualization failed: {e}", exc_info=True)
+        raise
 
 
 async def handle_protocol_health(registry: ServiceRegistry):
@@ -1049,36 +978,43 @@ async def handle_scheduler_status(registry: ServiceRegistry):
         status_symbol = {
             'healthy': '✅',
             'degraded': '⚠️',
-            'unhealthy': '❌'
+            'unhealthy': '❌',
+            'not_started': '⏸️'
         }.get(health['status'], '❓')
         
         logger.info(f"\n{status_symbol} Status: {health['status'].upper()}")
-        logger.info(f"Running: {'Yes' if health['running'] else 'No'}")
+        logger.info(f"Running: {'Yes' if health.get('running') else 'No'}")
         
-        # Metrics
-        metrics = health['metrics']
-        logger.info(f"\nMetrics:")
-        logger.info(f"  Total Jobs: {metrics['total_jobs']}")
-        logger.info(f"  Enabled: {metrics['enabled_jobs']}")
-        logger.info(f"  Currently Running: {metrics['running_jobs']}")
-        logger.info(f"  Success Rate: {metrics['overall_success_rate']:.1%}")
+        # Show message if present
+        if 'message' in health:
+            logger.info(f"\nℹ️  {health['message']}")
+        
+        # Metrics (if running)
+        if 'metrics' in health:
+            metrics = health['metrics']
+            logger.info(f"\nMetrics:")
+            logger.info(f"  Total Jobs: {metrics.get('total_jobs', 0)}")
+            logger.info(f"  Enabled: {metrics.get('enabled_jobs', 0)}")
+            logger.info(f"  Currently Running: {metrics.get('running_jobs', 0)}")
+            logger.info(f"  Success Rate: {metrics.get('overall_success_rate', 0):.1%}")
         
         # Job details
-        logger.info(f"\nJobs:")
-        for job in health['jobs']:
-            job_status = '✅' if job['enabled'] else '❌'
-            circuit = job['circuit_state']
-            circuit_symbol = {
-                'closed': '✅',
-                'half_open': '⚠️',
-                'open': '❌'
-            }.get(circuit, '❓')
-            
-            logger.info(f"\n  {job_status} {job['name']}")
-            logger.info(f"     Next Run: {job['next_run']}")
-            logger.info(f"     Success Rate: {job['success_rate']:.1%}")
-            logger.info(f"     Avg Duration: {job['avg_duration_ms']:.0f}ms")
-            logger.info(f"     Circuit: {circuit_symbol} {circuit}")
+        if 'jobs' in health:
+            logger.info(f"\nJobs:")
+            for job in health['jobs']:
+                job_status = '✅' if job.get('enabled') else '❌'
+                circuit = job.get('circuit_state', 'unknown')
+                circuit_symbol = {
+                    'closed': '✅',
+                    'half_open': '⚠️',
+                    'open': '❌'
+                }.get(circuit, '❓')
+                
+                logger.info(f"\n  {job_status} {job.get('name', 'unknown')}")
+                logger.info(f"     Next Run: {job.get('next_run', 'N/A')}")
+                logger.info(f"     Success Rate: {job.get('success_rate', 0):.1%}")
+                logger.info(f"     Avg Duration: {job.get('avg_duration_ms', 0):.0f}ms")
+                logger.info(f"     Circuit: {circuit_symbol} {circuit}")
             
     except Exception as e:
         logger.error(f"Error getting scheduler status: {e}")
@@ -1093,95 +1029,87 @@ async def handle_serve(
     reload: bool = False
 ):
     """
-    Start API server with scheduler service.
+    Start the FastAPI backend server with scheduler.
     
-    This function:
-    1. Retrieves the API service from registry
-    2. Starts the scheduler service for automated tasks
-    3. Launches the FastAPI server
-    
-    ENHANCED v3.1.4: Added comprehensive scheduler startup diagnostics
+    This exposes REST endpoints for the www server to consume and
+    starts the background scheduler for automated tasks.
     
     Args:
         registry: Service registry
         host: Host to bind to
         port: Port to bind to
         reload: Enable auto-reload for development
-        
-    Principle #2: Service Pattern - main.py orchestrates all services
-    Principle #3: Service Registry - all services accessed via registry
     """
     logger.info("=" * 70)
-    logger.info("STARTING API SERVER WITH SCHEDULER")
-    logger.info(f"Host: {host}")
-    logger.info(f"Port: {port}")
+    logger.info(f"STARTING UBEC PROTOCOL SERVER")
+    logger.info(f"API: http://{host}:{port}")
     logger.info("=" * 70)
     
-    # Initialize scheduler reference for cleanup
+    # Get the API service
+    api_service = await registry.get('api_service')
+    app = api_service.app
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ CRITICAL: Start Scheduler Service ⭐
+    # ═══════════════════════════════════════════════════════════════
     scheduler = None
+    try:
+        logger.info("\n🔄 Initializing Scheduler Service...")
+        
+        # Get scheduler from registry (this calls initialize())
+        scheduler = await registry.get('scheduler')
+        logger.info("✓ Scheduler service retrieved from registry")
+        
+        # Check health before starting
+        health = await scheduler.health_check()
+        logger.info(f"Scheduler health status: {health.get('status')}")
+        
+        # Start the background loop
+        await scheduler.start()
+        logger.info("✓ Scheduler background loop started")
+        
+        # Verify it's actually running
+        health = await scheduler.health_check()
+        if health.get('running'):
+            logger.info("✅ Scheduler started - automated tasks active")
+        else:
+            logger.warning("⚠️  Scheduler started but health check shows not running")
+            logger.warning(f"Status: {health.get('status')}")
+            if 'message' in health:
+                logger.warning(f"Message: {health['message']}")
+            
+    except ImportError as e:
+        logger.error(f"⚠️  Failed to import scheduler service: {e}")
+        logger.error("Check that services/scheduler/ubec_scheduler_service.py exists")
+        logger.warning("Server will continue without scheduler")
+    except Exception as e:
+        logger.error(f"⚠️  Failed to start scheduler: {e}", exc_info=True)
+        logger.warning("Server will continue without scheduler")
+        logger.warning("To diagnose: python main.py scheduler-status")
+    # ═══════════════════════════════════════════════════════════════
+    
+    logger.info(f"\n✅ Server ready")
+    logger.info(f"📊 Swagger docs: http://{host}:{port}/docs")
+    logger.info(f"📖 ReDoc: http://{host}:{port}/redoc")
+    logger.info(f"💚 Health: http://{host}:{port}/health")
+    if scheduler:
+        logger.info(f"⏰ Scheduler: Active (background tasks running)")
+    else:
+        logger.info(f"⏸️  Scheduler: NOT RUNNING (automated tasks disabled)")
+    logger.info("\n👉 Press Ctrl+C to stop")
+    logger.info("=" * 70)
+    
+    # Run the server
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        reload=reload
+    )
+    server = uvicorn.Server(config)
     
     try:
-        # Get API service from registry
-        api_service = await registry.get('api_service')
-        app = api_service.app
-        
-        # ═══════════════════════════════════════════════════════════════
-        # ⭐ CRITICAL: Start Scheduler Service ⭐
-        # ═══════════════════════════════════════════════════════════════
-        logger.info("\n" + "=" * 70)
-        logger.info("INITIALIZING SCHEDULER SERVICE")
-        logger.info("=" * 70)
-        
-        try:
-            # Get scheduler from registry
-            scheduler = await registry.get('scheduler')
-            logger.info("✓ Scheduler service retrieved from registry")
-            
-            # Check scheduler health before starting
-            health = await scheduler.health_check()
-            logger.info(f"Scheduler health before start: {health.get('status', 'unknown')}")
-            logger.info(f"  Initialized: {health.get('initialized', False)}")
-            logger.info(f"  Running: {health.get('running', False)}")
-            
-            # Start scheduler
-            logger.info("\nStarting scheduler service...")
-            await scheduler.start()
-            
-            # Verify scheduler started
-            health_after = await scheduler.health_check()
-            logger.info(f"\nScheduler health after start: {health_after.get('status', 'unknown')}")
-            logger.info(f"  Initialized: {health_after.get('initialized', False)}")
-            logger.info(f"  Running: {health_after.get('running', False)}")
-            
-            if health_after.get('running'):
-                logger.info("✅ Scheduler started successfully - background jobs active")
-            else:
-                logger.warning("⚠️  Scheduler may not have started correctly")
-                logger.warning(f"   Status: {health_after.get('status')}")
-                logger.warning(f"   Message: {health_after.get('message', 'No message')}")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to start scheduler: {e}", exc_info=True)
-            logger.error("Server will start but scheduler jobs will NOT run")
-        # ═══════════════════════════════════════════════════════════════
-        
-        logger.info("\n" + "=" * 70)
-        logger.info("STARTING FASTAPI SERVER")
-        logger.info("=" * 70)
-        logger.info(f"Server will be available at: http://{host}:{port}")
-        logger.info("Press Ctrl+C to stop")
-        logger.info("=" * 70 + "\n")
-        
-        # Configure and start server
-        config = uvicorn.Config(
-            app=app,
-            host=host,
-            port=port,
-            reload=reload,
-            log_level="info"
-        )
-        
-        server = uvicorn.Server(config)
         await server.serve()
     except KeyboardInterrupt:
         logger.info("\n\n⚠️  Shutting down...")
@@ -1287,7 +1215,7 @@ async def main():
     print("DEBUG: About to display banner")
     logger.info("")
     logger.info("╔" + "═" * 68 + "╗")
-    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.1.5" + " " * 26 + "║")
+    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.1.4" + " " * 26 + "║")
     logger.info("║" + " " * 18 + "Main Orchestrator" + " " * 33 + "║")
     logger.info("╚" + "═" * 68 + "╝")
     logger.info("")
