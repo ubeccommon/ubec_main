@@ -778,7 +778,7 @@ class Config:
             if missing:
                 raise Exception(f"Missing required settings: {', '.join(missing)}")
             
-            return True
+            return None
         
         async def check_token_issuers():
             """
@@ -798,7 +798,7 @@ class Config:
             if missing:
                 raise Exception(f"Missing token issuers: {', '.join(missing)}")
             
-            return True
+            return None
         
         # Get cache validity status
         cache_valid = False

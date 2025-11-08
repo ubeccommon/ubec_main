@@ -651,12 +651,12 @@ class ServiceHealthCheck:
                 # Use the service's test_connection method (Principle #12)
                 # This method internally calls client._client.root().call()
                 await client.test_connection()
-                return True
+                return None
             except AttributeError:
                 # Fallback: test_connection doesn't exist, try direct SDK call
                 try:
                     await client._client.root().call()
-                    return True
+                    return None
                 except Exception as root_error:
                     raise Exception(
                         f"Stellar Horizon unreachable: {str(root_error)} - "

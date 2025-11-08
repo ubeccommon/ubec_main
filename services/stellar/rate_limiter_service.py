@@ -1126,12 +1126,12 @@ class RateLimiterService:
                     if bucket.tokens > bucket.capacity * 1.1:  # Allow 10% overflow for timing
                         raise Exception(f"Token bucket for {api_name} exceeded capacity")
                 
-                return f"Token buckets healthy ({len(self._buckets)} APIs)"
+                return None
             
             async def check_circuit_breakers():
                 """Verify circuit breakers are not stuck open"""
                 if not open_circuits:
-                    return "All circuit breakers closed"
+                    return None
                 
                 # Check if any circuits have been open too long
                 stuck_circuits = []
@@ -1146,7 +1146,7 @@ class RateLimiterService:
                 if stuck_circuits:
                     raise Exception(f"Circuit breakers stuck open: {', '.join(stuck_circuits)}")
                 
-                return f"Circuit breakers OK ({len(open_circuits)} open, within timeout)"
+                return None
             
             async def check_performance_baseline():
                 """
