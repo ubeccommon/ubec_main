@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Bioregion Manager Service - Production Version 1.1
+UBEC Bioregion Manager Service - Production Version 1.2
 =========================================================
 Tracks and manages bioregional holons representing geographic economic communities.
 
@@ -21,7 +21,7 @@ Design Principles Compliance:
     ✅ #9  Integrated Rate Limiting: N/A (database-only operations)
     ✅ #10 Separation of Concerns: Bioregion logic isolated
     ✅ #11 Comprehensive Documentation: Full docstrings
-    ✅ #12 Method Singularity: Each method implemented once
+    ✅ #12 Method Singularity: Uses ServiceHealthCheck utility
 ════════════════════════════════════════════════════════════════════════════
 
 Attribution: This project uses the services of Claude and Anthropic PBC to 
@@ -50,9 +50,16 @@ Usage Example:
     ```
 
 Author: UBEC Protocol Development Team
-Version: 1.1.0
+Version: 1.2.0
 Created: 2025-11-04
-Updated: 2025-11-07
+Updated: 2025-11-09
+
+Changes from v1.2.0:
+- ✅ FIXED: Standardized health check using ServiceHealthCheck utility (Principle #12)
+- ✅ ADDED: Proper initialization tracking with _initialized flag
+- ✅ ADDED: Operation and error count tracking for monitoring
+- ✅ ENHANCED: Health check now uses database_dependent_health pattern
+- ✅ VERIFIED: All database queries use explicit schema names (phenomenal.holons)
 
 Changes from v1.1.0:
 - ✅ ADDED: update_bioregions() method for scheduled execution
@@ -64,6 +71,9 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 from decimal import Decimal
+
+# Import standardized health check utility (Principle #12: Method Singularity)
+from core.utils.service_health import ServiceHealthCheck
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +101,14 @@ class BioregionManager:
     Attributes:
         db: Database manager instance (injected via registry)
         logger: Logger instance for this service
+        _initialized: Service initialization status flag
         _cache: In-memory cache for performance
         _cache_ttl: Cache time-to-live in seconds
         _last_cache_update: Timestamp of last cache update
+        _operation_count: Total operations performed
+        _error_count: Total errors encountered
+        _last_error: Last error message
+        _last_error_time: Timestamp of last error
     """
     
     def __init__(self, database_manager):
@@ -106,10 +121,19 @@ class BioregionManager:
         self.db = database_manager
         self.logger = logger
         
+        # Initialization tracking
+        self._initialized = False
+        
         # Simple caching for performance
         self._cache: Dict[str, Any] = {}
         self._cache_ttl = 60  # seconds
         self._last_cache_update: Optional[datetime] = None
+        
+        # Operation tracking for monitoring
+        self._operation_count = 0
+        self._error_count = 0
+        self._last_error: Optional[str] = None
+        self._last_error_time: Optional[datetime] = None
         
         self.logger.info("BioregionManager initialized")
     
@@ -148,70 +172,88 @@ class BioregionManager:
         except Exception as e:
             self.logger.warning(f"Could not verify phenomenal schema: {e}")
         
+        # Mark as initialized
+        self._initialized = True
         self.logger.info("BioregionManager initialized successfully")
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Comprehensive health check for monitoring.
+        Comprehensive health check using standardized ServiceHealthCheck utility.
+        
+        Implements Principle #12 (Method Singularity) by using the shared
+        ServiceHealthCheck.database_dependent_health() method instead of
+        custom health check implementation.
+        
+        This implementation follows the health check pattern guide:
+        - Uses ServiceHealthCheck.database_dependent_health() for database services
+        - Tracks initialization state
+        - Includes bioregion-specific context (cache, counts, operations)
+        - Tracks operation metrics and error rates
         
         Returns:
-            Dict containing health status and metrics
-            
-        Example:
+            Health status dictionary from ServiceHealthCheck utility:
             {
                 'service': 'BioregionManager',
-                'status': 'healthy',
-                'database_connected': True,
-                'bioregion_count': 12,
-                'cache_age_seconds': 45,
-                'last_update': '2025-11-04T10:30:00Z'
+                'version': '1.2.0',
+                'status': 'healthy' | 'degraded' | 'unhealthy' | 'unknown',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {
+                    'initialized': bool,
+                    'database_connected': bool,
+                    'phenomenal_schema_available': bool,
+                    'bioregion_count': int,
+                    'cache_age_seconds': int,
+                    'operation_count': int,
+                    'error_count': int,
+                    'last_error': str,
+                    'last_error_time': str (ISO timestamp)
+                }
             }
+        
+        Example:
+            >>> health = await bioregion_mgr.health_check()
+            >>> if health['status'] == 'healthy':
+            ...     print("Bioregion manager operational")
         """
+        # Calculate cache age
+        cache_age = 0
+        if self._last_cache_update:
+            cache_age = (datetime.now(timezone.utc) - self._last_cache_update).total_seconds()
+        
+        # Get bioregion count for health check
         try:
-            # Test database connectivity by actually querying
-            # This is more reliable than checking db.health_check()
-            try:
-                count = await self.get_bioregion_count()
-                db_connected = True
-                phenomenal_available = await self._check_phenomenal_schema()
-            except Exception as db_error:
-                self.logger.warning(f"Database query failed in health check: {db_error}")
-                db_connected = False
-                phenomenal_available = False
-                count = 0
-            
-            # Calculate cache age
-            cache_age = 0
-            if self._last_cache_update:
-                cache_age = (datetime.now(timezone.utc) - self._last_cache_update).total_seconds()
-            
-            # Service is healthy if we can query the database
-            # Even if phenomenal schema doesn't exist, service still works (graceful degradation)
-            status = 'healthy' if db_connected else 'unhealthy'
-            
-            return {
-                'service': 'BioregionManager',
-                'version': '1.1.0',
-                'status': status,
-                'database_connected': db_connected,
-                'bioregion_count': count,
-                'cache_age_seconds': int(cache_age),
-                'last_update': datetime.now(timezone.utc).isoformat(),
-                'phenomenal_schema_available': phenomenal_available
-            }
-            
+            bioregion_count = await self.get_bioregion_count()
         except Exception as e:
-            self.logger.error(f"Health check failed: {e}")
-            return {
-                'service': 'BioregionManager',
-                'version': '1.1.0',
-                'status': 'unhealthy',
-                'error': str(e),
-                'last_update': datetime.now(timezone.utc).isoformat()
-            }
+            self.logger.warning(f"Could not get bioregion count in health check: {e}")
+            bioregion_count = 0
+        
+        # Check if phenomenal schema is available
+        phenomenal_available = await self._check_phenomenal_schema()
+        
+        # Use standardized health check utility (Principle #12)
+        return await ServiceHealthCheck.database_dependent_health(
+            service_name='BioregionManager',
+            db_manager=self.db,
+            is_initialized=self._initialized,
+            operation_count=self._operation_count,
+            error_count=self._error_count,
+            last_error=self._last_error,
+            last_error_time=self._last_error_time,
+            # Bioregion-specific context
+            phenomenal_schema_available=phenomenal_available,
+            bioregion_count=bioregion_count,
+            cache_age_seconds=int(cache_age),
+            version='1.2.0'
+        )
     
     async def _check_phenomenal_schema(self) -> bool:
-        """Check if phenomenal schema is available."""
+        """
+        Check if phenomenal schema is available.
+        
+        Returns:
+            True if phenomenal schema exists, False otherwise
+        """
         try:
             result = await self.db.fetch_one(
                 "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'phenomenal'",
@@ -239,6 +281,16 @@ class BioregionManager:
         if self._is_cache_valid() and key in self._cache:
             return self._cache[key]
         return None
+    
+    def _track_operation(self) -> None:
+        """Track successful operation."""
+        self._operation_count += 1
+    
+    def _track_error(self, error: Exception) -> None:
+        """Track error occurrence."""
+        self._error_count += 1
+        self._last_error = str(error)
+        self._last_error_time = datetime.now(timezone.utc)
     
     # ========================================================================
     # Core Bioregion Queries
@@ -268,6 +320,7 @@ class BioregionManager:
         
         try:
             # Query phenomenal.holons table for bioregions
+            # Note: Explicit schema name used (Principle #4)
             result = await self.db.fetch_one(
                 """
                 SELECT COUNT(*) as count
@@ -285,11 +338,15 @@ class BioregionManager:
             # Update cache
             self._update_cache('bioregion_count', count)
             
+            # Track operation
+            self._track_operation()
+            
             self.logger.info(f"Found {count} active bioregions")
             return count
             
         except Exception as e:
             self.logger.error(f"Error getting bioregion count: {e}")
+            self._track_error(e)
             # Return 0 instead of failing - graceful degradation
             return 0
     
@@ -316,6 +373,7 @@ class BioregionManager:
             Great Lakes: 65 members
         """
         try:
+            # Query with explicit schema name (phenomenal.holons)
             query = """
                 SELECT 
                     h.id,
@@ -372,11 +430,15 @@ class BioregionManager:
                 
                 bioregions.append(bioregion)
             
+            # Track operation
+            self._track_operation()
+            
             self.logger.info(f"Retrieved {len(bioregions)} bioregions")
             return bioregions
             
         except Exception as e:
             self.logger.error(f"Error getting all bioregions: {e}")
+            self._track_error(e)
             return []
     
     async def get_bioregion_by_id(self, bioregion_id: int) -> Optional[Dict[str, Any]]:
@@ -390,6 +452,7 @@ class BioregionManager:
             Dictionary with bioregion details or None if not found
         """
         try:
+            # Query with explicit schema name (phenomenal.holons)
             result = await self.db.fetch_one(
                 """
                 SELECT 
@@ -420,6 +483,9 @@ class BioregionManager:
             if not result:
                 return None
             
+            # Track operation
+            self._track_operation()
+            
             return {
                 'id': result['id'],
                 'name': result['holon_name'],
@@ -442,6 +508,7 @@ class BioregionManager:
             
         except Exception as e:
             self.logger.error(f"Error getting bioregion {bioregion_id}: {e}")
+            self._track_error(e)
             return None
     
     async def get_bioregion_summary(self) -> Dict[str, Any]:
@@ -462,6 +529,7 @@ class BioregionManager:
             }
         """
         try:
+            # Query with explicit schema name (phenomenal.holons)
             result = await self.db.fetch_one(
                 """
                 SELECT 
@@ -488,7 +556,7 @@ class BioregionManager:
                     'average_integration': 0
                 }
             
-            # Get largest bioregion name
+            # Get largest bioregion name (explicit schema name)
             largest = await self.db.fetch_one(
                 """
                 SELECT holon_name
@@ -500,6 +568,9 @@ class BioregionManager:
                 """,
                 ()
             )
+            
+            # Track operation
+            self._track_operation()
             
             return {
                 'total_count': int(result['bioregion_count']) if result['bioregion_count'] else 0,
@@ -514,6 +585,7 @@ class BioregionManager:
             
         except Exception as e:
             self.logger.error(f"Error getting bioregion summary: {e}")
+            self._track_error(e)
             return {
                 'total_count': 0,
                 'total_members': 0,
@@ -614,6 +686,7 @@ class BioregionManager:
             duration_ms = (datetime.now() - start_time).total_seconds() * 1000
             error_msg = f"Bioregion update failed: {e}"
             self.logger.error(error_msg, exc_info=True)
+            self._track_error(e)
             
             return {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -664,6 +737,7 @@ class BioregionManager:
             
         except Exception as e:
             self.logger.error(f"Error identifying bioregions: {e}")
+            self._track_error(e)
             return []
     
     # ========================================================================
@@ -714,6 +788,7 @@ class BioregionManager:
         """
         self.logger.info("Closing BioregionManager service")
         self._cache.clear()
+        self._initialized = False
 
 
 # ============================================================================
