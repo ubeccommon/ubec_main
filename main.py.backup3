@@ -51,14 +51,8 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.7
-Updated: 2025-11-09
-CHANGELOG v3.1.7:
-    - FIXED: Corrected handle_sync parameter mismatch (max_accounts → max_accounts_per_token)
-    - FIXED: Removed invalid 'force' parameter from sync_all_tokens call
-    - FIXED: Changed specific token sync to use discover_accounts() instead of non-existent sync_token()
-    - ENHANCED: Updated result parsing for sync_all_tokens nested structure
-    - Complies with Principle #12 (Method Singularity) - uses actual synchronizer methods
+Version: 3.1.6
+Updated: 2025-11-08
 CHANGELOG v3.1.6:
     - FIXED: Added missing visualizer service registration
     - Scheduler can now properly initialize with visualizer dependency
@@ -914,17 +908,14 @@ async def handle_sync(
     
     Args:
         registry: Service registry
-        sync_type: 'all' for all tokens, or specific token code (UBEC, UBECrc, UBECgpi, UBECtt)
-        max_accounts: Maximum accounts to sync per token (default: 5000)
-        force: Force full resync (reserved for future use)
-    
-    Principle #5: Strict Async Operations
-    Principle #12: Method Singularity - uses actual synchronizer methods
+        sync_type: Type of sync
+        max_accounts: Maximum accounts to sync
+        force: Force full resync
     """
     logger.info("=" * 70)
     logger.info("SYNCHRONIZING BLOCKCHAIN DATA")
     logger.info(f"Sync Type: {sync_type}")
-    logger.info(f"Max Accounts: {max_accounts or 5000}")
+    logger.info(f"Max Accounts: {max_accounts or 'unlimited'}")
     logger.info(f"Force: {force}")
     logger.info("=" * 70)
     
@@ -932,43 +923,20 @@ async def handle_sync(
     
     try:
         if sync_type == 'all':
-            # Sync all 4 UBEC tokens
-            logger.info("Synchronizing all UBEC protocol tokens...")
             results = await sync_service.sync_all_tokens(
-                max_accounts_per_token=max_accounts or 5000
+                max_accounts=max_accounts,
+                force=force
             )
-            
-            # Display results - sync_all_tokens returns nested structure
-            logger.info("\n✅ Synchronization completed")
-            if 'accounts' in results:
-                total = results['accounts'].get('total_accounts', 0)
-                logger.info(f"  Total accounts synced: {total}")
-                logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
-                
-                # Show per-token breakdown
-                if 'by_token' in results['accounts']:
-                    logger.info("\n  By Token:")
-                    for token, data in results['accounts']['by_token'].items():
-                        status = "✅" if data.get('status') == 'success' else "❌"
-                        count = data.get('accounts_synced', 0)
-                        logger.info(f"    {status} {token}: {count} accounts")
-            else:
-                logger.info(f"  Results: {results}")
-        
         else:
-            # Discover specific token holders
-            token_code = sync_type.upper()
-            logger.info(f"Discovering {token_code} holders...")
-            
-            accounts = await sync_service.discover_accounts(
-                asset_code=token_code,
-                max_accounts=max_accounts or 5000
+            results = await sync_service.sync_token(
+                asset_code=sync_type,
+                max_accounts=max_accounts,
+                force=force
             )
-            
-            count = len(accounts) if isinstance(accounts, list) else accounts
-            
-            logger.info("\n✅ Discovery completed")
-            logger.info(f"  {token_code} holders discovered: {count}")
+        
+        logger.info("\n✅ Synchronization completed")
+        logger.info(f"  Accounts synced: {results.get('accounts_synced', 0)}")
+        logger.info(f"  Transactions: {results.get('transactions', 0)}")
         
     except Exception as e:
         logger.error(f"Synchronization failed: {e}", exc_info=True)

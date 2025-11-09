@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-UBEC Data Synchronizer v5.1.1 - Stall Prevention & Timeout Protection
-======================================================================
+UBEC Data Synchronizer v5.1.2 - Foreign Key Constraint Fix
+============================================================
+
+CRITICAL FIX in v5.1.2:
+1. ✅ FIXED: Foreign key constraint violation in _sync_account_balance
+   - Now ensures account exists in stellar_accounts before inserting balance
+   - Prevents FK violation: "Key (account_id) is not present in table stellar_accounts"
+   - Uses explicit schema names (ubec_main) for clarity
+2. ✅ ENHANCED: Account UPSERT includes sequence and home_domain from Stellar
+3. ✅ COMPLIANCE: Maintains all 12 design principles
 
 MAJOR UPDATES in v5.1.1:
 1. ✅ FIXED: Added timeout protection to prevent sync stalls (60s discovery, 10s per account)
@@ -28,6 +36,7 @@ This module implements the service pattern with:
 - Complete liquidity pool discovery and synchronization
 - Timeout protection to prevent stalls
 - Progress logging for long-running operations
+- Foreign key constraint compliance
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
@@ -57,8 +66,8 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 5.1.1 (Stall Prevention & Timeout Protection)
-Date: October 25, 2025
+Version: 5.1.2 (Foreign Key Constraint Fix)
+Date: November 9, 2025
 """
 
 import asyncio
@@ -877,21 +886,54 @@ class UBECDataSynchronizer:
             raise
     
     async def _sync_account_balance(self, account_id: str, token_code: str, issuer: str) -> None:
-        """Sync account balance for a specific token."""
+        """
+        Sync account balance for a specific token.
+        
+        v5.1.2: Fixed foreign key constraint violation by ensuring account
+        exists in stellar_accounts before inserting balance.
+        
+        Principle #4: Database as single source of truth
+        """
         try:
             await self.rate_limiter.acquire()
             
             account = await self.server.accounts().account_id(account_id).call()
             self.rate_limiter.record_success()
             
+            # ✅ CRITICAL FIX v5.1.2: Ensure account exists in stellar_accounts FIRST
+            # This prevents foreign key constraint violation when inserting into ubec_balances
+            account_upsert_query = """
+            INSERT INTO ubec_main.stellar_accounts (
+                account_id, 
+                sequence, 
+                home_domain,
+                last_modified_at,
+                sync_status
+            ) VALUES ($1, $2, $3, $4, 'synced')
+            ON CONFLICT (account_id) DO UPDATE SET
+                sequence = EXCLUDED.sequence,
+                last_modified_at = EXCLUDED.last_modified_at,
+                sync_status = 'synced'
+            """
+            
+            now = datetime.now(timezone.utc)
+            sequence = int(account.get('sequence', 0))
+            home_domain = account.get('home_domain', '')
+            
+            await self.db.execute(
+                account_upsert_query,
+                (account_id, sequence, home_domain, now)
+            )
+            
+            # Now sync balance (foreign key constraint satisfied)
             balances = account.get('balances', [])
             
             for balance in balances:
                 if balance.get('asset_code') == token_code and balance.get('asset_issuer') == issuer:
                     amount = Decimal(balance.get('balance', '0'))
                     
-                    query = """
-                    INSERT INTO ubec_balances (
+                    balance_upsert_query = """
+                    INSERT INTO ubec_main.ubec_balances (
                         account_id, token_code, element, balance, last_modified_at
                     ) VALUES ($1, $2::token_code, $3::element_type, $4, $5)
                     ON CONFLICT (account_id, token_code) DO UPDATE SET
@@ -899,10 +941,12 @@ class UBECDataSynchronizer:
                         last_modified_at = EXCLUDED.last_modified_at
                     """
                     
-                    now = datetime.now(timezone.utc)
                     element = self.ELEMENT_MAP.get(token_code, 'air')
                     
-                    await self.db.execute(query, (account_id, token_code, element, str(amount), now))
+                    await self.db.execute(
+                        balance_upsert_query,
+                        (account_id, token_code, element, str(amount), now)
+                    )
                     break
         
         except Exception as e:
