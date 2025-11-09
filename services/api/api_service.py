@@ -652,6 +652,283 @@ class BackendAPIService:
                 raise HTTPException(status_code=500, detail=f"Error fetching bioregion: {str(e)}")
         
         # ====================================================================
+        # Ecoregion Endpoints (phenomenal schema)
+        # ====================================================================
+        
+        @self.app.get("/api/v1/ecoregions", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_ecoregions(
+            request: Request,
+            limit: int = 50,
+            biome: Optional[str] = None,
+            realm: Optional[str] = None
+        ) -> Dict:
+            """
+            Get ecoregion data from Ecoregions2017 dataset.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Query Parameters:
+            - limit: Number of results (default: 50, max: 200)
+            - biome: Filter by biome name
+            - realm: Filter by realm
+            
+            Returns ecoregion geographic and ecological data.
+            """
+            try:
+                # Validate limit
+                if limit < 1:
+                    limit = 50
+                if limit > 200:
+                    limit = 200
+                
+                db = await self.registry.get('database')
+                
+                # Build query with filters
+                where_clauses = []
+                params = []
+                param_num = 1
+                
+                if biome:
+                    where_clauses.append(f"biome_name ILIKE ${param_num}")
+                    params.append(f"%{biome}%")
+                    param_num += 1
+                
+                if realm:
+                    where_clauses.append(f"realm ILIKE ${param_num}")
+                    params.append(f"%{realm}%")
+                    param_num += 1
+                
+                where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+                
+                # Get ecoregions with explicit schema
+                query = f"""
+                    SELECT 
+                        id,
+                        objectid,
+                        eco_name,
+                        eco_id,
+                        biome_num,
+                        biome_name,
+                        realm,
+                        eco_biome_,
+                        nnh,
+                        nnh_name,
+                        shape_leng,
+                        shape_area,
+                        color,
+                        color_bio,
+                        color_nnh
+                    FROM phenomenal.ecoregions_2017
+                    {where_clause}
+                    ORDER BY eco_name
+                    LIMIT ${param_num}
+                """
+                
+                params.append(limit)
+                ecoregions = await db.fetch_all(query, tuple(params))
+                
+                # Get summary stats
+                summary_query = """
+                    SELECT 
+                        COUNT(*) as total_ecoregions,
+                        COUNT(DISTINCT biome_name) as total_biomes,
+                        COUNT(DISTINCT realm) as total_realms
+                    FROM phenomenal.ecoregions_2017
+                """
+                summary = await db.fetch_one(summary_query, ())
+                
+                return {
+                    'count': len(ecoregions),
+                    'summary': {
+                        'total_ecoregions': summary['total_ecoregions'],
+                        'total_biomes': summary['total_biomes'],
+                        'total_realms': summary['total_realms']
+                    },
+                    'ecoregions': [dict(row) for row in ecoregions],
+                    'filters': {
+                        'biome': biome,
+                        'realm': realm,
+                        'limit': limit
+                    },
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except Exception as e:
+                logger.error(f"Error fetching ecoregions: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching ecoregions: {str(e)}")
+        
+        @self.app.get("/api/v1/ecoregions/{eco_id}", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_ecoregion(eco_id: int, request: Request) -> Dict:
+            """
+            Get detailed information about a specific ecoregion.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Args:
+                eco_id: Ecoregion ID to retrieve
+                
+            Returns:
+                Dictionary with ecoregion details
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                query = """
+                    SELECT 
+                        id,
+                        objectid,
+                        eco_name,
+                        eco_id,
+                        biome_num,
+                        biome_name,
+                        realm,
+                        eco_biome_,
+                        nnh,
+                        nnh_name,
+                        shape_leng,
+                        shape_area,
+                        color,
+                        color_bio,
+                        color_nnh,
+                        license
+                    FROM phenomenal.ecoregions_2017
+                    WHERE eco_id = $1
+                """
+                
+                ecoregion = await db.fetch_one(query, (eco_id,))
+                
+                if not ecoregion:
+                    raise HTTPException(status_code=404, detail=f"Ecoregion {eco_id} not found")
+                
+                return dict(ecoregion)
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching ecoregion {eco_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching ecoregion: {str(e)}")
+        
+        # ====================================================================
+        # Watershed Endpoints (phenomenal schema)
+        # ====================================================================
+        
+        @self.app.get("/api/v1/watersheds", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_watersheds(
+            request: Request,
+            limit: int = 50,
+            min_area: Optional[float] = None
+        ) -> Dict:
+            """
+            Get watershed data from FEOW HydroSHEDS dataset.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Query Parameters:
+            - limit: Number of results (default: 50, max: 200)
+            - min_area: Minimum area in square kilometers
+            
+            Returns watershed geographic data.
+            """
+            try:
+                if limit < 1:
+                    limit = 50
+                if limit > 200:
+                    limit = 200
+                
+                db = await self.registry.get('database')
+                
+                where_clauses = []
+                params = []
+                param_num = 1
+                
+                if min_area is not None:
+                    where_clauses.append(f"area_skm >= ${param_num}")
+                    params.append(min_area)
+                    param_num += 1
+                
+                where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+                
+                query = f"""
+                    SELECT 
+                        id,
+                        feow_id,
+                        area_skm
+                    FROM phenomenal.feow_hydrosheds
+                    {where_clause}
+                    ORDER BY area_skm DESC
+                    LIMIT ${param_num}
+                """
+                
+                params.append(limit)
+                watersheds = await db.fetch_all(query, tuple(params))
+                
+                summary_query = """
+                    SELECT 
+                        COUNT(*) as total_watersheds,
+                        SUM(area_skm) as total_area,
+                        AVG(area_skm) as avg_area,
+                        MAX(area_skm) as max_area
+                    FROM phenomenal.feow_hydrosheds
+                """
+                summary = await db.fetch_one(summary_query, ())
+                
+                return {
+                    'count': len(watersheds),
+                    'summary': {
+                        'total_watersheds': summary['total_watersheds'],
+                        'total_area_km2': float(summary['total_area']) if summary['total_area'] else 0,
+                        'avg_area_km2': float(summary['avg_area']) if summary['avg_area'] else 0,
+                        'max_area_km2': float(summary['max_area']) if summary['max_area'] else 0
+                    },
+                    'watersheds': [dict(row) for row in watersheds],
+                    'filters': {
+                        'min_area': min_area,
+                        'limit': limit
+                    },
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except Exception as e:
+                logger.error(f"Error fetching watersheds: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching watersheds: {str(e)}")
+        
+        @self.app.get("/api/v1/watersheds/{feow_id}", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_watershed(feow_id: int, request: Request) -> Dict:
+            """
+            Get specific watershed by FEOW ID.
+            
+            Rate limit: 100 requests/minute per IP
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                query = """
+                    SELECT 
+                        id,
+                        feow_id,
+                        area_skm
+                    FROM phenomenal.feow_hydrosheds
+                    WHERE feow_id = $1
+                """
+                
+                watershed = await db.fetch_one(query, (feow_id,))
+                
+                if not watershed:
+                    raise HTTPException(status_code=404, detail=f"Watershed {feow_id} not found")
+                
+                return dict(watershed)
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching watershed {feow_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching watershed: {str(e)}")
+        
+        # ====================================================================
         # Transaction Endpoints - More restrictive (expensive queries)
         # FIXED v2.1.1: Removed reference to non-existent stellar_assets table
         # ====================================================================
@@ -810,7 +1087,7 @@ class BackendAPIService:
                 param_num = 2
                 
                 if category:
-                    where_clauses.append(f"holonic_category = ${param_num}")
+                    where_clauses.append(f"LOWER(holonic_category) = ${param_num}")
                     params.append(category.lower())
                     param_num += 1
                 
