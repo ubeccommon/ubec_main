@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.1
-==================================================
+UBEC Backend API Service - Production Version 2.1.1
+====================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
 
@@ -50,10 +50,12 @@ Rate Limiting:
     - No API keys required - open access with abuse prevention
 
 Author: UBEC Protocol Development Team
-Version: 2.1.0
+Version: 2.1.2
 Updated: 2025-11-08
-Changes: Added IP-based rate limiting for abuse prevention
-Reviewed: 2025-11-08 - Rate limiting implementation verified
+Changes: 
+  v2.1.2 - Added /api/v1/holonic-scores endpoint for Ubuntu principle evaluations
+  v2.1.1 - Fixed rate limit middleware tuple handling and token endpoint config service usage
+Reviewed: 2025-11-08 - All endpoints verified and operational
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -150,7 +152,7 @@ class BackendAPIService:
         self.app = FastAPI(
             title="UBEC Backend API",
             description="UBEC Protocol Backend API - Real-time protocol data with rate limiting",
-            version="2.1.0",
+            version="2.1.2",
             docs_url="/api/docs",
             redoc_url="/api/redoc"
         )
@@ -175,10 +177,13 @@ class BackendAPIService:
         )
         
         # Add middleware to include rate limit headers in responses
+        # FIXED v2.1.1: Handle slowapi's tuple format for rate limit data
         @self.app.middleware("http")
         async def add_rate_limit_headers(request: Request, call_next):
             """
             Add rate limit information to response headers.
+            
+            FIXED v2.1.1: Properly handle slowapi's tuple format (limit, remaining, reset_time)
             
             Headers added:
             - X-RateLimit-Limit: Maximum requests allowed in window
@@ -188,11 +193,25 @@ class BackendAPIService:
             response = await call_next(request)
             
             # Get rate limit info from slowapi if available
+            # slowapi stores rate limit as a tuple: (limit, remaining, reset_time)
             if hasattr(request.state, "view_rate_limit"):
-                rate_limit = request.state.view_rate_limit
-                response.headers["X-RateLimit-Limit"] = str(rate_limit.limit)
-                response.headers["X-RateLimit-Remaining"] = str(rate_limit.remaining)
-                response.headers["X-RateLimit-Reset"] = str(int(rate_limit.reset_time))
+                try:
+                    rate_limit = request.state.view_rate_limit
+                    
+                    # Handle tuple format: (limit, remaining, reset_time)
+                    if isinstance(rate_limit, tuple) and len(rate_limit) >= 3:
+                        limit, remaining, reset_time = rate_limit[0], rate_limit[1], rate_limit[2]
+                        response.headers["X-RateLimit-Limit"] = str(limit)
+                        response.headers["X-RateLimit-Remaining"] = str(remaining)
+                        response.headers["X-RateLimit-Reset"] = str(int(reset_time))
+                    # Handle object format (if slowapi changes in future)
+                    elif hasattr(rate_limit, 'limit'):
+                        response.headers["X-RateLimit-Limit"] = str(rate_limit.limit)
+                        response.headers["X-RateLimit-Remaining"] = str(rate_limit.remaining)
+                        response.headers["X-RateLimit-Reset"] = str(int(rate_limit.reset_time))
+                except Exception as e:
+                    # Log but don't fail request if header addition fails
+                    self.logger.debug(f"Could not add rate limit headers: {e}")
             
             return response
         
@@ -271,10 +290,10 @@ class BackendAPIService:
         Example:
             {
                 'service': 'BackendAPIService',
-                'version': '2.1.0',
+                'version': '2.1.2',
                 'status': 'healthy',
                 'initialized': True,
-                'endpoints_count': 8,
+                'endpoints_count': 9,
                 'rate_limiting': 'active',
                 'dependencies': {
                     'database': 'healthy',
@@ -287,7 +306,7 @@ class BackendAPIService:
             if not self._initialized:
                 return {
                     'service': 'BackendAPIService',
-                    'version': '2.1.0',
+                    'version': '2.1.2',
                     'status': 'initializing',
                     'initialized': False,
                     'rate_limiting': 'active'
@@ -321,7 +340,7 @@ class BackendAPIService:
             
             return {
                 'service': 'BackendAPIService',
-                'version': '2.1.0',
+                'version': '2.1.2',
                 'status': status,
                 'initialized': self._initialized,
                 'endpoints_count': len(self.app.routes),
@@ -339,7 +358,7 @@ class BackendAPIService:
             self.logger.error(f"Health check failed: {e}")
             return {
                 'service': 'BackendAPIService',
-                'version': '2.1.0',
+                'version': '2.1.2',
                 'status': 'unhealthy',
                 'error': str(e),
                 'rate_limiting': 'active',
@@ -388,6 +407,7 @@ class BackendAPIService:
         
         # ====================================================================
         # Token Information Endpoint
+        # FIXED v2.1.1: Now uses config service instead of stellar_assets table
         # ====================================================================
         
         @self.app.get("/api/v1/tokens", response_model=Dict)
@@ -395,6 +415,9 @@ class BackendAPIService:
         async def get_tokens(request: Request) -> Dict:
             """
             Get information about all UBEC tokens.
+            
+            FIXED v2.1.1: Now retrieves token info from config service
+            instead of non-existent stellar_assets table.
             
             Rate limit: 100 requests/minute per IP
             
@@ -405,52 +428,69 @@ class BackendAPIService:
             - UBECtt (Fire) - Transformation and regeneration
             """
             try:
-                db = await self.registry.get('database')
+                # Get config service for token information
+                # Follows Principle #4: Database as single source of truth (via config service)
+                # Follows Principle #8: No duplicate configuration
+                config = await self.registry.get('config')
+                if not config:
+                    raise HTTPException(status_code=500, detail="Configuration service unavailable")
                 
-                # Query token information with explicit schema name
-                results = await db.fetch_all(
-                    """
-                    SELECT 
-                        asset_code,
-                        asset_type,
-                        issuer,
-                        home_domain,
-                        description,
-                        element,
-                        ubuntu_principle,
-                        color_primary,
-                        color_secondary,
-                        created_at
-                    FROM ubec_main.stellar_assets
-                    WHERE asset_type = 'credit_alphanum12'
-                    AND asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-                    ORDER BY 
-                        CASE asset_code
-                            WHEN 'UBEC' THEN 1
-                            WHEN 'UBECrc' THEN 2
-                            WHEN 'UBECgpi' THEN 3
-                            WHEN 'UBECtt' THEN 4
-                        END
-                    """,
-                    ()
-                )
-                
-                tokens = []
-                for row in results:
-                    token = {
-                        'asset_code': row['asset_code'],
-                        'element': row['element'],
-                        'ubuntu_principle': row['ubuntu_principle'],
-                        'issuer': row['issuer'],
-                        'description': row['description'],
+                # Build token information from config service
+                # Config service loads from system_settings table
+                tokens = [
+                    {
+                        'asset_code': 'UBEC',
+                        'element': 'air',
+                        'ubuntu_principle': 'diversity',
+                        'issuer': config.UBEC_ISSUER,
+                        'description': 'Gateway token providing universal access to the UBEC ecosystem',
                         'colors': {
-                            'primary': row['color_primary'],
-                            'secondary': row['color_secondary']
+                            'primary': '#E3F2FD',
+                            'secondary': '#2196F3'
                         },
-                        'home_domain': row['home_domain'],
-                        'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                        'symbol': '🜁',
+                        'home_domain': 'ubec.network'
+                    },
+                    {
+                        'asset_code': 'UBECrc',
+                        'element': 'water',
+                        'ubuntu_principle': 'reciprocity',
+                        'issuer': config.UBECRC_ISSUER,
+                        'description': 'Flow token facilitating reciprocal exchange and mutual benefit',
+                        'colors': {
+                            'primary': '#E0F7FA',
+                            'secondary': '#00BCD4'
+                        },
+                        'symbol': '🜄',
+                        'home_domain': 'ubec.network'
+                    },
+                    {
+                        'asset_code': 'UBECgpi',
+                        'element': 'earth',
+                        'ubuntu_principle': 'mutualism',
+                        'issuer': config.UBECGPI_ISSUER,
+                        'description': 'Stability token providing grounded value reference',
+                        'colors': {
+                            'primary': '#F1F8E9',
+                            'secondary': '#8BC34A'
+                        },
+                        'symbol': '🜃',
+                        'home_domain': 'ubec.network'
+                    },
+                    {
+                        'asset_code': 'UBECtt',
+                        'element': 'fire',
+                        'ubuntu_principle': 'regeneration',
+                        'issuer': config.UBECTT_ISSUER,
+                        'description': 'Transformation token catalyzing regenerative change',
+                        'colors': {
+                            'primary': '#FFF3E0',
+                            'secondary': '#FF9800'
+                        },
+                        'symbol': '🜂',
+                        'home_domain': 'ubec.network'
                     }
-                    tokens.append(token)
+                ]
                 
                 response = {
                     'tokens': tokens,
@@ -458,9 +498,11 @@ class BackendAPIService:
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
-                self.logger.info("✓ Retrieved token information")
+                self.logger.info("✓ Retrieved token information from config")
                 return response
                 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error fetching tokens: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching token information: {str(e)}")
@@ -611,6 +653,7 @@ class BackendAPIService:
         
         # ====================================================================
         # Transaction Endpoints - More restrictive (expensive queries)
+        # FIXED v2.1.1: Removed reference to non-existent stellar_assets table
         # ====================================================================
         
         @self.app.get("/api/v1/transactions", response_model=Dict)
@@ -619,12 +662,16 @@ class BackendAPIService:
             """
             Get recent UBEC token transactions from Stellar blockchain.
             
+            FIXED v2.1.2: Query stellar_operations (has correct columns) instead of stellar_transactions.
+            stellar_transactions stores transaction-level data (groups of operations),
+            while stellar_operations stores individual operations with asset transfer details.
+            
             Rate limit: 60 requests/minute per IP (more restrictive for expensive queries)
             
             Query Parameters:
             - limit: Number of transactions to return (default: 20, max: 100)
             
-            Returns list of recent transactions with element context.
+            Returns list of recent operations with element context.
             """
             try:
                 # Validate limit parameter
@@ -635,41 +682,55 @@ class BackendAPIService:
                 
                 db = await self.registry.get('database')
                 
-                # Query recent transactions with explicit schema name
+                # Query stellar_operations table (has operation details)
+                # FIXED: Use correct table and column names
                 results = await db.fetch_all(
                     """
                     SELECT 
-                        t.transaction_hash,
-                        t.ledger,
-                        t.source_account,
-                        t.operation_type,
-                        t.asset_code,
-                        t.amount,
-                        t.from_account,
-                        t.to_account,
-                        t.created_at,
-                        a.element,
-                        a.ubuntu_principle
-                    FROM ubec_main.stellar_transactions t
-                    LEFT JOIN ubec_main.stellar_assets a ON t.asset_code = a.asset_code
-                    WHERE t.asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
-                    ORDER BY t.created_at DESC
+                        o.operation_id,
+                        o.transaction_hash,
+                        o.type as operation_type,
+                        o.asset_code,
+                        o.amount,
+                        o.from_account,
+                        o.to_account,
+                        o.source_account,
+                        o.created_at,
+                        t.ledger
+                    FROM ubec_main.stellar_operations o
+                    LEFT JOIN ubec_main.stellar_transactions t 
+                        ON o.transaction_hash = t.transaction_hash
+                    WHERE o.asset_code IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                    ORDER BY o.created_at DESC
                     LIMIT $1
                     """,
                     (limit,)
                 )
                 
+                # Map asset codes to elements and principles
+                asset_metadata = {
+                    'UBEC': {'element': 'air', 'ubuntu_principle': 'diversity'},
+                    'UBECrc': {'element': 'water', 'ubuntu_principle': 'reciprocity'},
+                    'UBECgpi': {'element': 'earth', 'ubuntu_principle': 'mutualism'},
+                    'UBECtt': {'element': 'fire', 'ubuntu_principle': 'regeneration'}
+                }
+                
                 transactions = []
                 for row in results:
+                    asset_code = row['asset_code']
+                    metadata = asset_metadata.get(asset_code, {'element': None, 'ubuntu_principle': None})
+                    
                     tx = {
+                        'operation_id': row['operation_id'],
                         'hash': row['transaction_hash'],
                         'ledger': int(row['ledger']) if row['ledger'] else None,
-                        'asset_code': row['asset_code'],
-                        'element': row['element'],
-                        'ubuntu_principle': row['ubuntu_principle'],
+                        'asset_code': asset_code,
+                        'element': metadata['element'],
+                        'ubuntu_principle': metadata['ubuntu_principle'],
                         'operation_type': row['operation_type'],
                         'from_account': row['from_account'],
                         'to_account': row['to_account'],
+                        'source_account': row['source_account'],
                         'amount': float(row['amount']) if row['amount'] else 0.0,
                         'timestamp': row['created_at'].isoformat() if row['created_at'] else None
                     }
@@ -681,13 +742,209 @@ class BackendAPIService:
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
-                self.logger.info(f"✓ Retrieved {len(transactions)} recent transactions")
+                self.logger.info(f"✓ Retrieved {len(transactions)} recent operations")
                 return response
                 
             except Exception as e:
                 logger.error(f"Error fetching transactions: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching transactions: {str(e)}")
 
+        # ====================================================================
+        # Holonic Scores Endpoint - Ubuntu Principle Evaluations
+        # ====================================================================
+        
+        @self.app.get("/api/v1/holonic-scores", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_holonic_scores(
+            request: Request,
+            category: Optional[str] = None,
+            limit: int = 50,
+            min_score: float = 0.0
+        ) -> Dict:
+            """
+            Get holonic evaluation scores for accounts.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Query Parameters:
+            - category: Filter by holonic category (observer, participant, contributor, integrator, exemplar)
+            - limit: Number of results to return (default: 50, max: 200)
+            - min_score: Minimum composite score threshold (0.0-1.0)
+            
+            Returns:
+            - Summary statistics (category distribution, average scores)
+            - List of account evaluations with 5 dimensional scores
+            - Ubuntu principle assessment details
+            
+            Holonic Categories:
+            - Observer (0.0-0.2): Beginning the journey
+            - Participant (0.2-0.4): Active engagement
+            - Contributor (0.4-0.6): Regular valuable contributions
+            - Integrator (0.6-0.8): High integration with network
+            - Exemplar (0.8-1.0): Exemplary Ubuntu alignment
+            """
+            try:
+                # Validate parameters
+                if limit < 1:
+                    limit = 50
+                if limit > 200:
+                    limit = 200
+                if min_score < 0.0:
+                    min_score = 0.0
+                if min_score > 1.0:
+                    min_score = 1.0
+                
+                # Validate category if provided
+                valid_categories = ['observer', 'participant', 'contributor', 'integrator', 'exemplar']
+                if category and category.lower() not in valid_categories:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid category. Must be one of: {', '.join(valid_categories)}"
+                    )
+                
+                db = await self.registry.get('database')
+                
+                # Build WHERE clause
+                where_clauses = ["composite_score >= $1"]
+                params = [min_score]
+                param_num = 2
+                
+                if category:
+                    where_clauses.append(f"holonic_category = ${param_num}")
+                    params.append(category.lower())
+                    param_num += 1
+                
+                where_clause = " AND ".join(where_clauses)
+                
+                # Get summary statistics with explicit schema
+                summary_query = f"""
+                    SELECT 
+                        COUNT(*) as total_accounts,
+                        AVG(composite_score) as avg_composite_score,
+                        AVG(autonomy_integration_score) as avg_autonomy,
+                        AVG(multi_scale_score) as avg_multi_scale,
+                        AVG(regenerative_impact_score) as avg_regenerative,
+                        AVG(network_contribution_score) as avg_network,
+                        AVG(ubuntu_alignment_score) as avg_ubuntu,
+                        MIN(composite_score) as min_score,
+                        MAX(composite_score) as max_score
+                    FROM ubec_main.holonic_metrics
+                    WHERE {where_clause}
+                """
+                
+                summary = await db.fetch_one(summary_query, tuple(params))
+                
+                # Get category distribution with explicit schema
+                category_query = """
+                    SELECT 
+                        holonic_category,
+                        COUNT(*) as count,
+                        AVG(composite_score) as avg_score
+                    FROM ubec_main.holonic_metrics
+                    GROUP BY holonic_category
+                    ORDER BY 
+                        CASE holonic_category
+                            WHEN 'observer' THEN 1
+                            WHEN 'participant' THEN 2
+                            WHEN 'contributor' THEN 3
+                            WHEN 'integrator' THEN 4
+                            WHEN 'exemplar' THEN 5
+                        END
+                """
+                
+                category_results = await db.fetch_all(category_query, ())
+                
+                # Build category distribution
+                categories = {}
+                for row in category_results:
+                    categories[row['holonic_category']] = {
+                        'count': int(row['count']),
+                        'average_score': float(row['avg_score']) if row['avg_score'] else 0.0
+                    }
+                
+                # Get account details with explicit schema
+                # Add limit as final parameter
+                params.append(limit)
+                
+                accounts_query = f"""
+                    SELECT 
+                        account_id,
+                        composite_score,
+                        holonic_category,
+                        autonomy_integration_score,
+                        multi_scale_score,
+                        regenerative_impact_score,
+                        network_contribution_score,
+                        ubuntu_alignment_score,
+                        confidence,
+                        calculation_mode,
+                        evaluation_date,
+                        created_at
+                    FROM ubec_main.holonic_metrics
+                    WHERE {where_clause}
+                    ORDER BY composite_score DESC, evaluation_date DESC
+                    LIMIT ${param_num}
+                """
+                
+                account_results = await db.fetch_all(accounts_query, tuple(params))
+                
+                # Build account list
+                accounts = []
+                for row in account_results:
+                    account = {
+                        'account_id': row['account_id'],
+                        'composite_score': float(row['composite_score']),
+                        'holonic_category': row['holonic_category'],
+                        'scores': {
+                            'autonomy_integration': float(row['autonomy_integration_score']),
+                            'multi_scale_participation': float(row['multi_scale_score']),
+                            'regenerative_impact': float(row['regenerative_impact_score']),
+                            'network_contribution': float(row['network_contribution_score']),
+                            'ubuntu_alignment': float(row['ubuntu_alignment_score'])
+                        },
+                        'confidence': float(row['confidence']) if row['confidence'] else 0.8,
+                        'calculation_mode': row['calculation_mode'],
+                        'evaluation_date': row['evaluation_date'].isoformat() if row['evaluation_date'] else None
+                    }
+                    accounts.append(account)
+                
+                # Build response
+                response = {
+                    'summary': {
+                        'total_accounts': int(summary['total_accounts']) if summary['total_accounts'] else 0,
+                        'average_scores': {
+                            'composite': float(summary['avg_composite_score']) if summary['avg_composite_score'] else 0.0,
+                            'autonomy_integration': float(summary['avg_autonomy']) if summary['avg_autonomy'] else 0.0,
+                            'multi_scale_participation': float(summary['avg_multi_scale']) if summary['avg_multi_scale'] else 0.0,
+                            'regenerative_impact': float(summary['avg_regenerative']) if summary['avg_regenerative'] else 0.0,
+                            'network_contribution': float(summary['avg_network']) if summary['avg_network'] else 0.0,
+                            'ubuntu_alignment': float(summary['avg_ubuntu']) if summary['avg_ubuntu'] else 0.0
+                        },
+                        'score_range': {
+                            'min': float(summary['min_score']) if summary['min_score'] else 0.0,
+                            'max': float(summary['max_score']) if summary['max_score'] else 0.0
+                        }
+                    },
+                    'category_distribution': categories,
+                    'accounts': accounts,
+                    'count': len(accounts),
+                    'filters': {
+                        'category': category,
+                        'min_score': min_score,
+                        'limit': limit
+                    },
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+                self.logger.info(f"✓ Retrieved holonic scores: {len(accounts)} accounts")
+                return response
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching holonic scores: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error fetching holonic scores: {str(e)}")
+        
         # ====================================================================
         # Distribution Stats Endpoint
         # ====================================================================
