@@ -1,6 +1,6 @@
 #!/bin/bash
 # UBEC API - Comprehensive Endpoint Testing Script
-# Tests all 13 operational endpoints
+# Tests all 16 operational endpoints (20 total routes including /docs, /redoc, /openapi.json)
 
 API_HOST="${API_HOST:-http://localhost:8000}"
 PASSED=0
@@ -49,7 +49,7 @@ echo ""
 echo "Core Endpoints"
 echo "----------------------------------------------------------------------"
 test_endpoint "Health Check" "$API_HOST/health" "status"
-test_endpoint "API Docs" "$API_HOST/docs" "" # HTML endpoint, just check 200
+test_endpoint "API Docs (Swagger)" "$API_HOST/api/docs" "" # HTML endpoint, just check 200
 
 echo ""
 echo "Token & Network Endpoints"
@@ -74,14 +74,19 @@ test_endpoint "Transactions (limited)" "$API_HOST/api/v1/transactions?limit=10" 
 echo ""
 echo "Bioregion Endpoints"
 echo "----------------------------------------------------------------------"
+test_endpoint "Bioregion Count" "$API_HOST/api/v1/bioregions/count" "count"
+test_endpoint "Bioregion Summary" "$API_HOST/api/v1/bioregions/summary" "timestamp"
 test_endpoint "All Bioregions" "$API_HOST/api/v1/bioregions" "count"
 
-# Test specific bioregion only if bioregions exist
-bioregion_count=$(curl -s "$API_HOST/api/v1/bioregions" | jq -r '.count // 0')
+# Test specific bioregion and health only if bioregions exist
+bioregion_count=$(curl -s "$API_HOST/api/v1/bioregions/count" | jq -r '.count // 0')
 if [ "$bioregion_count" -gt 0 ]; then
     test_endpoint "Specific Bioregion" "$API_HOST/api/v1/bioregions/1" "bioregion_id"
+    test_endpoint "Bioregion Health" "$API_HOST/api/v1/bioregions/1/health" "health_rating"
 else
     echo -n "Testing: Specific Bioregion ... "
+    echo -e "${YELLOW}⚠ SKIP${NC} (no bioregions in database)"
+    echo -n "Testing: Bioregion Health ... "
     echo -e "${YELLOW}⚠ SKIP${NC} (no bioregions in database)"
 fi
 

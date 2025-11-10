@@ -4,27 +4,27 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-07T16:34:08.168111  
+**Generated:** 2025-11-10T05:57:41.460319  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
-**Database Size:** 309 MB  
+**Database Size:** 310 MB  
 
 ## 📊 Database Overview
 
 **Total Schemas:** 4  
-**Total Tables:** 71  
-**Total Rows:** 97,881  
-**Total Columns:** 876  
+**Total Tables:** 72  
+**Total Rows:** 97,885  
+**Total Columns:** 886  
 **Total Views:** 29  
 **Total Functions:** 1133  
 **Total Relationships:** 9  
-**Total Indexes:** 432  
+**Total Indexes:** 436  
 
 ### Schemas in Database
 
 | Schema | Description | Tables | Rows | Views | Functions |
 |--------|-------------|--------|------|-------|------------|
-| ubec_main | Main schema for UBEC four-element protoc... | 48 | 88,085 | 20 | 80 |
+| ubec_main | Main schema for UBEC four-element protoc... | 49 | 88,089 | 20 | 80 |
 | phenomenal | Unified phenomenological blockchain mode... | 20 | 1,296 | 7 | 10 |
 | topology | PostGIS Topology schema... | 2 | 0 | 0 | 103 |
 | public | standard public schema... | 1 | 8,500 | 2 | 940 |
@@ -6417,12 +6417,12 @@
 
 ### Schema Statistics
 
-- **Tables:** 48
-- **Total Rows:** 88,085
-- **Columns:** 581
+- **Tables:** 49
+- **Total Rows:** 88,089
+- **Columns:** 591
 - **Views:** 20
 - **Relationships:** 9
-- **Indexes:** 318
+- **Indexes:** 322
 - **Triggers:** 23
 - **Functions:** 80
 - **Custom Types:** 8
@@ -6467,10 +6467,10 @@
 |-------|------|---------|------|
 | stellar_transactions | 74,495 | 20 | 49 MB |
 | bioregion_analysis | 9,013 | 6 | 3048 kB |
-| stellar_accounts | 1,299 | 17 | 1032 kB |
+| stellar_accounts | 1,300 | 17 | 1032 kB |
 | holonic_metrics | 1,286 | 16 | 2624 kB |
+| ubec_balances | 652 | 15 | 560 kB |
 | account_balances | 651 | 6 | 1584 kB |
-| ubec_balances | 651 | 15 | 560 kB |
 | stellar_operations | 434 | 20 | 1248 kB |
 | system_settings | 73 | 12 | 144 kB |
 | asset_holder_analysis | 63 | 19 | 184 kB |
@@ -6484,7 +6484,7 @@
 | scheduler_jobs | 7 | 10 | 112 kB |
 | monitored_accounts | 5 | 9 | 80 kB |
 | api_rate_limits | 4 | 6 | 56 kB |
-| account_order_positions | 0 | 10 | 56 kB |
+| schema_migrations | 2 | 10 | 80 kB |
 
 #### ubec_main.account_balances
 
@@ -7152,6 +7152,28 @@
 - `chk_next_run_valid` (CHECK)
 - `scheduler_jobs_job_name_key` (UNIQUE)
 - `scheduler_jobs_pkey` (PRIMARY KEY)
+
+#### ubec_main.schema_migrations
+
+*Tracks all schema migrations applied to the database. Provides audit trail and version control for database structure changes.*
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| migration_id | integer | ✗ | nextval('schema_migrations_... | Auto-incrementing primary key |
+| migration_name | varchar(255) | ✗ | - | Unique migration identifier, typicall... |
+| applied_at | timestamp without time zone | ✗ | now() | Timestamp when migration was executed |
+| applied_by | varchar(100) | ✗ | - | Database user who executed the migration |
+| description | text | ✓ | - | Human-readable description of what th... |
+| checksum | varchar(64) | ✓ | - | SHA256 checksum of migration file for... |
+| execution_time_ms | integer | ✓ | - | How long the migration took to execut... |
+| status | varchar(20) | ✗ | 'completed'::character varying | Migration status: completed, failed, ... |
+| error_message | text | ✓ | - | Error details if migration failed |
+| rollback_script | text | ✓ | - | SQL script to reverse this migration ... |
+
+**Constraints:**
+- `chk_migration_status` (CHECK)
+- `schema_migrations_migration_name_key` (UNIQUE)
+- `schema_migrations_pkey` (PRIMARY KEY)
 
 #### ubec_main.stellar_accounts
 

@@ -589,6 +589,54 @@ class BackendAPIService:
         # Bioregion Endpoints (INTEGRATED!)
         # ====================================================================
         
+        @self.app.get("/api/v1/bioregions/count", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_bioregion_count(request: Request) -> Dict:
+            """
+            Get total count of active bioregions.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Returns:
+                Dictionary with bioregion count
+            """
+            try:
+                bioregion_mgr = await self.registry.get('bioregion_manager')
+                count = await bioregion_mgr.get_bioregion_count()
+                
+                return {
+                    'count': count,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except Exception as e:
+                logger.error(f"Error fetching bioregion count: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching bioregion count: {str(e)}")
+        
+        @self.app.get("/api/v1/bioregions/summary", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_bioregion_summary(request: Request) -> Dict:
+            """
+            Get summary statistics for all bioregions.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Returns comprehensive statistics including total count,
+            member count, average scores, and geographic metrics.
+            """
+            try:
+                bioregion_mgr = await self.registry.get('bioregion_manager')
+                summary = await bioregion_mgr.get_bioregion_summary()
+                
+                # Add timestamp
+                summary['timestamp'] = datetime.now(timezone.utc).isoformat()
+                
+                return summary
+                
+            except Exception as e:
+                logger.error(f"Error fetching bioregion summary: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching bioregion summary: {str(e)}")
+        
         @self.app.get("/api/v1/bioregions", response_model=Dict)
         @limiter.limit("100/minute")
         async def get_bioregions(request: Request) -> Dict:
@@ -650,6 +698,53 @@ class BackendAPIService:
             except Exception as e:
                 logger.error(f"Error fetching bioregion {bioregion_id}: {e}")
                 raise HTTPException(status_code=500, detail=f"Error fetching bioregion: {str(e)}")
+        
+        @self.app.get("/api/v1/bioregions/{bioregion_id}/health", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_bioregion_health(bioregion_id: int, request: Request) -> Dict:
+            """
+            Get health assessment for a specific bioregion.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Returns health rating based on integration score, autonomy score,
+            member count, and Ubuntu alignment.
+            
+            Health Ratings:
+            - excellent: Composite score >= 0.8
+            - good: Composite score >= 0.6
+            - fair: Composite score >= 0.4
+            - poor: Composite score < 0.4
+            
+            Args:
+                bioregion_id: ID of the bioregion
+                
+            Returns:
+                Dictionary with health assessment
+            """
+            try:
+                bioregion_mgr = await self.registry.get('bioregion_manager')
+                bioregion = await bioregion_mgr.get_bioregion_by_id(bioregion_id)
+                
+                if not bioregion:
+                    raise HTTPException(status_code=404, detail=f"Bioregion {bioregion_id} not found")
+                
+                return {
+                    'bioregion_id': bioregion_id,
+                    'bioregion_name': bioregion.get('name', 'Unknown'),
+                    'health_rating': bioregion.get('health_rating', 'unknown'),
+                    'autonomy_score': bioregion.get('autonomy_score', 0.0),
+                    'integration_score': bioregion.get('integration_score', 0.0),
+                    'member_count': bioregion.get('member_count', 0),
+                    'status': bioregion.get('status', 'unknown'),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching bioregion health {bioregion_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Error fetching bioregion health: {str(e)}")
         
         # ====================================================================
         # Ecoregion Endpoints (phenomenal schema)
