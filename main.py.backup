@@ -51,16 +51,8 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.8
-Updated: 2025-11-10
-CHANGELOG v3.1.8:
-    - CRITICAL FIX: Corrected analytics method names in handle_analytics()
-    - FIXED: generate_overview() → get_distribution_overview()
-    - FIXED: analyze_holders() → get_top_holders()
-    - FIXED: calculate_metrics() → get_network_metrics()
-    - ENHANCED: Added comprehensive output formatting for analytics results
-    - Resolves AttributeError preventing all analytics operations
-    - Complies with Principle #12 (Method Singularity) - uses correct UBECAnalyticsService methods
+Version: 3.1.7
+Updated: 2025-11-09
 CHANGELOG v3.1.7:
     - FIXED: Corrected handle_sync parameter mismatch (max_accounts → max_accounts_per_token)
     - FIXED: Removed invalid 'force' parameter from sync_all_tokens call
@@ -987,14 +979,9 @@ async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'over
     """
     Run analytics operations.
     
-    Fixed v3.1.8: Corrected method names to match UBECAnalyticsService API.
-    - generate_overview() → get_distribution_overview()
-    - analyze_holders() → get_top_holders()
-    - calculate_metrics() → get_network_metrics()
-    
     Args:
         registry: Service registry
-        analysis_type: Type of analysis ('overview', 'holders', 'metrics')
+        analysis_type: Type of analysis
     """
     logger.info("=" * 70)
     logger.info("RUNNING ANALYTICS")
@@ -1005,81 +992,17 @@ async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'over
     
     try:
         if analysis_type == 'overview':
-            # Get comprehensive distribution overview with velocity metrics
-            results = await analytics_service.get_distribution_overview()
-            
-            # Pretty print the results
-            logger.info("\n" + "=" * 70)
-            logger.info("DISTRIBUTION OVERVIEW")
-            logger.info("=" * 70)
-            
-            # Summary section
-            summary = results.get('summary', {})
-            logger.info("\nEcosystem Summary:")
-            logger.info(f"  Total Holders: {summary.get('total_holders', 0):,}")
-            logger.info(f"  Total Supply: {float(summary.get('total_supply', 0)):,.2f}")
-            logger.info(f"  Avg Concentration: {summary.get('avg_concentration', 0):.4f}")
-            logger.info(f"  Transactions (30d): {summary.get('total_transactions_30d', 0):,}")
-            
-            # Per-token breakdown
-            logger.info("\nPer-Token Distribution:")
-            for token, data in results.get('by_token', {}).items():
-                logger.info(f"\n  {token}:")
-                logger.info(f"    Holders: {data.get('total_holders', 0):,}")
-                logger.info(f"    Supply: {float(data.get('total_supply', 0)):,.2f}")
-                logger.info(f"    Concentration: {data.get('concentration_index', 0):.4f}")
-            
+            results = await analytics_service.generate_overview()
         elif analysis_type == 'holders':
-            # Get top holders across all tokens
-            results = await analytics_service.get_top_holders(limit=50)
-            
-            logger.info("\n" + "=" * 70)
-            logger.info("TOP HOLDERS ANALYSIS")
-            logger.info("=" * 70)
-            logger.info(f"\nShowing top {len(results)} holders:\n")
-            
-            for idx, holder in enumerate(results[:20], 1):  # Show top 20 in logs
-                logger.info(
-                    f"{idx:2d}. {holder['account_id'][:12]}... "
-                    f"| {holder['token_code']:7s} "
-                    f"| {float(holder['balance']):>15,.2f} "
-                    f"({holder['balance_pct']:.2f}%)"
-                )
-            
-            if len(results) > 20:
-                logger.info(f"\n... and {len(results) - 20} more holders")
-            
+            results = await analytics_service.analyze_holders()
         elif analysis_type == 'metrics':
-            # Get network-wide metrics
-            results = await analytics_service.get_network_metrics()
-            
-            logger.info("\n" + "=" * 70)
-            logger.info("NETWORK METRICS")
-            logger.info("=" * 70)
-            
-            logger.info("\nNetwork Overview:")
-            logger.info(f"  Total Accounts: {results.get('total_accounts', 0):,}")
-            logger.info(f"  Active Accounts (7d): {results.get('active_accounts_7d', 0):,}")
-            logger.info(f"  Active Accounts (30d): {results.get('active_accounts_30d', 0):,}")
-            logger.info(f"  Total Transactions: {results.get('total_transactions', 0):,}")
-            logger.info(f"  Transactions (7d): {results.get('transactions_7d', 0):,}")
-            logger.info(f"  Transactions (30d): {results.get('transactions_30d', 0):,}")
-            
-            # Network health
-            health = results.get('network_health', {})
-            logger.info("\nNetwork Health:")
-            logger.info(f"  Activity Score: {health.get('activity_score', 0):.2f}/100")
-            logger.info(f"  Growth Rate: {health.get('growth_rate', 0):.2f}%")
-            logger.info(f"  Health Status: {health.get('status', 'unknown')}")
-            
+            results = await analytics_service.calculate_metrics()
         else:
             logger.error(f"Unknown analysis type: {analysis_type}")
-            logger.info("Valid types: overview, holders, metrics")
             return
         
-        logger.info("\n" + "=" * 70)
-        logger.info("✅ Analysis completed successfully")
-        logger.info("=" * 70)
+        logger.info("\n✅ Analysis completed")
+        logger.info(f"  Results: {results}")
         
     except Exception as e:
         logger.error(f"Analytics failed: {e}", exc_info=True)

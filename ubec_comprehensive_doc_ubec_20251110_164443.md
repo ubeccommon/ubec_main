@@ -4,7 +4,7 @@
 
 **Database:** `ubec`  
 **Host:** `localhost`  
-**Generated:** 2025-11-10T05:57:41.460319  
+**Generated:** 2025-11-10T16:44:42.610373  
 **PostgreSQL Version:** PostgreSQL 15.13 (Debian 15.13-0+deb12u1) on x86_64-pc-linux-gnu  
 **Documentation Version:** 4.0 - Multi-Schema  
 **Database Size:** 310 MB  
@@ -6451,7 +6451,7 @@
 
 #### transaction_type
 
-**Values:** `payment`, `create_account`, `change_trust`, `manage_offer`, `path_payment`, `account_merge`, `manage_data`, `bump_sequence`, `clawback`, `other`, `manage_buy_offer`, `manage_sell_offer`, `create_passive_sell_offer`
+**Values:** `payment`, `create_account`, `change_trust`, `manage_offer`, `path_payment`, `account_merge`, `manage_data`, `bump_sequence`, `clawback`, `other`, `manage_buy_offer`, `manage_sell_offer`, `create_passive_sell_offer`, `path_payment_strict_send`, `path_payment_strict_receive`
 
 #### transformation_type
 
