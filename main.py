@@ -457,9 +457,8 @@ def register_core_services():
         from services.analytics.ubec_analytics_service import UBECAnalyticsService
         
         db = await registry.get('database')
-        config = await registry.get('config')
-        
-        analytics = UBECAnalyticsService(db, config)
+         
+        analytics = UBECAnalyticsService(db, 'ubec_main')
         await analytics.initialize()
         
         logger.info("✓ Analytics service created")
@@ -468,7 +467,7 @@ def register_core_services():
     registry.register_factory(
         'analytics',
         create_analytics,
-        dependencies=['database', 'config']
+        dependencies=['database']
     )
     
     # ========================================================================

@@ -46,8 +46,13 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 3.6.4 (Active Accounts Query Column Fix)
+Version: 3.6.4-debug (Active Accounts Query Column Fix + Debug Logging)
 Date: November 10, 2025
+
+Changelog v3.6.4-debug:
+- 🔍 ADDED: Comprehensive SQL query debug logging in _execute_query()
+- 🔍 ADDED: Query inspection before execution to identify syntax issues
+- 📝 NOTE: This is a diagnostic version - remove debug logging after issue resolved
 
 Changelog v3.6.4:
 - 🔥 CRITICAL FIX: Corrected column names in active accounts query
@@ -361,8 +366,24 @@ class UBECAnalyticsService:
             Dict with query results or None
         """
         try:
+            # TEMPORARY DEBUG LOGGING - REMOVE AFTER ISSUE RESOLVED
+            logger.debug("=" * 80)
+            logger.debug("EXECUTING SQL QUERY:")
+            logger.debug(f"Query length: {len(query)} characters")
+            logger.debug(f"Contains '<': {'<' in query}")
+            logger.debug(f"Contains '>': {'>' in query}")
+            logger.debug("Full query:")
+            logger.debug(query)
+            logger.debug(f"Parameters: {params}")
+            logger.debug("=" * 80)
+            
             return await self.db_manager.fetch_one(query, params)
         except Exception as e:
+            logger.error("=" * 80)
+            logger.error("SQL QUERY EXECUTION FAILED:")
+            logger.error(f"Error: {e}")
+            logger.error(f"Query was: {query[:200]}...")  # First 200 chars
+            logger.error("=" * 80)
             self._record_error(f"Query execution error: {e}")
             raise
     
@@ -1343,7 +1364,10 @@ if __name__ == "__main__":
     print("It analyzes distribution, holder patterns, and ecosystem health across all")
     print("four UBEC elements (Air, Water, Earth, Fire).")
     print()
-    print("VERSION: 3.6.4 (Active Accounts Query Column Fix)")
+    print("VERSION: 3.6.4-debug (Active Accounts Query Column Fix + Debug Logging)")
+    print()
+    print("🔍 DEBUG VERSION: This version includes comprehensive SQL logging")
+    print("🔍 Check logs for full SQL queries being executed")
     print()
     print("✅ FIXED v3.6.4: Corrected column names in active accounts query")
     print("✅ RESOLVES: 'column destination does not exist' error")
