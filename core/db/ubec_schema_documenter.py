@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
 UBEC Protocol Suite - Comprehensive Multi-Schema Database Documentation Generator
+Enhanced Edition with Complete Security, Permission, and Structure Analysis
 
 This project uses the services of Claude and Anthropic PBC to inform our 
 decisions and recommendations. This project was made possible with the 
 assistance of Claude and Anthropic PBC.
 
-Generates comprehensive documentation across ALL schemas in the UBEC database:
+Generates comprehensive documentation across ALL aspects of the UBEC database:
 - Auto-discovers all available schemas
-- Documents ubec_main (Four-Element Protocol)
-- Documents phenomenal (Quantum Gravity Analysis)
-- Documents ubec_recipro (Legacy Reciprocity)
-- Documents any custom schemas
+- Documents all tables with columns, data types, and constraints
+- Documents views, functions, triggers, and sequences
+- Documents database users, roles, and permissions
+- Documents indexes, foreign keys, and check constraints
+- Documents row-level security policies
+- Documents PostgreSQL extensions and configurations
 - Cross-schema relationship tracking
-- Complete database overview
+- Complete security audit information
 
-Version: 4.0 - Multi-Schema Comprehensive Edition
-Date: October 12, 2025
+Version: 5.0.1 - Complete Enterprise Edition (Patched)
+Date: November 17, 2025
 """
 
 import psycopg2
@@ -25,7 +28,7 @@ import json
 import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 import logging
 import argparse
 from pathlib import Path
@@ -132,11 +135,12 @@ def parse_database_url(url: str) -> Dict[str, Any]:
 
 
 class UBECComprehensiveDocumenter:
-    """Comprehensive multi-schema database documentation generator."""
+    """Comprehensive multi-schema database documentation generator with security analysis."""
     
     def __init__(self, connection_params: Dict[str, Any], 
                  schemas: Optional[List[str]] = None,
-                 exclude_system_schemas: bool = True):
+                 exclude_system_schemas: bool = True,
+                 include_security: bool = True):
         """
         Initialize comprehensive documenter.
         
@@ -144,15 +148,25 @@ class UBECComprehensiveDocumenter:
             connection_params: Database connection parameters
             schemas: Specific schemas to document (None = auto-discover all)
             exclude_system_schemas: Exclude pg_* and information_schema
+            include_security: Include user/role/permission documentation
         """
         self.connection_params = connection_params
         self.requested_schemas = schemas
         self.exclude_system_schemas = exclude_system_schemas
+        self.include_security = include_security
         self.conn = None
         self.discovered_schemas = []
         self.documentation = {
             'metadata': {},
             'database_overview': {},
+            'security': {
+                'users': {},
+                'roles': {},
+                'schema_permissions': {},
+                'table_permissions': {},
+                'row_level_security': {}
+            },
+            'extensions': {},
             'schemas': {},
             'cross_schema_analysis': {
                 'total_tables': 0,
@@ -190,790 +204,1037 @@ class UBECComprehensiveDocumenter:
         
         try:
             query = """
-                SELECT schema_name, 
-                       COUNT(table_name) as table_count
+                SELECT s.schema_name, 
+                       COUNT(t.table_name) as table_count
                 FROM information_schema.schemata s
-                LEFT JOIN information_schema.tables t 
-                    ON s.schema_name = t.table_schema 
-                    AND t.table_type = 'BASE TABLE'
-                WHERE 1=1
-            """
-            
-            if self.exclude_system_schemas:
-                query += """
-                    AND schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-                    AND schema_name NOT LIKE 'pg_%'
-                """
-            
-            query += """
-                GROUP BY schema_name
-                ORDER BY table_count DESC, schema_name
+                LEFT JOIN information_schema.tables t ON s.schema_name = t.table_schema
+                WHERE s.schema_name NOT IN ('pg_toast', 'pg_catalog')
+                GROUP BY s.schema_name
+                ORDER BY s.schema_name
             """
             
             cursor.execute(query)
-            schemas_info = cursor.fetchall()
+            results = cursor.fetchall()
             
             schemas = []
-            logger.info("Discovered schemas:")
-            for schema_name, table_count in schemas_info:
+            for schema_name, table_count in results:
+                if self.exclude_system_schemas:
+                    if schema_name.startswith('pg_') or schema_name == 'information_schema':
+                        logger.debug(f"Excluding system schema: {schema_name}")
+                        continue
+                
+                if self.requested_schemas and schema_name not in self.requested_schemas:
+                    logger.debug(f"Skipping non-requested schema: {schema_name}")
+                    continue
+                
                 schemas.append(schema_name)
-                table_desc = f"{table_count} tables" if table_count > 0 else "empty"
-                logger.info(f"  - {schema_name}: {table_desc}")
+                logger.info(f"Discovered schema: {schema_name} ({table_count} tables)")
             
+            self.discovered_schemas = schemas
             return schemas
             
         finally:
             cursor.close()
     
-    def generate_documentation(self) -> Dict[str, Any]:
-        """Generate comprehensive multi-schema documentation."""
-        logger.info("Starting comprehensive database documentation...")
+    def get_database_users(self) -> Dict[str, Any]:
+        """Get all database users and their attributes."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
         try:
-            # Document database metadata
-            self._document_database_metadata()
+            query = """
+                SELECT 
+                    usename as username,
+                    usesysid as user_id,
+                    usecreatedb as can_create_db,
+                    usesuper as is_superuser,
+                    userepl as can_replicate,
+                    usebypassrls as bypass_rls,
+                    valuntil as valid_until,
+                    useconfig as config_settings
+                FROM pg_user
+                ORDER BY usename
+            """
             
-            # Discover schemas
-            if self.requested_schemas:
-                self.discovered_schemas = self.requested_schemas
-                logger.info(f"Using requested schemas: {self.requested_schemas}")
-            else:
-                self.discovered_schemas = self.discover_schemas()
-                logger.info(f"Auto-discovered {len(self.discovered_schemas)} schemas")
+            cursor.execute(query)
+            users = {}
             
-            # Document each schema
-            for schema_name in self.discovered_schemas:
-                logger.info(f"\n{'='*70}")
-                logger.info(f"Documenting schema: {schema_name}")
-                logger.info(f"{'='*70}")
+            for row in cursor.fetchall():
+                username = row['username']
+                users[username] = {
+                    'user_id': row['user_id'],
+                    'can_create_db': row['can_create_db'],
+                    'is_superuser': row['is_superuser'],
+                    'can_replicate': row['can_replicate'],
+                    'bypass_rls': row['bypass_rls'],
+                    'valid_until': str(row['valid_until']) if row['valid_until'] else None,
+                    'config_settings': row['config_settings'],
+                    'member_of': []
+                }
+            
+            # Get role memberships
+            membership_query = """
+                SELECT 
+                    u.usename as username,
+                    r.rolname as role_name
+                FROM pg_user u
+                JOIN pg_auth_members m ON u.usesysid = m.member
+                JOIN pg_roles r ON m.roleid = r.oid
+                ORDER BY u.usename, r.rolname
+            """
+            
+            cursor.execute(membership_query)
+            for row in cursor.fetchall():
+                username = row['username']
+                if username in users:
+                    users[username]['member_of'].append(row['role_name'])
+            
+            logger.info(f"Documented {len(users)} database users")
+            return users
+            
+        finally:
+            cursor.close()
+    
+    def get_database_roles(self) -> Dict[str, Any]:
+        """Get all database roles and their attributes."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    rolname as role_name,
+                    rolsuper as is_superuser,
+                    rolinherit as inherit_privileges,
+                    rolcreaterole as can_create_role,
+                    rolcreatedb as can_create_db,
+                    rolcanlogin as can_login,
+                    rolreplication as can_replicate,
+                    rolbypassrls as bypass_rls,
+                    rolconnlimit as connection_limit,
+                    rolvaliduntil as valid_until
+                FROM pg_roles
+                WHERE rolname NOT LIKE 'pg_%'
+                ORDER BY rolname
+            """
+            
+            cursor.execute(query)
+            roles = {}
+            
+            for row in cursor.fetchall():
+                role_name = row['role_name']
+                roles[role_name] = {
+                    'is_superuser': row['is_superuser'],
+                    'inherit_privileges': row['inherit_privileges'],
+                    'can_create_role': row['can_create_role'],
+                    'can_create_db': row['can_create_db'],
+                    'can_login': row['can_login'],
+                    'can_replicate': row['can_replicate'],
+                    'bypass_rls': row['bypass_rls'],
+                    'connection_limit': row['connection_limit'],
+                    'valid_until': str(row['valid_until']) if row['valid_until'] else None,
+                    'granted_to': []
+                }
+            
+            # Get members of each role
+            membership_query = """
+                SELECT 
+                    r1.rolname as role_name,
+                    r2.rolname as member_name
+                FROM pg_roles r1
+                JOIN pg_auth_members m ON r1.oid = m.roleid
+                JOIN pg_roles r2 ON m.member = r2.oid
+                WHERE r1.rolname NOT LIKE 'pg_%'
+                ORDER BY r1.rolname, r2.rolname
+            """
+            
+            cursor.execute(membership_query)
+            for row in cursor.fetchall():
+                role_name = row['role_name']
+                if role_name in roles:
+                    roles[role_name]['granted_to'].append(row['member_name'])
+            
+            logger.info(f"Documented {len(roles)} database roles")
+            return roles
+            
+        finally:
+            cursor.close()
+    
+    def get_schema_permissions(self, schema_name: str) -> Dict[str, List[str]]:
+        """Get permissions granted on a schema."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    n.nspname as schema_name,
+                    r.rolname as grantee,
+                    p.privilege_type
+                FROM information_schema.usage_privileges p
+                JOIN pg_namespace n ON p.object_schema = n.nspname
+                JOIN pg_roles r ON p.grantee = r.rolname
+                WHERE n.nspname = %s
+                ORDER BY r.rolname, p.privilege_type
+            """
+            
+            cursor.execute(query, (schema_name,))
+            permissions = {}
+            
+            for row in cursor.fetchall():
+                grantee = row['grantee']
+                priv = row['privilege_type']
                 
-                schema_doc = self._document_schema(schema_name)
-                self.documentation['schemas'][schema_name] = schema_doc
+                if grantee not in permissions:
+                    permissions[grantee] = []
+                permissions[grantee].append(priv)
             
-            # Cross-schema analysis
-            self._analyze_cross_schema_relationships()
+            return permissions
             
-            # Generate overview
-            self._generate_database_overview()
+        finally:
+            cursor.close()
+    
+    def get_table_permissions(self, schema_name: str, table_name: str) -> Dict[str, List[str]]:
+        """Get permissions granted on a specific table."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    grantee,
+                    privilege_type,
+                    is_grantable
+                FROM information_schema.table_privileges
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY grantee, privilege_type
+            """
             
-            logger.info("\n✅ Comprehensive documentation generated successfully")
+            cursor.execute(query, (schema_name, table_name))
+            permissions = {}
+            
+            for row in cursor.fetchall():
+                grantee = row['grantee']
+                priv = row['privilege_type']
+                grantable = row['is_grantable'] == 'YES'
+                
+                if grantee not in permissions:
+                    permissions[grantee] = []
+                
+                priv_str = priv
+                if grantable:
+                    priv_str += " (GRANT)"
+                    
+                permissions[grantee].append(priv_str)
+            
+            return permissions
+            
+        finally:
+            cursor.close()
+    
+    def get_row_level_security(self, schema_name: str, table_name: str) -> Dict[str, Any]:
+        """Get row-level security policies for a table."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    polname as policy_name,
+                    polcmd as command,
+                    polpermissive as is_permissive,
+                    polroles::regrole[] as roles,
+                    pg_get_expr(polqual, polrelid) as using_expression,
+                    pg_get_expr(polwithcheck, polrelid) as check_expression
+                FROM pg_policy
+                JOIN pg_class ON pg_policy.polrelid = pg_class.oid
+                JOIN pg_namespace ON pg_class.relnamespace = pg_namespace.oid
+                WHERE pg_namespace.nspname = %s AND pg_class.relname = %s
+                ORDER BY polname
+            """
+            
+            cursor.execute(query, (schema_name, table_name))
+            policies = []
+            
+            for row in cursor.fetchall():
+                policy = {
+                    'name': row['policy_name'],
+                    'command': row['command'],
+                    'permissive': row['is_permissive'],
+                    'roles': [str(r) for r in row['roles']] if row['roles'] else [],
+                    'using': row['using_expression'],
+                    'check': row['check_expression']
+                }
+                policies.append(policy)
+            
+            return {'enabled': len(policies) > 0, 'policies': policies}
             
         except Exception as e:
-            logger.error(f"Error during documentation: {e}")
-            raise
-            
-        return self.documentation
+            logger.debug(f"No RLS policies for {schema_name}.{table_name}: {e}")
+            return {'enabled': False, 'policies': []}
+        finally:
+            cursor.close()
     
-    def _document_database_metadata(self):
-        """Document database-level metadata."""
-        cursor = self.conn.cursor()
+    def get_table_indexes(self, schema_name: str, table_name: str) -> List[Dict[str, Any]]:
+        """Get all indexes for a table with detailed information."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         
         try:
-            # PostgreSQL version
-            cursor.execute("SELECT version()")
-            pg_version = cursor.fetchone()[0]
-            
-            # Database size
-            cursor.execute("""
+            query = """
                 SELECT 
-                    pg_database_size(current_database()) as size_bytes,
-                    pg_size_pretty(pg_database_size(current_database())) as size_pretty
-            """)
-            db_size = cursor.fetchone()
+                    i.relname as index_name,
+                    a.attname as column_name,
+                    ix.indisunique as is_unique,
+                    ix.indisprimary as is_primary,
+                    am.amname as index_type,
+                    pg_get_indexdef(ix.indexrelid) as index_definition,
+                    pg_size_pretty(pg_relation_size(i.oid)) as index_size
+                FROM pg_index ix
+                JOIN pg_class t ON ix.indrelid = t.oid
+                JOIN pg_class i ON ix.indexrelid = i.oid
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                JOIN pg_am am ON i.relam = am.oid
+                LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                WHERE n.nspname = %s AND t.relname = %s
+                ORDER BY i.relname, a.attnum
+            """
             
-            # Total schemas
-            cursor.execute("""
-                SELECT COUNT(DISTINCT schema_name)
-                FROM information_schema.schemata
-                WHERE schema_name NOT LIKE 'pg_%'
-                AND schema_name != 'information_schema'
-            """)
-            total_schemas = cursor.fetchone()[0]
+            cursor.execute(query, (schema_name, table_name))
             
-            # Total tables
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM information_schema.tables
-                WHERE table_schema NOT LIKE 'pg_%'
-                AND table_schema != 'information_schema'
-                AND table_type = 'BASE TABLE'
-            """)
-            total_tables = cursor.fetchone()[0]
+            indexes = {}
+            for row in cursor.fetchall():
+                index_name = row['index_name']
+                if index_name not in indexes:
+                    indexes[index_name] = {
+                        'columns': [],
+                        'unique': row['is_unique'],
+                        'primary': row['is_primary'],
+                        'type': row['index_type'],
+                        'definition': row['index_definition'],
+                        'size': row['index_size']
+                    }
+                if row['column_name']:
+                    indexes[index_name]['columns'].append(row['column_name'])
             
-            self.documentation['metadata'] = {
-                'generated_at': datetime.now().isoformat(),
-                'database_name': self.connection_params['database'],
-                'database_host': self.connection_params['host'],
-                'database_version': pg_version.split(',')[0] if pg_version else 'Unknown',
-                'database_size': {
-                    'bytes': db_size[0] if db_size else 0,
-                    'human_readable': db_size[1] if db_size else 'Unknown'
-                },
-                'total_schemas': total_schemas,
-                'total_tables': total_tables,
-                'documentation_version': '4.0 - Multi-Schema',
-                'generator': 'UBEC Comprehensive Schema Documenter'
+            return list(indexes.values())
+            
+        finally:
+            cursor.close()
+    
+    def get_table_constraints(self, schema_name: str, table_name: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Get all constraints for a table."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            constraints = {
+                'check': [],
+                'unique': [],
+                'foreign_key': [],
+                'primary_key': []
             }
             
+            # Check constraints
+            check_query = """
+                SELECT 
+                    con.conname as constraint_name,
+                    pg_get_constraintdef(con.oid) as definition
+                FROM pg_constraint con
+                JOIN pg_class rel ON con.conrelid = rel.oid
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+                WHERE nsp.nspname = %s 
+                AND rel.relname = %s 
+                AND con.contype = 'c'
+                ORDER BY con.conname
+            """
+            
+            cursor.execute(check_query, (schema_name, table_name))
+            for row in cursor.fetchall():
+                constraints['check'].append({
+                    'name': row['constraint_name'],
+                    'definition': row['definition']
+                })
+            
+            # Unique constraints
+            unique_query = """
+                SELECT 
+                    con.conname as constraint_name,
+                    array_agg(att.attname ORDER BY u.attposition) as columns
+                FROM pg_constraint con
+                JOIN pg_class rel ON con.conrelid = rel.oid
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+                JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE
+                JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = u.attnum
+                WHERE nsp.nspname = %s 
+                AND rel.relname = %s 
+                AND con.contype = 'u'
+                GROUP BY con.conname
+                ORDER BY con.conname
+            """
+            
+            cursor.execute(unique_query, (schema_name, table_name))
+            for row in cursor.fetchall():
+                constraints['unique'].append({
+                    'name': row['constraint_name'],
+                    'columns': row['columns']
+                })
+            
+            # Foreign key constraints
+            fk_query = """
+                SELECT 
+                    con.conname as constraint_name,
+                    array_agg(att.attname ORDER BY u.attposition) as columns,
+                    nspf.nspname as foreign_schema,
+                    clf.relname as foreign_table,
+                    array_agg(attf.attname ORDER BY u.attposition) as foreign_columns,
+                    con.confupdtype as on_update,
+                    con.confdeltype as on_delete
+                FROM pg_constraint con
+                JOIN pg_class rel ON con.conrelid = rel.oid
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+                JOIN pg_class clf ON con.confrelid = clf.oid
+                JOIN pg_namespace nspf ON clf.relnamespace = nspf.oid
+                JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE
+                JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = u.attnum
+                JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS uf(attnum, attposition) ON u.attposition = uf.attposition
+                JOIN pg_attribute attf ON attf.attrelid = clf.oid AND attf.attnum = uf.attnum
+                WHERE nsp.nspname = %s 
+                AND rel.relname = %s 
+                AND con.contype = 'f'
+                GROUP BY con.conname, nspf.nspname, clf.relname, con.confupdtype, con.confdeltype
+                ORDER BY con.conname
+            """
+            
+            cursor.execute(fk_query, (schema_name, table_name))
+            
+            action_codes = {
+                'a': 'NO ACTION',
+                'r': 'RESTRICT',
+                'c': 'CASCADE',
+                'n': 'SET NULL',
+                'd': 'SET DEFAULT'
+            }
+            
+            for row in cursor.fetchall():
+                constraints['foreign_key'].append({
+                    'name': row['constraint_name'],
+                    'columns': row['columns'],
+                    'references': f"{row['foreign_schema']}.{row['foreign_table']}",
+                    'foreign_columns': row['foreign_columns'],
+                    'on_update': action_codes.get(row['on_update'], 'UNKNOWN'),
+                    'on_delete': action_codes.get(row['on_delete'], 'UNKNOWN')
+                })
+            
+            # Primary key
+            pk_query = """
+                SELECT 
+                    con.conname as constraint_name,
+                    array_agg(att.attname ORDER BY u.attposition) as columns
+                FROM pg_constraint con
+                JOIN pg_class rel ON con.conrelid = rel.oid
+                JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+                JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE
+                JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = u.attnum
+                WHERE nsp.nspname = %s 
+                AND rel.relname = %s 
+                AND con.contype = 'p'
+                GROUP BY con.conname
+            """
+            
+            cursor.execute(pk_query, (schema_name, table_name))
+            for row in cursor.fetchall():
+                constraints['primary_key'].append({
+                    'name': row['constraint_name'],
+                    'columns': row['columns']
+                })
+            
+            return constraints
+            
         finally:
             cursor.close()
-            
-        logger.info("Database metadata documented")
     
-    def _document_schema(self, schema_name: str) -> Dict[str, Any]:
-        """Document a single schema comprehensively."""
+    def get_table_triggers(self, schema_name: str, table_name: str) -> List[Dict[str, Any]]:
+        """Get all triggers for a table."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    tgname as trigger_name,
+                    pg_get_triggerdef(t.oid) as trigger_definition,
+                    CASE tgtype & 1 WHEN 1 THEN 'ROW' ELSE 'STATEMENT' END as level,
+                    CASE 
+                        WHEN tgtype & 2 = 2 THEN 'BEFORE'
+                        WHEN tgtype & 64 = 64 THEN 'INSTEAD OF'
+                        ELSE 'AFTER'
+                    END as timing,
+                    array_to_string(ARRAY[
+                        CASE WHEN tgtype & 4 = 4 THEN 'INSERT' END,
+                        CASE WHEN tgtype & 8 = 8 THEN 'DELETE' END,
+                        CASE WHEN tgtype & 16 = 16 THEN 'UPDATE' END,
+                        CASE WHEN tgtype & 32 = 32 THEN 'TRUNCATE' END
+                    ]::text[], ' OR ') as events,
+                    p.proname as function_name
+                FROM pg_trigger t
+                JOIN pg_class c ON t.tgrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                JOIN pg_proc p ON t.tgfoid = p.oid
+                WHERE n.nspname = %s 
+                AND c.relname = %s
+                AND NOT t.tgisinternal
+                ORDER BY tgname
+            """
+            
+            cursor.execute(query, (schema_name, table_name))
+            triggers = []
+            
+            for row in cursor.fetchall():
+                triggers.append({
+                    'name': row['trigger_name'],
+                    'timing': row['timing'],
+                    'events': row['events'],
+                    'level': row['level'],
+                    'function': row['function_name'],
+                    'definition': row['trigger_definition']
+                })
+            
+            return triggers
+            
+        finally:
+            cursor.close()
+    
+    def get_sequences(self, schema_name: str) -> List[Dict[str, Any]]:
+        """Get all sequences in a schema."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    c.relname as sequence_name,
+                    s.seqstart as start_value,
+                    s.seqincrement as increment,
+                    s.seqmax as max_value,
+                    s.seqmin as min_value,
+                    s.seqcache as cache_size,
+                    s.seqcycle as cycles,
+                    d.objid,
+                    d.refobjid,
+                    ct.relname as owned_by_table,
+                    a.attname as owned_by_column
+                FROM pg_class c
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                JOIN pg_sequence s ON s.seqrelid = c.oid
+                LEFT JOIN pg_depend d ON d.objid = c.oid AND d.deptype = 'a'
+                LEFT JOIN pg_class ct ON d.refobjid = ct.oid
+                LEFT JOIN pg_attribute a ON a.attrelid = ct.oid AND a.attnum = d.refobjsubid
+                WHERE n.nspname = %s
+                AND c.relkind = 'S'
+                ORDER BY c.relname
+            """
+            
+            cursor.execute(query, (schema_name,))
+            sequences = []
+            
+            for row in cursor.fetchall():
+                seq = {
+                    'name': row['sequence_name'],
+                    'start': row['start_value'],
+                    'increment': row['increment'],
+                    'max': row['max_value'],
+                    'min': row['min_value'],
+                    'cache': row['cache_size'],
+                    'cycle': row['cycles']
+                }
+                
+                if row['owned_by_table']:
+                    seq['owned_by'] = f"{row['owned_by_table']}.{row['owned_by_column']}"
+                
+                sequences.append(seq)
+            
+            return sequences
+            
+        finally:
+            cursor.close()
+    
+    def get_extensions(self) -> Dict[str, Any]:
+        """Get installed PostgreSQL extensions."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            query = """
+                SELECT 
+                    e.extname as name,
+                    e.extversion as version,
+                    n.nspname as schema,
+                    d.description
+                FROM pg_extension e
+                JOIN pg_namespace n ON e.extnamespace = n.oid
+                LEFT JOIN pg_description d ON d.objoid = e.oid
+                ORDER BY e.extname
+            """
+            
+            cursor.execute(query)
+            extensions = {}
+            
+            for row in cursor.fetchall():
+                extensions[row['name']] = {
+                    'version': row['version'],
+                    'schema': row['schema'],
+                    'description': row['description']
+                }
+            
+            logger.info(f"Found {len(extensions)} installed extensions")
+            return extensions
+            
+        finally:
+            cursor.close()
+    
+    def get_table_comments(self, schema_name: str, table_name: str) -> Dict[str, Optional[str]]:
+        """Get comments on table and its columns."""
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
+        try:
+            comments = {'table': None, 'columns': {}}
+            
+            # Table comment
+            table_query = """
+                SELECT obj_description(c.oid) as comment
+                FROM pg_class c
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE n.nspname = %s AND c.relname = %s
+            """
+            
+            cursor.execute(table_query, (schema_name, table_name))
+            row = cursor.fetchone()
+            if row and row['comment']:
+                comments['table'] = row['comment']
+            
+            # Column comments
+            column_query = """
+                SELECT 
+                    a.attname as column_name,
+                    col_description(c.oid, a.attnum) as comment
+                FROM pg_class c
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                JOIN pg_attribute a ON a.attrelid = c.oid
+                WHERE n.nspname = %s 
+                AND c.relname = %s
+                AND a.attnum > 0
+                AND NOT a.attisdropped
+                AND col_description(c.oid, a.attnum) IS NOT NULL
+            """
+            
+            cursor.execute(column_query, (schema_name, table_name))
+            for row in cursor.fetchall():
+                comments['columns'][row['column_name']] = row['comment']
+            
+            return comments
+            
+        finally:
+            cursor.close()
+    
+    def document_schema(self, schema_name: str) -> Dict[str, Any]:
+        """Generate comprehensive documentation for a single schema."""
+        logger.info(f"Documenting schema: {schema_name}")
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        
         schema_doc = {
-            'schema_name': schema_name,
-            'description': SCHEMA_DESCRIPTIONS.get(schema_name, 'Custom schema'),
+            'name': schema_name,
+            'description': SCHEMA_DESCRIPTIONS.get(schema_name, ''),
             'tables': {},
             'views': {},
-            'functions': {},
-            'triggers': {},
-            'indexes': {},
-            'relationships': [],
-            'custom_types': {},
-            'statistics': {}
+            'functions': [],
+            'sequences': [],
+            'permissions': {},
+            'statistics': {
+                'table_count': 0,
+                'view_count': 0,
+                'function_count': 0,
+                'total_rows': 0,
+                'total_size': '0 bytes'
+            }
         }
         
-        # Get schema-specific info
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        
         try:
-            # Schema comment
-            cursor.execute("""
-                SELECT obj_description(oid, 'pg_namespace') as description
-                FROM pg_namespace
-                WHERE nspname = %s
-            """, (schema_name,))
-            result = cursor.fetchone()
-            if result and result['description']:
-                schema_doc['description'] = result['description']
+            # Get schema permissions
+            schema_doc['permissions'] = self.get_schema_permissions(schema_name)
             
-            # Tables
-            schema_doc['tables'] = self._document_tables(schema_name)
+            # Get sequences
+            schema_doc['sequences'] = self.get_sequences(schema_name)
             
-            # Views
-            schema_doc['views'] = self._document_views(schema_name)
-            
-            # Custom types
-            schema_doc['custom_types'] = self._document_custom_types(schema_name)
-            
-            # Relationships
-            schema_doc['relationships'] = self._document_relationships(schema_name)
-            
-            # Indexes
-            schema_doc['indexes'] = self._document_indexes(schema_name)
-            
-            # Triggers
-            schema_doc['triggers'] = self._document_triggers(schema_name)
-            
-            # Functions
-            schema_doc['functions'] = self._document_functions(schema_name)
-            
-            # Statistics
-            schema_doc['statistics'] = self._generate_schema_statistics(schema_doc)
-            
-        finally:
-            cursor.close()
-        
-        return schema_doc
-    
-    def _document_tables(self, schema_name: str) -> Dict[str, Any]:
-        """Document all tables in a schema."""
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        tables = {}
-        
-        try:
-            # Get all tables
-            cursor.execute("""
+            # Get tables
+            tables_query = """
                 SELECT 
-                    t.table_name,
-                    obj_description((quote_ident(t.table_schema)||'.'||quote_ident(t.table_name))::regclass, 'pg_class') as table_comment
-                FROM information_schema.tables t
-                WHERE t.table_schema = %s 
-                AND t.table_type = 'BASE TABLE'
-                ORDER BY t.table_name
-            """, (schema_name,))
+                    table_name,
+                    pg_size_pretty(pg_total_relation_size(quote_ident(table_schema)||'.'||quote_ident(table_name))) as size
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """
             
-            table_list = cursor.fetchall()
+            cursor.execute(tables_query, (schema_name,))
+            tables = cursor.fetchall()
             
-            for row in table_list:
-                table_name = row['table_name']
-                table_comment = row['table_comment']
+            for table in tables:
+                table_name = table['table_name']
+                logger.info(f"  Documenting table: {schema_name}.{table_name}")
+                
+                table_doc = {
+                    'columns': [],
+                    'row_count': 0,
+                    'size': table['size'],
+                    'indexes': [],
+                    'constraints': {},
+                    'triggers': [],
+                    'permissions': {},
+                    'row_level_security': {},
+                    'comments': {}
+                }
                 
                 # Get columns
-                cursor.execute("""
+                columns_query = """
                     SELECT 
-                        c.column_name,
-                        c.data_type,
-                        c.character_maximum_length,
-                        c.numeric_precision,
-                        c.numeric_scale,
-                        c.is_nullable,
-                        c.column_default,
-                        COALESCE(c.is_identity, 'NO') as is_identity,
-                        COALESCE(c.is_generated, 'NEVER') as is_generated,
-                        col_description((quote_ident(%s)||'.'||quote_ident(%s))::regclass, c.ordinal_position) as column_comment
-                    FROM information_schema.columns c
-                    WHERE c.table_schema = %s 
-                    AND c.table_name = %s
-                    ORDER BY c.ordinal_position
-                """, (schema_name, table_name, schema_name, table_name))
+                        column_name,
+                        data_type,
+                        character_maximum_length,
+                        numeric_precision,
+                        numeric_scale,
+                        is_nullable,
+                        column_default
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                """
                 
-                columns = []
+                cursor.execute(columns_query, (schema_name, table_name))
                 for col in cursor.fetchall():
                     column_info = {
                         'name': col['column_name'],
-                        'data_type': self._format_data_type(
-                            col['data_type'], 
-                            col['character_maximum_length'],
-                            col['numeric_precision'], 
-                            col['numeric_scale']
-                        ),
+                        'type': col['data_type'],
                         'nullable': col['is_nullable'] == 'YES',
-                        'default': col['column_default'],
-                        'is_identity': col['is_identity'] == 'YES',
-                        'is_generated': col['is_generated'] == 'ALWAYS',
-                        'comment': col['column_comment']
+                        'default': col['column_default']
                     }
-                    columns.append(column_info)
+                    
+                    if col['character_maximum_length']:
+                        column_info['max_length'] = col['character_maximum_length']
+                    if col['numeric_precision']:
+                        column_info['precision'] = col['numeric_precision']
+                    if col['numeric_scale']:
+                        column_info['scale'] = col['numeric_scale']
+                    
+                    table_doc['columns'].append(column_info)
                 
-                # Get constraints
-                cursor.execute("""
-                    SELECT 
-                        con.conname as constraint_name,
-                        con.contype as constraint_type,
-                        pg_get_constraintdef(con.oid) as definition
-                    FROM pg_constraint con
-                    JOIN pg_namespace nsp ON nsp.oid = con.connamespace
-                    JOIN pg_class cls ON cls.oid = con.conrelid
-                    WHERE nsp.nspname = %s
-                    AND cls.relname = %s
-                    ORDER BY con.conname
-                """, (schema_name, table_name))
-                
-                constraint_type_map = {
-                    'p': 'PRIMARY KEY',
-                    'u': 'UNIQUE',
-                    'c': 'CHECK',
-                    'f': 'FOREIGN KEY',
-                    'x': 'EXCLUSION'
-                }
-                
-                constraints = []
-                for con in cursor.fetchall():
-                    constraints.append({
-                        'name': con['constraint_name'],
-                        'type': constraint_type_map.get(con['constraint_type'], con['constraint_type']),
-                        'definition': con['definition']
-                    })
-                
-                # Get table statistics
+                # Get row count (safely)
                 try:
-                    qualified_table = f'"{schema_name}"."{table_name}"'
-                    cursor.execute(f"""
-                        SELECT 
-                            COUNT(*) as row_count,
-                            pg_size_pretty(pg_total_relation_size('{qualified_table}'::regclass)) as total_size,
-                            pg_size_pretty(pg_table_size('{qualified_table}'::regclass)) as table_size,
-                            pg_size_pretty(pg_indexes_size('{qualified_table}'::regclass)) as index_size
-                        FROM {qualified_table}
-                    """)
-                    stats_result = cursor.fetchone()
-                    if stats_result:
-                        stats = {
-                            'row_count': stats_result['row_count'] or 0,
-                            'total_size': stats_result['total_size'] or 'Unknown',
-                            'table_size': stats_result['table_size'] or 'Unknown',
-                            'index_size': stats_result['index_size'] or 'Unknown'
-                        }
-                    else:
-                        stats = {'row_count': 0, 'total_size': 'Unknown', 'table_size': 'Unknown', 'index_size': 'Unknown'}
+                    count_query = f"SELECT COUNT(*) as count FROM {schema_name}.{table_name}"
+                    cursor.execute(count_query)
+                    table_doc['row_count'] = cursor.fetchone()['count']
                 except Exception as e:
-                    logger.debug(f"Could not get stats for {schema_name}.{table_name}: {e}")
-                    stats = {'row_count': 0, 'total_size': 'Unknown', 'table_size': 'Unknown', 'index_size': 'Unknown'}
+                    logger.warning(f"Could not get row count for {schema_name}.{table_name}: {e}")
+                    table_doc['row_count'] = None
                 
-                tables[table_name] = {
-                    'comment': table_comment,
-                    'columns': columns,
-                    'constraints': constraints,
-                    'statistics': stats
-                }
+                # Get additional details
+                table_doc['indexes'] = self.get_table_indexes(schema_name, table_name)
+                table_doc['constraints'] = self.get_table_constraints(schema_name, table_name)
+                table_doc['triggers'] = self.get_table_triggers(schema_name, table_name)
+                table_doc['permissions'] = self.get_table_permissions(schema_name, table_name)
+                table_doc['row_level_security'] = self.get_row_level_security(schema_name, table_name)
+                table_doc['comments'] = self.get_table_comments(schema_name, table_name)
                 
-        finally:
-            cursor.close()
-        
-        return tables
-    
-    def _document_views(self, schema_name: str) -> Dict[str, Any]:
-        """Document views in a schema."""
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        views = {}
-        
-        try:
-            cursor.execute("""
+                schema_doc['tables'][table_name] = table_doc
+                schema_doc['statistics']['table_count'] += 1
+                if table_doc['row_count']:
+                    schema_doc['statistics']['total_rows'] += table_doc['row_count']
+            
+            # Get views
+            views_query = """
                 SELECT 
-                    table_name,
+                    table_name as view_name,
                     view_definition
                 FROM information_schema.views
                 WHERE table_schema = %s
                 ORDER BY table_name
-            """, (schema_name,))
+            """
             
-            for row in cursor.fetchall():
-                views[row['table_name']] = {
-                    'definition': row['view_definition']
+            cursor.execute(views_query, (schema_name,))
+            for view in cursor.fetchall():
+                schema_doc['views'][view['view_name']] = {
+                    'definition': view['view_definition']
                 }
-                
-        finally:
-            cursor.close()
-        
-        return views
-    
-    def _document_custom_types(self, schema_name: str) -> Dict[str, Any]:
-        """Document custom types in a schema."""
-        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        custom_types = {}
-        
-        try:
-            # Get custom enum types
-            cursor.execute("""
+                schema_doc['statistics']['view_count'] += 1
+            
+            # Get functions
+            functions_query = """
                 SELECT 
-                    t.typname as type_name,
-                    array_agg(e.enumlabel ORDER BY e.enumsortorder) as enum_values
-                FROM pg_type t
-                JOIN pg_enum e ON t.oid = e.enumtypid
-                JOIN pg_namespace n ON n.oid = t.typnamespace
+                    p.proname as function_name,
+                    pg_get_function_arguments(p.oid) as arguments,
+                    pg_get_function_result(p.oid) as return_type,
+                    l.lanname as language,
+                    d.description
+                FROM pg_proc p
+                JOIN pg_namespace n ON p.pronamespace = n.oid
+                JOIN pg_language l ON p.prolang = l.oid
+                LEFT JOIN pg_description d ON d.objoid = p.oid
                 WHERE n.nspname = %s
-                GROUP BY t.typname
-                ORDER BY t.typname
-            """, (schema_name,))
+                AND p.prokind = 'f'
+                ORDER BY p.proname
+            """
             
-            for row in cursor.fetchall():
-                type_name = row['type_name']
-                enum_values = row['enum_values']
-                
-                custom_types[type_name] = {
-                    'type': 'enum',
-                    'values': enum_values
-                }
-                
-        finally:
-            cursor.close()
-        
-        return custom_types
-    
-    def _document_relationships(self, schema_name: str) -> List[Dict[str, Any]]:
-        """Document foreign key relationships in a schema."""
-        cursor = self.conn.cursor()
-        relationships = []
-        
-        try:
-            cursor.execute("""
-                SELECT 
-                    tc.table_schema as from_schema,
-                    tc.table_name as from_table,
-                    kcu.column_name as from_column,
-                    ccu.table_schema as to_schema,
-                    ccu.table_name as to_table,
-                    ccu.column_name as to_column,
-                    tc.constraint_name,
-                    rc.update_rule,
-                    rc.delete_rule
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu 
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu 
-                    ON ccu.constraint_name = tc.constraint_name
-                JOIN information_schema.referential_constraints rc
-                    ON rc.constraint_name = tc.constraint_name
-                WHERE tc.table_schema = %s
-                AND tc.constraint_type = 'FOREIGN KEY'
-                ORDER BY tc.table_name, tc.constraint_name
-            """, (schema_name,))
-            
-            for row in cursor.fetchall():
-                relationships.append({
-                    'from_schema': row[0],
-                    'from_table': row[1],
-                    'from_column': row[2],
-                    'to_schema': row[3],
-                    'to_table': row[4],
-                    'to_column': row[5],
-                    'constraint_name': row[6],
-                    'update_rule': row[7],
-                    'delete_rule': row[8],
-                    'is_cross_schema': row[0] != row[3]
+            cursor.execute(functions_query, (schema_name,))
+            for func in cursor.fetchall():
+                schema_doc['functions'].append({
+                    'name': func['function_name'],
+                    'arguments': func['arguments'],
+                    'return_type': func['return_type'],
+                    'language': func['language'],
+                    'description': func['description']
                 })
-                
-        finally:
-            cursor.close()
-        
-        return relationships
-    
-    def _document_indexes(self, schema_name: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Document indexes in a schema."""
-        cursor = self.conn.cursor()
-        indexes_by_table = {}
-        
-        try:
-            cursor.execute("""
-                SELECT 
-                    indexname,
-                    tablename,
-                    indexdef
-                FROM pg_indexes
+                schema_doc['statistics']['function_count'] += 1
+            
+            # Get total schema size
+            size_query = """
+                SELECT pg_size_pretty(SUM(pg_total_relation_size(quote_ident(schemaname)||'.'||quote_ident(tablename)))::bigint) as size
+                FROM pg_tables
                 WHERE schemaname = %s
-                ORDER BY tablename, indexname
-            """, (schema_name,))
+            """
             
-            for row in cursor.fetchall():
-                index_name, table_name, index_def = row
-                
-                if table_name not in indexes_by_table:
-                    indexes_by_table[table_name] = []
-                
-                is_unique = 'UNIQUE' in index_def.upper()
-                is_primary = index_name.endswith('_pkey')
-                
-                indexes_by_table[table_name].append({
-                    'name': index_name,
-                    'definition': index_def,
-                    'is_unique': is_unique,
-                    'is_primary': is_primary
-                })
-                
-        finally:
-            cursor.close()
-        
-        return indexes_by_table
-    
-    def _document_triggers(self, schema_name: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Document triggers in a schema."""
-        cursor = self.conn.cursor()
-        triggers_by_table = {}
-        
-        try:
-            cursor.execute("""
-                SELECT 
-                    trigger_name,
-                    event_object_table,
-                    event_manipulation,
-                    action_timing,
-                    action_orientation,
-                    action_statement
-                FROM information_schema.triggers
-                WHERE trigger_schema = %s
-                ORDER BY event_object_table, trigger_name
-            """, (schema_name,))
+            cursor.execute(size_query, (schema_name,))
+            result = cursor.fetchone()
+            if result and result['size']:
+                schema_doc['statistics']['total_size'] = result['size']
             
-            for row in cursor.fetchall():
-                trigger_name, table_name, event, timing, orientation, action = row
-                
-                if table_name not in triggers_by_table:
-                    triggers_by_table[table_name] = []
-                    
-                triggers_by_table[table_name].append({
-                    'name': trigger_name,
-                    'event': event,
-                    'timing': timing,
-                    'orientation': orientation,
-                    'action': action
-                })
-                
-        except Exception as e:
-            logger.debug(f"Could not document triggers for {schema_name}: {e}")
+            return schema_doc
             
         finally:
             cursor.close()
-        
-        return triggers_by_table
     
-    def _document_functions(self, schema_name: str) -> List[Dict[str, Any]]:
-        """Document functions in a schema."""
-        cursor = self.conn.cursor()
-        functions = []
+    def generate_documentation(self):
+        """Generate complete database documentation."""
+        logger.info("Starting comprehensive documentation generation")
         
-        try:
-            try:
-                cursor.execute("""
-                    SELECT 
-                        p.proname as function_name,
-                        pg_get_function_result(p.oid) as return_type,
-                        pg_get_function_arguments(p.oid) as arguments,
-                        l.lanname as language,
-                        obj_description(p.oid, 'pg_proc') as description
-                    FROM pg_proc p
-                    JOIN pg_namespace n ON n.oid = p.pronamespace
-                    JOIN pg_language l ON l.oid = p.prolang
-                    WHERE n.nspname = %s
-                    AND p.prokind IN ('f', 'p')
-                    ORDER BY p.proname
-                """, (schema_name,))
-            except psycopg2.ProgrammingError:
-                self.conn.rollback()
-                cursor = self.conn.cursor()
-                cursor.execute("""
-                    SELECT 
-                        p.proname as function_name,
-                        pg_get_function_result(p.oid) as return_type,
-                        pg_get_function_arguments(p.oid) as arguments,
-                        l.lanname as language,
-                        obj_description(p.oid, 'pg_proc') as description
-                    FROM pg_proc p
-                    JOIN pg_namespace n ON n.oid = p.pronamespace
-                    JOIN pg_language l ON l.oid = p.prolang
-                    WHERE n.nspname = %s
-                    AND NOT p.proisagg
-                    ORDER BY p.proname
-                """, (schema_name,))
-            
-            for row in cursor.fetchall():
-                functions.append({
-                    'name': row[0],
-                    'return_type': row[1],
-                    'arguments': row[2],
-                    'language': row[3],
-                    'description': row[4]
-                })
-                
-        except Exception as e:
-            logger.debug(f"Could not document functions for {schema_name}: {e}")
-            if self.conn:
-                self.conn.rollback()
-            
-        finally:
-            cursor.close()
-        
-        return functions
-    
-    def _generate_schema_statistics(self, schema_doc: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate statistics for a schema."""
-        stats = {
-            'total_tables': len(schema_doc['tables']),
-            'total_columns': sum(len(t['columns']) for t in schema_doc['tables'].values()),
-            'total_views': len(schema_doc['views']),
-            'total_relationships': len(schema_doc['relationships']),
-            'total_indexes': sum(len(idxs) for idxs in schema_doc['indexes'].values()),
-            'total_triggers': sum(len(trgs) for trgs in schema_doc['triggers'].values()),
-            'total_functions': len(schema_doc['functions']),
-            'total_custom_types': len(schema_doc['custom_types']),
-            'total_rows': 0,
-            'tables_by_size': []
+        # Metadata
+        self.documentation['metadata'] = {
+            'generated_at': datetime.now().isoformat(),
+            'database': self.connection_params['database'],
+            'host': self.connection_params['host'],
+            'port': self.connection_params['port'],
+            'generator_version': '5.0.1'
         }
         
-        # Calculate total rows and sort tables by size
-        for table_name, table_info in schema_doc['tables'].items():
-            row_count = table_info.get('statistics', {}).get('row_count', 0)
-            stats['total_rows'] += row_count
-            
-            stats['tables_by_size'].append({
-                'table': table_name,
-                'rows': row_count,
-                'size': table_info.get('statistics', {}).get('total_size', 'Unknown')
-            })
+        # Get PostgreSQL version
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT version()")
+        self.documentation['metadata']['postgresql_version'] = cursor.fetchone()[0]
+        cursor.close()
         
-        stats['tables_by_size'].sort(key=lambda x: x['rows'], reverse=True)
+        # Get extensions
+        self.documentation['extensions'] = self.get_extensions()
         
-        return stats
-    
-    def _analyze_cross_schema_relationships(self):
-        """Analyze relationships that cross schema boundaries."""
-        cross_schema_rels = []
+        # Security documentation
+        if self.include_security:
+            logger.info("Documenting security (users, roles, permissions)")
+            self.documentation['security']['users'] = self.get_database_users()
+            self.documentation['security']['roles'] = self.get_database_roles()
         
-        for schema_name, schema_doc in self.documentation['schemas'].items():
-            for rel in schema_doc['relationships']:
-                if rel.get('is_cross_schema'):
-                    cross_schema_rels.append({
-                        'from': f"{rel['from_schema']}.{rel['from_table']}.{rel['from_column']}",
-                        'to': f"{rel['to_schema']}.{rel['to_table']}.{rel['to_column']}",
-                        'constraint': rel['constraint_name']
-                    })
+        # Discover and document schemas
+        schemas = self.discover_schemas()
         
-        self.documentation['cross_schema_analysis']['cross_schema_relationships'] = cross_schema_rels
-        self.documentation['cross_schema_analysis']['total_cross_schema_relationships'] = len(cross_schema_rels)
-        
-        # Calculate dependencies between schemas
-        schema_deps = {}
-        for rel in cross_schema_rels:
-            from_schema = rel['from'].split('.')[0]
-            to_schema = rel['to'].split('.')[0]
-            
-            if from_schema not in schema_deps:
-                schema_deps[from_schema] = set()
-            schema_deps[from_schema].add(to_schema)
-        
-        # Convert sets to lists for JSON serialization
-        self.documentation['cross_schema_analysis']['schema_dependencies'] = {
-            k: list(v) for k, v in schema_deps.items()
-        }
-    
-    def _generate_database_overview(self):
-        """Generate overall database overview."""
+        # Database overview
         overview = {
             'schemas': {},
             'totals': {
                 'tables': 0,
-                'columns': 0,
                 'views': 0,
-                'relationships': 0,
-                'indexes': 0,
-                'triggers': 0,
                 'functions': 0,
-                'custom_types': 0,
-                'rows': 0
+                'rows': 0,
+                'columns': 0,
+                'relationships': 0
             }
         }
         
-        for schema_name, schema_doc in self.documentation['schemas'].items():
-            stats = schema_doc['statistics']
+        for schema_name in schemas:
+            schema_doc = self.document_schema(schema_name)
+            self.documentation['schemas'][schema_name] = schema_doc
             
+            # Update overview
             overview['schemas'][schema_name] = {
-                'description': schema_doc['description'],
-                'tables': stats['total_tables'],
-                'rows': stats['total_rows'],
-                'views': stats['total_views'],
-                'functions': stats['total_functions']
+                'tables': schema_doc['statistics']['table_count'],
+                'views': schema_doc['statistics']['view_count'],
+                'functions': schema_doc['statistics']['function_count'],
+                'rows': schema_doc['statistics']['total_rows'],
+                'size': schema_doc['statistics']['total_size']
             }
             
-            # Add to totals
-            overview['totals']['tables'] += stats['total_tables']
-            overview['totals']['columns'] += stats['total_columns']
-            overview['totals']['views'] += stats['total_views']
-            overview['totals']['relationships'] += stats['total_relationships']
-            overview['totals']['indexes'] += stats['total_indexes']
-            overview['totals']['triggers'] += stats['total_triggers']
-            overview['totals']['functions'] += stats['total_functions']
-            overview['totals']['custom_types'] += stats['total_custom_types']
-            overview['totals']['rows'] += stats['total_rows']
+            overview['totals']['tables'] += schema_doc['statistics']['table_count']
+            overview['totals']['views'] += schema_doc['statistics']['view_count']
+            overview['totals']['functions'] += schema_doc['statistics']['function_count']
+            overview['totals']['rows'] += schema_doc['statistics']['total_rows']
+            
+            # Count columns and relationships
+            for table_doc in schema_doc['tables'].values():
+                overview['totals']['columns'] += len(table_doc['columns'])
+                overview['totals']['relationships'] += len(table_doc['constraints'].get('foreign_key', []))
         
         self.documentation['database_overview'] = overview
+        
+        logger.info("Documentation generation complete")
     
-    def _format_data_type(self, data_type: str, char_length: Optional[int],
-                         numeric_precision: Optional[int], numeric_scale: Optional[int]) -> str:
-        """Format data type with parameters."""
-        if data_type == 'character varying' and char_length:
-            return f"varchar({char_length})"
-        elif data_type == 'character' and char_length:
-            return f"char({char_length})"
-        elif data_type == 'numeric' and numeric_precision:
-            if numeric_scale and numeric_scale > 0:
-                return f"numeric({numeric_precision},{numeric_scale})"
-            return f"numeric({numeric_precision})"
-        elif data_type == 'USER-DEFINED':
-            return 'enum'
-        return data_type
-    
-    def save_documentation(self, output_format: str = 'markdown', output_file: str = None):
-        """Save comprehensive documentation to file."""
-        if not output_file:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            db_name = self.connection_params['database']
-            output_file = f"ubec_comprehensive_doc_{db_name}_{timestamp}"
-            
-        if output_format == 'markdown':
-            self._save_as_markdown(f"{output_file}.md")
-        elif output_format == 'json':
-            self._save_as_json(f"{output_file}.json")
+    def save_documentation(self, format: str = 'markdown', output_filename: Optional[str] = None):
+        """Save documentation in specified format."""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Use .md extension for markdown files
+        file_ext = 'md' if format == 'markdown' else format
+        
+        if output_filename:
+            filename = f"{output_filename}.{file_ext}"
         else:
-            raise ValueError(f"Unsupported format: {output_format}")
+            filename = f"ubec_comprehensive_docs_{timestamp}.{file_ext}"
+        
+        if format == 'markdown':
+            self._save_as_markdown(filename)
+        elif format == 'json':
+            self._save_as_json(filename)
+        else:
+            raise ValueError(f"Unsupported format: {format}")
     
     def _save_as_markdown(self, filename: str):
-        """Save as comprehensive Markdown file with robust error handling."""
-        logger.info(f"Starting markdown generation: {filename}")
-        
+        """Save as markdown file with comprehensive formatting."""
         try:
             with open(filename, 'w', encoding='utf-8') as f:
-                meta = self.documentation.get('metadata', {})
-                overview = self.documentation.get('database_overview', {})
-                
                 # Header
-                f.write(f"# UBEC Protocol Suite - Comprehensive Database Documentation\n\n")
-                f.write(f"## 🜁 🜄 🜃 🜂 Complete Multi-Schema Analysis\n\n")
-                f.write(f"**Database:** `{meta['database_name']}`  \n")
-                f.write(f"**Host:** `{meta['database_host']}`  \n")
-                f.write(f"**Generated:** {meta['generated_at']}  \n")
-                f.write(f"**PostgreSQL Version:** {meta['database_version']}  \n")
-                f.write(f"**Documentation Version:** {meta['documentation_version']}  \n")
-                f.write(f"**Database Size:** {meta['database_size']['human_readable']}  \n\n")
+                f.write("# UBEC Protocol Suite - Comprehensive Database Documentation\n\n")
+                f.write("*This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*\n\n")
                 
-                # Database Overview
-                f.write("## 📊 Database Overview\n\n")
-                f.write(f"**Total Schemas:** {meta.get('total_schemas', 0)}  \n")
-                
-                totals = overview.get('totals', {})
-                f.write(f"**Total Tables:** {totals.get('tables', 0)}  \n")
-                f.write(f"**Total Rows:** {totals.get('rows', 0):,}  \n")
-                f.write(f"**Total Columns:** {totals.get('columns', 0):,}  \n")
-                f.write(f"**Total Views:** {totals.get('views', 0)}  \n")
-                f.write(f"**Total Functions:** {totals.get('functions', 0)}  \n")
-                f.write(f"**Total Relationships:** {totals.get('relationships', 0)}  \n")
-                f.write(f"**Total Indexes:** {totals.get('indexes', 0)}  \n\n")
-                
-                # Schema Summary
-                schemas_info = overview.get('schemas', {})
-                if schemas_info:
-                    f.write("### Schemas in Database\n\n")
-                    f.write("| Schema | Description | Tables | Rows | Views | Functions |\n")
-                    f.write("|--------|-------------|--------|------|-------|------------|\n")
-                    
-                    for schema_name, schema_info in schemas_info.items():
-                        desc = schema_info.get('description', 'No description')[:40]
-                        f.write(f"| {schema_name} | {desc}... | ")
-                        f.write(f"{schema_info.get('tables', 0)} | {schema_info.get('rows', 0):,} | ")
-                        f.write(f"{schema_info.get('views', 0)} | {schema_info.get('functions', 0)} |\n")
-                    f.write("\n")
-                
-                # Cross-Schema Analysis
-                cross = self.documentation.get('cross_schema_analysis', {})
-                cross_rels = cross.get('cross_schema_relationships', [])
-                if cross_rels:
-                    f.write("### Cross-Schema Relationships\n\n")
-                    f.write(f"**Total Cross-Schema Foreign Keys:** {cross.get('total_cross_schema_relationships', 0)}\n\n")
-                    
-                    schema_deps = cross.get('schema_dependencies', {})
-                    if schema_deps:
-                        f.write("**Schema Dependencies:**\n\n")
-                        for from_schema, to_schemas in schema_deps.items():
-                            f.write(f"- `{from_schema}` → {', '.join(f'`{s}`' for s in to_schemas)}\n")
-                        f.write("\n")
-                
+                metadata = self.documentation['metadata']
+                f.write(f"**Generated:** {metadata['generated_at']}\n\n")
+                f.write(f"**Database:** {metadata['database']}\n\n")
+                f.write(f"**PostgreSQL Version:** {metadata['postgresql_version']}\n\n")
                 f.write("---\n\n")
                 
-                # Detailed Schema Documentation
-                for schema_name in sorted(self.documentation['schemas'].keys()):
+                # Table of Contents
+                f.write("## Table of Contents\n\n")
+                f.write("1. [Database Overview](#database-overview)\n")
+                f.write("2. [Extensions](#extensions)\n")
+                if self.include_security:
+                    f.write("3. [Security](#security)\n")
+                    f.write("   - [Database Users](#database-users)\n")
+                    f.write("   - [Database Roles](#database-roles)\n")
+                f.write("4. [Schemas](#schemas)\n")
+                for schema_name in self.documentation['schemas'].keys():
+                    f.write(f"   - [{schema_name}](#{schema_name.replace('_', '-')})\n")
+                f.write("\n---\n\n")
+                
+                # Database Overview
+                f.write("## Database Overview\n\n")
+                overview = self.documentation['database_overview']
+                
+                f.write("### Summary Statistics\n\n")
+                f.write(f"- **Total Schemas:** {len(overview['schemas'])}\n")
+                f.write(f"- **Total Tables:** {overview['totals']['tables']}\n")
+                f.write(f"- **Total Views:** {overview['totals']['views']}\n")
+                f.write(f"- **Total Functions:** {overview['totals']['functions']}\n")
+                f.write(f"- **Total Rows:** {overview['totals']['rows']:,}\n")
+                f.write(f"- **Total Columns:** {overview['totals']['columns']:,}\n")
+                f.write(f"- **Total Foreign Keys:** {overview['totals']['relationships']}\n\n")
+                
+                f.write("### Schema Summary\n\n")
+                f.write("| Schema | Tables | Views | Functions | Rows | Size |\n")
+                f.write("|--------|--------|-------|-----------|------|------|\n")
+                for schema_name, schema_info in sorted(overview['schemas'].items()):
+                    f.write(f"| {schema_name} | {schema_info['tables']} | {schema_info['views']} | "
+                           f"{schema_info['functions']} | {schema_info['rows']:,} | {schema_info['size']} |\n")
+                f.write("\n---\n\n")
+                
+                # Extensions
+                f.write("## Extensions\n\n")
+                extensions = self.documentation['extensions']
+                if extensions:
+                    f.write("| Extension | Version | Schema | Description |\n")
+                    f.write("|-----------|---------|--------|-------------|\n")
+                    for name, ext in sorted(extensions.items()):
+                        desc = ext['description'] or 'N/A'
+                        f.write(f"| {name} | {ext['version']} | {ext['schema']} | {desc} |\n")
+                else:
+                    f.write("No extensions installed.\n")
+                f.write("\n---\n\n")
+                
+                # Security section
+                if self.include_security:
+                    f.write("## Security\n\n")
+                    
+                    # Users
+                    f.write("### Database Users\n\n")
+                    users = self.documentation['security']['users']
+                    if users:
+                        for username, user_info in sorted(users.items()):
+                            f.write(f"#### {username}\n\n")
+                            f.write(f"- **User ID:** {user_info['user_id']}\n")
+                            f.write(f"- **Superuser:** {'Yes' if user_info['is_superuser'] else 'No'}\n")
+                            f.write(f"- **Can Create DB:** {'Yes' if user_info['can_create_db'] else 'No'}\n")
+                            f.write(f"- **Can Replicate:** {'Yes' if user_info['can_replicate'] else 'No'}\n")
+                            f.write(f"- **Bypass RLS:** {'Yes' if user_info['bypass_rls'] else 'No'}\n")
+                            if user_info['valid_until']:
+                                f.write(f"- **Valid Until:** {user_info['valid_until']}\n")
+                            if user_info['member_of']:
+                                f.write(f"- **Member Of:** {', '.join(user_info['member_of'])}\n")
+                            f.write("\n")
+                    else:
+                        f.write("No users found.\n\n")
+                    
+                    # Roles
+                    f.write("### Database Roles\n\n")
+                    roles = self.documentation['security']['roles']
+                    if roles:
+                        for role_name, role_info in sorted(roles.items()):
+                            f.write(f"#### {role_name}\n\n")
+                            f.write(f"- **Can Login:** {'Yes' if role_info['can_login'] else 'No'}\n")
+                            f.write(f"- **Superuser:** {'Yes' if role_info['is_superuser'] else 'No'}\n")
+                            f.write(f"- **Inherit Privileges:** {'Yes' if role_info['inherit_privileges'] else 'No'}\n")
+                            f.write(f"- **Can Create Role:** {'Yes' if role_info['can_create_role'] else 'No'}\n")
+                            f.write(f"- **Can Create DB:** {'Yes' if role_info['can_create_db'] else 'No'}\n")
+                            if role_info['granted_to']:
+                                f.write(f"- **Granted To:** {', '.join(role_info['granted_to'])}\n")
+                            f.write("\n")
+                    else:
+                        f.write("No roles found.\n\n")
+                    
+                    f.write("---\n\n")
+                
+                # Schemas
+                f.write("## Schemas\n\n")
+                
+                for schema_name, schema_doc in self.documentation['schemas'].items():
+                    logger.info(f"Writing schema documentation for: {schema_name}")
+                    
                     try:
-                        logger.info(f"Writing documentation for schema: {schema_name}")
-                        schema_doc = self.documentation['schemas'][schema_name]
+                        f.write(f"## {schema_name}\n\n")
+                        
+                        if schema_doc.get('description'):
+                            f.write(f"*{schema_doc['description']}*\n\n")
+                        
+                        # Schema statistics
                         stats = schema_doc['statistics']
+                        f.write(f"**Tables:** {stats['table_count']} | ")
+                        f.write(f"**Views:** {stats['view_count']} | ")
+                        f.write(f"**Functions:** {stats['function_count']} | ")
+                        f.write(f"**Total Rows:** {stats['total_rows']:,} | ")
+                        f.write(f"**Size:** {stats['total_size']}\n\n")
                         
-                        f.write(f"## Schema: `{schema_name}`\n\n")
-                        f.write(f"**Description:** {schema_doc['description']}\n\n")
+                        # Schema permissions
+                        if schema_doc.get('permissions'):
+                            f.write("### Schema Permissions\n\n")
+                            for grantee, privs in sorted(schema_doc['permissions'].items()):
+                                f.write(f"- **{grantee}:** {', '.join(privs)}\n")
+                            f.write("\n")
                         
-                        # Schema Statistics
-                        f.write("### Schema Statistics\n\n")
-                        f.write(f"- **Tables:** {stats['total_tables']}\n")
-                        f.write(f"- **Total Rows:** {stats['total_rows']:,}\n")
-                        f.write(f"- **Columns:** {stats['total_columns']}\n")
-                        f.write(f"- **Views:** {stats['total_views']}\n")
-                        f.write(f"- **Relationships:** {stats['total_relationships']}\n")
-                        f.write(f"- **Indexes:** {stats['total_indexes']}\n")
-                        f.write(f"- **Triggers:** {stats['total_triggers']}\n")
-                        f.write(f"- **Functions:** {stats['total_functions']}\n")
-                        f.write(f"- **Custom Types:** {stats['total_custom_types']}\n\n")
-                        
-                        # Custom Types
-                        if schema_doc['custom_types']:
-                            try:
-                                logger.info(f"  Writing custom types for {schema_name}")
-                                f.write("### Custom Types\n\n")
-                                for type_name, type_info in schema_doc['custom_types'].items():
-                                    f.write(f"#### {type_name}\n\n")
-                                    f.write(f"**Values:** {', '.join(f'`{v}`' for v in type_info['values'])}\n\n")
-                            except Exception as e:
-                                logger.error(f"Error writing custom types for {schema_name}: {e}")
-                                f.write(f"\n*Error documenting custom types: {e}*\n\n")
+                        # Sequences
+                        if schema_doc.get('sequences'):
+                            f.write("### Sequences\n\n")
+                            for seq in schema_doc['sequences']:
+                                f.write(f"#### {seq['name']}\n\n")
+                                f.write(f"- **Start:** {seq['start']}\n")
+                                f.write(f"- **Increment:** {seq['increment']}\n")
+                                f.write(f"- **Min:** {seq['min']}, **Max:** {seq['max']}\n")
+                                f.write(f"- **Cache:** {seq['cache']}\n")
+                                if seq.get('owned_by'):
+                                    f.write(f"- **Owned By:** {seq['owned_by']}\n")
+                                f.write("\n")
                         
                         # Tables
                         if schema_doc['tables']:
@@ -981,59 +1242,123 @@ class UBECComprehensiveDocumenter:
                                 logger.info(f"  Writing {len(schema_doc['tables'])} tables for {schema_name}")
                                 f.write("### Tables\n\n")
                                 
-                                # Table summary
-                                f.write("| Table | Rows | Columns | Size |\n")
-                                f.write("|-------|------|---------|------|\n")
-                                for table_info in stats['tables_by_size'][:20]:  # Top 20
-                                    table_name = table_info['table']
-                                    if table_name in schema_doc['tables']:
-                                        table = schema_doc['tables'][table_name]
-                                        f.write(f"| {table_name} | {table_info['rows']:,} | ")
-                                        f.write(f"{len(table['columns'])} | {table_info['size']} |\n")
-                                f.write("\n")
-                                
-                                # Detailed table documentation
                                 for table_name in sorted(schema_doc['tables'].keys()):
                                     try:
-                                        table = schema_doc['tables'][table_name]
+                                        table_doc = schema_doc['tables'][table_name]
+                                        f.write(f"#### {table_name}\n\n")
                                         
-                                        f.write(f"#### {schema_name}.{table_name}\n\n")
+                                        # Table comment
+                                        if table_doc['comments'].get('table'):
+                                            f.write(f"*{table_doc['comments']['table']}*\n\n")
                                         
-                                        if table.get('comment'):
-                                            f.write(f"*{table['comment']}*\n\n")
+                                        # Table stats
+                                        row_count = table_doc['row_count']
+                                        row_str = f"{row_count:,}" if row_count is not None else "N/A"
+                                        f.write(f"**Rows:** {row_str} | **Size:** {table_doc['size']}\n\n")
                                         
                                         # Columns
-                                        f.write("| Column | Type | Nullable | Default | Description |\n")
-                                        f.write("|--------|------|----------|---------|-------------|\n")
-                                        
-                                        for col in table['columns']:
-                                            nullable = "✓" if col['nullable'] else "✗"
-                                            default = col['default'] or "-"
-                                            if len(str(default)) > 30:
-                                                default = str(default)[:27] + "..."
-                                            comment = col['comment'] or "-"
-                                            if len(str(comment)) > 40:
-                                                comment = str(comment)[:37] + "..."
+                                        f.write("**Columns:**\n\n")
+                                        f.write("| Column | Type | Nullable | Default |\n")
+                                        f.write("|--------|------|----------|----------|\n")
+                                        for col in table_doc['columns']:
+                                            col_type = col['type']
+                                            if col.get('max_length'):
+                                                col_type += f"({col['max_length']})"
+                                            elif col.get('precision'):
+                                                if col.get('scale'):
+                                                    col_type += f"({col['precision']},{col['scale']})"
+                                                else:
+                                                    col_type += f"({col['precision']})"
                                             
-                                            col_type = col['data_type']
-                                            if col['is_generated']:
-                                                col_type += " (gen)"
-                                            if col['is_identity']:
-                                                col_type += " (id)"
-                                                
-                                            f.write(f"| {col['name']} | {col_type} | {nullable} | {default} | {comment} |\n")
-                                        
+                                            nullable = "✓" if col['nullable'] else "✗"
+                                            default = col['default'] or ""
+                                            
+                                            # Check for column comment
+                                            comment = table_doc['comments']['columns'].get(col['name'])
+                                            col_name = col['name']
+                                            if comment:
+                                                col_name += f" *({comment})*"
+                                            
+                                            f.write(f"| {col_name} | {col_type} | {nullable} | {default} |\n")
                                         f.write("\n")
                                         
                                         # Constraints
-                                        if table['constraints']:
-                                            f.write("**Constraints:**\n")
-                                            for con in table['constraints']:
-                                                f.write(f"- `{con['name']}` ({con['type']})\n")
+                                        constraints = table_doc['constraints']
+                                        
+                                        if constraints.get('primary_key'):
+                                            f.write("**Primary Key:**\n")
+                                            for pk in constraints['primary_key']:
+                                                f.write(f"- {pk['name']}: ({', '.join(pk['columns'])})\n")
                                             f.write("\n")
-                                            
+                                        
+                                        if constraints.get('foreign_key'):
+                                            f.write("**Foreign Keys:**\n")
+                                            for fk in constraints['foreign_key']:
+                                                f.write(f"- {fk['name']}: ({', '.join(fk['columns'])}) → "
+                                                       f"{fk['references']}({', '.join(fk['foreign_columns'])})\n")
+                                                f.write(f"  - ON UPDATE: {fk['on_update']}, ON DELETE: {fk['on_delete']}\n")
+                                            f.write("\n")
+                                        
+                                        if constraints.get('unique'):
+                                            f.write("**Unique Constraints:**\n")
+                                            for uc in constraints['unique']:
+                                                f.write(f"- {uc['name']}: ({', '.join(uc['columns'])})\n")
+                                            f.write("\n")
+                                        
+                                        if constraints.get('check'):
+                                            f.write("**Check Constraints:**\n")
+                                            for cc in constraints['check']:
+                                                f.write(f"- {cc['name']}: {cc['definition']}\n")
+                                            f.write("\n")
+                                        
+                                        # Indexes
+                                        if table_doc['indexes']:
+                                            f.write("**Indexes:**\n")
+                                            for idx in table_doc['indexes']:
+                                                idx_type = []
+                                                if idx['primary']:
+                                                    idx_type.append('PRIMARY')
+                                                if idx['unique']:
+                                                    idx_type.append('UNIQUE')
+                                                idx_type.append(idx['type'].upper())
+                                                
+                                                type_str = ' '.join(idx_type)
+                                                f.write(f"- {type_str}: ({', '.join(idx['columns'])}) - {idx['size']}\n")
+                                            f.write("\n")
+                                        
+                                        # Triggers
+                                        if table_doc['triggers']:
+                                            f.write("**Triggers:**\n")
+                                            for trg in table_doc['triggers']:
+                                                f.write(f"- **{trg['name']}:** {trg['timing']} {trg['events']} {trg['level']}\n")
+                                                f.write(f"  - Calls: {trg['function']}\n")
+                                            f.write("\n")
+                                        
+                                        # Row Level Security
+                                        rls = table_doc['row_level_security']
+                                        if rls['enabled']:
+                                            f.write("**Row Level Security:** Enabled\n\n")
+                                            for policy in rls['policies']:
+                                                f.write(f"- **Policy:** {policy['name']}\n")
+                                                f.write(f"  - **Command:** {policy['command']}\n")
+                                                f.write(f"  - **Roles:** {', '.join(policy['roles']) if policy['roles'] else 'ALL'}\n")
+                                                if policy['using']:
+                                                    f.write(f"  - **USING:** `{policy['using']}`\n")
+                                                if policy['check']:
+                                                    f.write(f"  - **CHECK:** `{policy['check']}`\n")
+                                            f.write("\n")
+                                        
+                                        # Table permissions
+                                        if table_doc['permissions']:
+                                            f.write("**Permissions:**\n")
+                                            for grantee, privs in sorted(table_doc['permissions'].items()):
+                                                f.write(f"- **{grantee}:** {', '.join(privs)}\n")
+                                            f.write("\n")
+                                        
+                                        f.write("---\n\n")
+                                        
                                     except Exception as e:
-                                        logger.error(f"Error writing table {schema_name}.{table_name}: {e}")
+                                        logger.error(f"Error writing table {table_name}: {e}")
                                         f.write(f"\n*Error documenting table {table_name}: {e}*\n\n")
                                         
                             except Exception as e:
@@ -1050,11 +1375,10 @@ class UBECComprehensiveDocumenter:
                                         f.write(f"#### {view_name}\n\n")
                                         f.write("```sql\n")
                                         view_def = schema_doc['views'][view_name]['definition']
-                                        # Sanitize view definition to avoid encoding issues
                                         if view_def:
                                             safe_def = view_def.encode('utf-8', errors='replace').decode('utf-8')
-                                            f.write(safe_def[:500])
-                                            if len(safe_def) > 500:
+                                            f.write(safe_def[:1000])
+                                            if len(safe_def) > 1000:
                                                 f.write("\n...\n")
                                         f.write("\n```\n\n")
                                     except Exception as e:
@@ -1113,24 +1437,27 @@ class UBECComprehensiveDocumenter:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Generate comprehensive multi-schema UBEC database documentation',
+        description='Generate comprehensive multi-schema UBEC database documentation with security analysis',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Document ALL schemas (auto-discover)
-  python ubec_comprehensive_schema_documenter.py
+  # Document ALL schemas with security
+  python ubec_schema_documenter_enhanced.py
   
   # Document specific schemas
-  python ubec_comprehensive_schema_documenter.py --schemas ubec_main phenomenal
+  python ubec_schema_documenter_enhanced.py --schemas ubec_main phenomenal
   
   # Include system schemas
-  python ubec_comprehensive_schema_documenter.py --include-system
+  python ubec_schema_documenter_enhanced.py --include-system
+  
+  # Skip security documentation
+  python ubec_schema_documenter_enhanced.py --no-security
   
   # Generate JSON format
-  python ubec_comprehensive_schema_documenter.py --format json
+  python ubec_schema_documenter_enhanced.py --format json
   
   # Custom output file
-  python ubec_comprehensive_schema_documenter.py --output complete_ubec_docs
+  python ubec_schema_documenter_enhanced.py --output complete_ubec_docs
         """
     )
     
@@ -1156,6 +1483,8 @@ Examples:
                        help='Specific schemas to document (default: auto-discover all)')
     parser.add_argument('--include-system', action='store_true',
                        help='Include system schemas (pg_*, information_schema)')
+    parser.add_argument('--no-security', action='store_true',
+                       help='Skip security documentation (users, roles, permissions)')
     parser.add_argument('--format', choices=['markdown', 'json'], default='markdown',
                        help='Output format')
     parser.add_argument('--output', help='Output filename (without extension)')
@@ -1177,7 +1506,7 @@ Examples:
     if args.password:
         conn_params['password'] = args.password
     
-    print(f"\n🜁 🜄 🜃 🜂 UBEC Comprehensive Multi-Schema Documentation Generator")
+    print(f"\n🜁 🜄 🜃 🜂 UBEC Comprehensive Multi-Schema Documentation Generator v5.0.1")
     print(f"=" * 70)
     print(f"Database: {conn_params['database']}@{conn_params['host']}:{conn_params['port']}")
     print(f"User: {conn_params['user']}")
@@ -1185,12 +1514,14 @@ Examples:
         print(f"Schemas: {', '.join(args.schemas)}")
     else:
         print(f"Schemas: Auto-discover all")
+    print(f"Security: {'Disabled' if args.no_security else 'Enabled'}")
     print(f"=" * 70 + "\n")
     
     documenter = UBECComprehensiveDocumenter(
         conn_params, 
         schemas=args.schemas,
-        exclude_system_schemas=not args.include_system
+        exclude_system_schemas=not args.include_system,
+        include_security=not args.no_security
     )
     
     try:
@@ -1213,6 +1544,12 @@ Examples:
         print(f"📋 Schemas Documented:")
         for schema_name, schema_info in overview['schemas'].items():
             print(f"   • {schema_name}: {schema_info['tables']} tables, {schema_info['rows']:,} rows")
+        
+        if documenter.include_security:
+            security = documenter.documentation['security']
+            print(f"\n🔒 Security Summary:")
+            print(f"   Users: {len(security['users'])}")
+            print(f"   Roles: {len(security['roles'])}")
         
         print(f"\n✅ Comprehensive documentation complete!\n")
         return 0

@@ -442,7 +442,7 @@ class HolonicVisualizer:
                 categories[cat] = categories.get(cat, 0) + 1
             
             # Calculate summary statistics
-            scores = [a['composite_score'] for a in accounts if a['composite_score'] is not None]
+            scores = [float(a['composite_score']) for a in accounts if a['composite_score'] is not None]
             
             if scores:
                 statistics = {
@@ -476,7 +476,7 @@ class HolonicVisualizer:
             
             dimension_stats = {}
             for dim in dimensions:
-                dim_scores = [a[dim] for a in accounts if a.get(dim) is not None]
+                dim_scores = [float(a[dim]) for a in accounts if a.get(dim) is not None]
                 if dim_scores:
                     dimension_stats[dim] = {
                         'mean': float(sum(dim_scores) / len(dim_scores)),
