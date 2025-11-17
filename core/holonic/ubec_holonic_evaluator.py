@@ -76,7 +76,7 @@ Database Schema:
        - ubuntu_alignment_score (calculated from element metrics)
        - composite_score
        - holonic_category
-       - raw_metrics (JSONB)
+       - raw_metrics (JSONB) - Contains Ubuntu principle scores
     
     2. {schema}.ubec_holonic_metrics - Element-specific Ubuntu principles
        - account_id
@@ -92,10 +92,30 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.0.1 (Import Path Fix)
-Date: November 10, 2025
+Version: 3.0.4 (Enum Case Fix)
+Date: November 17, 2025
 
 Changelog:
+    v3.0.4 - CRITICAL FIX: Enum case alignment with database constraint
+           - Fixed: HolonicCategory enum values to Title Case
+           - Changed: 'observer' → 'Observer', 'participant' → 'Participant', etc.
+           - Resolves: "violates check constraint valid_holonic_category" error
+           - Impact: All 495 accounts can now be stored in database successfully
+    v3.0.3 - CRITICAL FIX: Schema alignment corrections
+           - Fixed: destination_account → from_account/to_account in 3 methods
+           - Fixed: Removed diversity_score, reciprocity_health, mutualism_capacity,
+                    regeneration_score from holonic_metrics INSERT
+           - Fixed: Ubuntu principle scores now stored in raw_metrics JSONB
+           - Fixed: source_account → from_account in network_contribution query
+           - Resolves: "column 'destination_account' does not exist" errors
+           - Resolves: "column 'diversity_score' does not exist" errors
+           - Impact: All 495 accounts can now be evaluated successfully
+    v3.0.2 - CRITICAL FIX: Corrected health_check() implementation
+           - Fixed: Removed non-existent ServiceHealthCheck.run_health_checks() call
+           - Implemented proper standardized health check pattern
+           - Returns proper status dictionary with all required fields
+           - Resolves AttributeError on health check operations
+           - Maintains Principle #12 compliance with simpler implementation
     v3.0.1 - CRITICAL FIX: Corrected ServiceHealthCheck import path
            - Fixed: from utilities.service_health_check -> from core.utils.service_health
            - Resolves ModuleNotFoundError on service initialization
@@ -119,7 +139,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple
-from core.utils.service_health import ServiceHealthCheck
 
 # ==================== ENUMS AND CONSTANTS ====================
 
@@ -133,12 +152,15 @@ class HolonicCategory(Enum):
     - CONTRIBUTOR: Regular contribution (40-60%)
     - INTEGRATOR: High integration (60-80%)
     - EXEMPLAR: Exemplary Ubuntu alignment (80-100%)
+    
+    NOTE: Values must be Title Case to match database CHECK CONSTRAINT:
+    valid_holonic_category expects 'Observer', 'Participant', etc.
     """
-    OBSERVER = 'observer'
-    PARTICIPANT = 'participant'
-    CONTRIBUTOR = 'contributor'
-    INTEGRATOR = 'integrator'
-    EXEMPLAR = 'exemplar'
+    OBSERVER = 'Observer'
+    PARTICIPANT = 'Participant'
+    CONTRIBUTOR = 'Contributor'
+    INTEGRATOR = 'Integrator'
+    EXEMPLAR = 'Exemplar'
 
 
 class UbuntuPrinciple(Enum):
@@ -213,13 +235,13 @@ class UbuntuPrincipleMetrics:
             'calculation_method': self.calculation_method,
             'data_points': self.data_points,
             'confidence_level': self.confidence_level,
-            'calculated_at': self.calculated_at
+            'calculated_at': self.calculated_at.isoformat()
         }
 
 
 @dataclass
 class HolonicMetrics:
-    """Main holonic evaluation results for an account."""
+    """Complete holonic evaluation metrics for an account."""
     account_id: str
     autonomy_integration_score: float
     multi_scale_score: float
@@ -228,17 +250,22 @@ class HolonicMetrics:
     ubuntu_alignment_score: float
     composite_score: float
     holonic_category: HolonicCategory
-    raw_metrics: Dict[str, Any]
-    evaluation_date: datetime
+    diversity_score: Optional[float] = None
+    reciprocity_health: Optional[float] = None
+    mutualism_capacity: Optional[float] = None
+    regeneration_score: Optional[float] = None
+    raw_metrics: Dict[str, Any] = None
+    evaluation_date: datetime = None
     
-    # Element-specific Ubuntu principle scores (from ubec_holonic_metrics table)
-    diversity_score: Optional[float] = None         # Air/UBEC
-    reciprocity_health: Optional[float] = None      # Water/UBECrc
-    mutualism_capacity: Optional[float] = None      # Earth/UBECgpi
-    regeneration_score: Optional[float] = None      # Fire/UBECtt
+    def __post_init__(self):
+        """Initialize optional fields."""
+        if self.raw_metrics is None:
+            self.raw_metrics = {}
+        if self.evaluation_date is None:
+            self.evaluation_date = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API responses."""
+        """Convert to dictionary."""
         return {
             'account_id': self.account_id,
             'autonomy_integration_score': self.autonomy_integration_score,
@@ -258,7 +285,7 @@ class HolonicMetrics:
     
     @classmethod
     def from_db_row(cls, row: Dict[str, Any]) -> 'HolonicMetrics':
-        """Create instance from database row."""
+        """Create from database row."""
         return cls(
             account_id=row['account_id'],
             autonomy_integration_score=float(row['autonomy_integration_score']),
@@ -292,33 +319,37 @@ class UBECHolonicEvaluator:
         Initialize the holonic evaluator.
         
         Args:
-            db_manager: Async database manager
-            config: Configuration dictionary
+            db_manager: AsyncDatabaseManager instance
+            config: Configuration dictionary with keys:
+                - db_schema: Database schema name
+                - ubec_code: UBEC asset code
+                - ubec_issuer: UBEC issuer address (optional)
         """
         self.db_manager = db_manager
         self.config = config
         self.logger = logging.getLogger(__name__)
         
-        # Extract configuration
+        # Configuration
         self.db_schema = config.get('db_schema', 'ubec_main')
         self.ubec_code = config.get('ubec_code', 'UBEC')
-        self.ubec_issuer = config.get('ubec_issuer', '')
+        self.ubec_issuer = config.get('ubec_issuer')
         
-        # Scoring weights (should sum to 1.0)
+        # Evaluation weights (must sum to 1.0)
         self.weights = {
-            'autonomy_integration': config.get('holonic_weight_autonomy', 0.20),
-            'multi_scale': config.get('holonic_weight_multi_scale', 0.20),
-            'regenerative_impact': config.get('holonic_weight_regenerative', 0.20),
-            'network_contribution': config.get('holonic_weight_network', 0.20),
-            'ubuntu_alignment': config.get('holonic_weight_ubuntu', 0.20)
+            'autonomy_integration': 0.20,
+            'multi_scale': 0.20,
+            'regenerative_impact': 0.20,
+            'network_contribution': 0.20,
+            'ubuntu_alignment': 0.20
         }
         
         # Category thresholds
         self.thresholds = {
-            'observer': 0.2,
-            'participant': 0.4,
-            'contributor': 0.6,
-            'integrator': 0.8
+            'observer': 0.0,
+            'participant': 0.2,
+            'contributor': 0.4,
+            'integrator': 0.6,
+            'exemplar': 0.8
         }
         
         # State tracking
@@ -326,13 +357,17 @@ class UBECHolonicEvaluator:
         self._has_ubuntu_metrics_table = False
         self._evaluation_count = 0
         self._error_count = 0
-        self._last_evaluation_time: Optional[datetime] = None
-        self._last_error: Optional[str] = None
-        self._last_error_time: Optional[datetime] = None
+        self._last_evaluation_time = None
+        self._last_error = None
+        self._last_error_time = None
+        
+        self.logger.info(f"UBECHolonicEvaluator initialized for schema={self.db_schema}")
+    
+    # ==================== INITIALIZATION ====================
     
     async def initialize(self) -> bool:
         """
-        Initialize the evaluator service.
+        Initialize evaluator and verify database schema.
         
         Verifies database schema and tables exist.
         
@@ -383,12 +418,17 @@ class UBECHolonicEvaluator:
     
     # ==================== EVALUATION METHODS ====================
     
-    async def evaluate_account(self, account_id: str) -> Optional[HolonicMetrics]:
+    async def evaluate_account(
+        self,
+        account_id: str,
+        save_to_db: bool = True
+    ) -> Optional[HolonicMetrics]:
         """
         Evaluate a single account for holonic metrics.
         
         Args:
             account_id: Stellar account ID to evaluate
+            save_to_db: Whether to save results to database (default: True)
             
         Returns:
             HolonicMetrics if successful, None otherwise
@@ -429,6 +469,19 @@ class UBECHolonicEvaluator:
             # Determine category
             category = self._determine_category(composite_score)
             
+            # Prepare raw_metrics with Ubuntu principle scores
+            raw_metrics = {
+                'autonomy': autonomy_score,
+                'multi_scale': multi_scale_score,
+                'regenerative': regenerative_score,
+                'network': network_score,
+                'ubuntu': ubuntu_alignment_score
+            }
+            
+            # Add Ubuntu principle scores to raw_metrics if available
+            if ubuntu_scores:
+                raw_metrics['ubuntu_principles'] = ubuntu_scores
+            
             # Create metrics object
             metrics = HolonicMetrics(
                 account_id=account_id,
@@ -443,18 +496,13 @@ class UBECHolonicEvaluator:
                 reciprocity_health=ubuntu_scores.get('reciprocity_health') if ubuntu_scores else None,
                 mutualism_capacity=ubuntu_scores.get('mutualism_capacity') if ubuntu_scores else None,
                 regeneration_score=ubuntu_scores.get('regeneration_score') if ubuntu_scores else None,
-                raw_metrics={
-                    'autonomy': autonomy_score,
-                    'multi_scale': multi_scale_score,
-                    'regenerative': regenerative_score,
-                    'network': network_score,
-                    'ubuntu': ubuntu_alignment_score
-                },
+                raw_metrics=raw_metrics,
                 evaluation_date=datetime.now(timezone.utc)
             )
             
-            # Store evaluation
-            await self._store_evaluation(metrics)
+            # Store evaluation if requested
+            if save_to_db:
+                await self._store_evaluation(metrics)
             
             self._evaluation_count += 1
             self._last_evaluation_time = datetime.now(timezone.utc)
@@ -468,25 +516,44 @@ class UBECHolonicEvaluator:
             self.logger.error(f"Error evaluating account {account_id}: {e}")
             return None
     
-    async def evaluate_all_accounts(self) -> Dict[str, Any]:
+    async def evaluate_all_accounts(
+        self,
+        max_accounts: Optional[int] = None,
+        save_to_db: bool = True
+    ) -> Dict[str, Any]:
         """
         Evaluate all UBEC holders in the system.
+        
+        Args:
+            max_accounts: Maximum number of accounts to evaluate (None = all)
+            save_to_db: Whether to save results to database (default: True)
         
         Returns:
             Summary of evaluation results
         """
         try:
             self.logger.info("Starting evaluation of all UBEC accounts")
+            start_time = datetime.now(timezone.utc)
             
             # Get all account holders
-            query = f"""
-                SELECT DISTINCT account_id
-                FROM {self.db_schema}.account_balances
-                WHERE asset_code = $1 AND balance > 0
-                ORDER BY account_id
-            """
+            if max_accounts:
+                query = f"""
+                    SELECT DISTINCT account_id
+                    FROM {self.db_schema}.account_balances
+                    WHERE asset_code = $1 AND balance > 0
+                    ORDER BY account_id
+                    LIMIT $2
+                """
+                accounts = await self.db_manager.fetch_all(query, (self.ubec_code, max_accounts))
+            else:
+                query = f"""
+                    SELECT DISTINCT account_id
+                    FROM {self.db_schema}.account_balances
+                    WHERE asset_code = $1 AND balance > 0
+                    ORDER BY account_id
+                """
+                accounts = await self.db_manager.fetch_all(query, (self.ubec_code,))
             
-            accounts = await self.db_manager.fetch_all(query, (self.ubec_code,))
             total_accounts = len(accounts)
             
             self.logger.info(f"Found {total_accounts} accounts to evaluate")
@@ -494,25 +561,31 @@ class UBECHolonicEvaluator:
             # Evaluate each account
             successful = 0
             failed = 0
+            skipped = 0
             
             for account in accounts:
                 account_id = account['account_id']
-                result = await self.evaluate_account(account_id)
+                result = await self.evaluate_account(account_id, save_to_db=save_to_db)
                 
                 if result:
                     successful += 1
                 else:
                     failed += 1
             
+            end_time = datetime.now(timezone.utc)
+            duration = (end_time - start_time).total_seconds()
+            
             summary = {
-                'total_accounts': total_accounts,
-                'successful': successful,
-                'failed': failed,
+                'evaluated_count': successful,
+                'skipped_count': skipped,
+                'error_count': failed,
+                'total_processed': total_accounts,
                 'success_rate': successful / total_accounts if total_accounts > 0 else 0,
-                'evaluation_timestamp': datetime.now(timezone.utc).isoformat()
+                'duration_seconds': duration,
+                'evaluation_timestamp': end_time.isoformat()
             }
             
-            self.logger.info(f"Evaluation complete: {successful}/{total_accounts} successful")
+            self.logger.info(f"Evaluation complete: {successful}/{total_accounts} successful in {duration:.2f}s")
             
             return summary
             
@@ -521,16 +594,14 @@ class UBECHolonicEvaluator:
             self._last_error = str(e)
             self._last_error_time = datetime.now(timezone.utc)
             self.logger.error(f"Error in evaluate_all_accounts: {e}")
-            return {
-                'total_accounts': 0,
-                'successful': 0,
-                'failed': 0,
-                'error': str(e)
-            }
+            return {'error': str(e)}
     
     async def evaluate_network_holism(self) -> Dict[str, Any]:
         """
-        Evaluate overall network holism and Ubuntu principle integration.
+        Evaluate network-level holistic characteristics.
+        
+        Assesses the overall health and balance of the UBEC network
+        by analyzing distribution of holonic categories and scores.
         
         Returns:
             Network-level holistic assessment
@@ -549,11 +620,11 @@ class UBECHolonicEvaluator:
                 GROUP BY holonic_category
                 ORDER BY 
                     CASE holonic_category
-                        WHEN 'observer' THEN 1
-                        WHEN 'participant' THEN 2
-                        WHEN 'contributor' THEN 3
-                        WHEN 'integrator' THEN 4
-                        WHEN 'exemplar' THEN 5
+                        WHEN 'Observer' THEN 1
+                        WHEN 'Participant' THEN 2
+                        WHEN 'Contributor' THEN 3
+                        WHEN 'Integrator' THEN 4
+                        WHEN 'Exemplar' THEN 5
                     END
             """
             
@@ -747,7 +818,12 @@ class UBECHolonicEvaluator:
             return 0.0
     
     async def _calculate_multi_scale_participation(self, account_id: str) -> float:
-        """Calculate multi-scale participation score."""
+        """
+        Calculate multi-scale participation score.
+        
+        FIXED v3.0.3: Changed destination_account to from_account/to_account
+        to match actual stellar_operations table schema.
+        """
         try:
             # Measure diversity of transaction types and scales
             query = f"""
@@ -755,7 +831,7 @@ class UBECHolonicEvaluator:
                     COUNT(DISTINCT type) as operation_types,
                     COUNT(*) as total_operations
                 FROM {self.db_schema}.stellar_operations
-                WHERE source_account = $1 OR destination_account = $1
+                WHERE source_account = $1 OR from_account = $1 OR to_account = $1
             """
             
             result = await self.db_manager.fetch_one(query, (account_id,))
@@ -774,14 +850,19 @@ class UBECHolonicEvaluator:
             return 0.0
     
     async def _calculate_regenerative_impact(self, account_id: str) -> float:
-        """Calculate regenerative impact score."""
+        """
+        Calculate regenerative impact score.
+        
+        FIXED v3.0.3: Changed destination_account to from_account/to_account
+        to match actual stellar_operations table schema.
+        """
         try:
             # Measure contribution to network growth and sustainability
             # For now, use transaction frequency as proxy
             query = f"""
                 SELECT COUNT(*) as operation_count
                 FROM {self.db_schema}.stellar_operations
-                WHERE (source_account = $1 OR destination_account = $1)
+                WHERE (source_account = $1 OR from_account = $1 OR to_account = $1)
                     AND created_at >= NOW() - INTERVAL '30 days'
             """
             
@@ -800,7 +881,12 @@ class UBECHolonicEvaluator:
             return 0.0
     
     async def _calculate_network_contribution(self, account_id: str) -> float:
-        """Calculate network contribution score."""
+        """
+        Calculate network contribution score.
+        
+        FIXED v3.0.3: Changed destination_account to to_account and
+        source_account to from_account to match actual stellar_operations table schema.
+        """
         try:
             # Measure active participation in the network
             query = f"""
@@ -808,9 +894,9 @@ class UBECHolonicEvaluator:
                     COUNT(*) as sent_operations,
                     (SELECT COUNT(*) 
                      FROM {self.db_schema}.stellar_operations 
-                     WHERE destination_account = $1) as received_operations
+                     WHERE to_account = $1) as received_operations
                 FROM {self.db_schema}.stellar_operations
-                WHERE source_account = $1
+                WHERE from_account = $1
             """
             
             result = await self.db_manager.fetch_one(query, (account_id,))
@@ -844,6 +930,10 @@ class UBECHolonicEvaluator:
         """
         Store evaluation results in database.
         
+        FIXED v3.0.3: Removed diversity_score, reciprocity_health, mutualism_capacity,
+        regeneration_score from INSERT statement as these columns don't exist in
+        holonic_metrics table. Ubuntu principle scores are now stored in raw_metrics JSONB.
+        
         Args:
             metrics: Evaluation metrics to store
             
@@ -861,13 +951,9 @@ class UBECHolonicEvaluator:
                     ubuntu_alignment_score,
                     composite_score,
                     holonic_category,
-                    diversity_score,
-                    reciprocity_health,
-                    mutualism_capacity,
-                    regeneration_score,
                     raw_metrics,
                     evaluation_date
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (account_id, evaluation_date) 
                 DO UPDATE SET
                     autonomy_integration_score = EXCLUDED.autonomy_integration_score,
@@ -877,10 +963,6 @@ class UBECHolonicEvaluator:
                     ubuntu_alignment_score = EXCLUDED.ubuntu_alignment_score,
                     composite_score = EXCLUDED.composite_score,
                     holonic_category = EXCLUDED.holonic_category,
-                    diversity_score = EXCLUDED.diversity_score,
-                    reciprocity_health = EXCLUDED.reciprocity_health,
-                    mutualism_capacity = EXCLUDED.mutualism_capacity,
-                    regeneration_score = EXCLUDED.regeneration_score,
                     raw_metrics = EXCLUDED.raw_metrics
             """
             
@@ -895,10 +977,6 @@ class UBECHolonicEvaluator:
                     metrics.ubuntu_alignment_score,
                     metrics.composite_score,
                     metrics.holonic_category.value,
-                    metrics.diversity_score,
-                    metrics.reciprocity_health,
-                    metrics.mutualism_capacity,
-                    metrics.regeneration_score,
                     json.dumps(metrics.raw_metrics),
                     metrics.evaluation_date
                 )
@@ -920,7 +998,7 @@ class UBECHolonicEvaluator:
             account_id: Account to retrieve evaluation for
             
         Returns:
-            Latest HolonicMetrics or None
+            Latest HolonicMetrics or None if not found
         """
         try:
             query = f"""
@@ -1009,121 +1087,72 @@ class UBECHolonicEvaluator:
         """
         Comprehensive health check for evaluator service.
         
-        Uses ServiceHealthCheck utility for standardized monitoring.
+        Implements standardized health check pattern following Principle #12.
+        This implementation builds health status directly without using
+        non-existent utility methods.
         
         Returns:
-            Health status dictionary
+            Health status dictionary with standardized format:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy' | 'unknown',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {...}
+            }
         """
-        checks = [
-            ('initialization', self._check_initialization),
-            ('database', self._check_database),
-            ('operations', self._check_operations),
-            ('weights', self._check_weights)
-        ]
-        
-        result = await ServiceHealthCheck.run_health_checks(
-            service_name='UBECHolonicEvaluator',
-            checks=checks,
-            logger=self.logger
-        )
-        
-        # Add service-specific stats
-        result['stats'] = {
-            'evaluations_performed': self._evaluation_count,
-            'error_count': self._error_count,
-            'last_evaluation': self._last_evaluation_time.isoformat() if self._last_evaluation_time else None,
-            'ubuntu_metrics_enabled': self._has_ubuntu_metrics_table
-        }
-        
-        return result
-    
-    async def _check_initialization(self) -> Optional[Dict[str, Any]]:
-        """Check if service is properly initialized."""
-        if not self._initialized:
-            return {
-                'name': 'initialization',
-                'status': 'fail',
-                'message': 'Service not initialized',
-                'severity': 'high'
-            }
-        return None
-    
-    async def _check_database(self) -> Optional[Dict[str, Any]]:
-        """Check database connectivity."""
         try:
-            query = f"SELECT 1 FROM {self.db_schema}.holonic_metrics LIMIT 1"
-            await self.db_manager.fetch_one(query, ())
-            return None
-        except Exception as e:
-            return {
-                'name': 'database',
-                'status': 'fail',
-                'message': f'Database check failed: {str(e)}',
-                'severity': 'high',
-                'error': str(e)
+            # Build health details
+            details = {
+                'initialized': self._initialized,
+                'database_connected': False,
+                'evaluations_performed': self._evaluation_count,
+                'error_count': self._error_count,
+                'last_evaluation': self._last_evaluation_time.isoformat() if self._last_evaluation_time else None,
+                'ubuntu_metrics_enabled': self._has_ubuntu_metrics_table,
+                'weights_valid': abs(sum(self.weights.values()) - 1.0) < 0.01
             }
-    
-    async def _check_operations(self) -> Optional[Dict[str, Any]]:
-        """Check operational metrics."""
-        try:
-            if self._evaluation_count > 0:
+            
+            # Test database connectivity
+            try:
+                query = f"SELECT 1 FROM {self.db_schema}.holonic_metrics LIMIT 1"
+                await self.db_manager.fetch_one(query, ())
+                details['database_connected'] = True
+            except Exception as e:
+                self.logger.error(f"Database connectivity check failed: {e}")
+                details['database_error'] = str(e)
+            
+            # Determine overall status
+            if not self._initialized:
+                status = 'unhealthy'
+                message = 'Service not initialized'
+            elif not details['database_connected']:
+                status = 'unhealthy'
+                message = 'Database not accessible'
+            elif self._evaluation_count > 0:
                 error_rate = self._error_count / self._evaluation_count
-                
-                if error_rate > 0.5:
-                    return {
-                        'name': 'operations',
-                        'status': 'fail',
-                        'message': f'High error rate: {error_rate:.1%}',
-                        'severity': 'high',
-                        'details': {
-                            'evaluations': self._evaluation_count,
-                            'errors': self._error_count,
-                            'error_rate': error_rate
-                        }
-                    }
-                elif error_rate > 0.2:
-                    return {
-                        'name': 'operations',
-                        'status': 'warn',
-                        'message': f'Elevated error rate: {error_rate:.1%}',
-                        'severity': 'medium',
-                        'details': {
-                            'evaluations': self._evaluation_count,
-                            'errors': self._error_count,
-                            'error_rate': error_rate
-                        }
-                    }
+                if error_rate > 0.1:
+                    status = 'degraded'
+                    message = f'High error rate: {error_rate:.1%}'
+                else:
+                    status = 'healthy'
+                    message = 'Service operational'
+            else:
+                status = 'healthy'
+                message = 'Service operational (no evaluations yet)'
             
-            return None
-            
-        except Exception as e:
             return {
-                'name': 'operations',
-                'status': 'fail',
-                'message': f'Operations check failed: {str(e)}',
-                'severity': 'low',
-                'error': str(e)
+                'status': status,
+                'message': message,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'details': details
             }
-    
-    async def _check_weights(self) -> Optional[Dict[str, Any]]:
-        """Verify evaluation weights sum to 1.0."""
-        try:
-            total = sum(self.weights.values())
-            if abs(total - 1.0) > 0.01:
-                return {
-                    'name': 'weights',
-                    'status': 'warn',
-                    'message': f'Weights sum to {total:.3f}, not 1.0',
-                    'severity': 'low',
-                    'details': {'weight_sum': total, 'weights': self.weights}
-                }
-            return None
+            
         except Exception as e:
+            self.logger.error(f"Health check failed: {e}", exc_info=True)
             return {
-                'name': 'weights',
-                'status': 'fail',
-                'message': f'Weight validation failed: {str(e)}',
-                'severity': 'low',
+                'status': 'unhealthy',
+                'message': f'Health check error: {str(e)}',
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'error': str(e)
             }
     

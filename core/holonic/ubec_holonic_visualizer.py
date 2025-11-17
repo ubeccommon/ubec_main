@@ -42,10 +42,17 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 13.3.0 (Scheduler Integration - HTML Report Generation)
-Date: November 10, 2025
+Version: 13.3.1 (Health Check Fix)
+Date: November 17, 2025
 
 Changelog:
+    v13.3.1 - CRITICAL FIX: Corrected health_check() implementation
+            - Fixed: Removed non-existent ServiceHealthCheck.database_dependent_health() call
+            - Implemented proper standardized health check pattern
+            - Runs custom checks directly with proper error handling
+            - Returns proper status dictionary with all required fields
+            - Resolves AttributeError on health check operations
+            - Maintains Principle #12 compliance with direct implementation
     v13.3.0 - CRITICAL FIX: Added generate_html_report method for scheduler
             - ✅ ADDED: generate_html_report() async method
             - ✅ FIXED: Scheduler job 'report_generation' can now execute
@@ -64,7 +71,7 @@ import asyncio
 import base64
 import io
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from decimal import Decimal
@@ -291,26 +298,46 @@ class HolonicVisualizer:
         """
         Perform comprehensive health check of the visualizer service.
         
-        Principle #12: Method Singularity - Uses ServiceHealthCheck utility.
+        Implements standardized health check pattern following Principle #12.
+        This implementation builds health status directly without using
+        non-existent utility methods.
+        
         Principle #5: Async operation for database checks.
+        Principle #12: Method Singularity - Direct implementation without duplication.
         
         Returns:
-            Dict with health status and diagnostic information
+            Dict with health status and diagnostic information:
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'message': str,
+                'timestamp': str (ISO format),
+                'details': {...}
+            }
         """
         try:
-            from core.utils.service_health_check import ServiceHealthCheck
+            # Initialize details dictionary
+            details = {
+                'initialized': self._initialized,
+                'schema': self.db_schema,
+                'matplotlib_available': MATPLOTLIB_AVAILABLE,
+                'numpy_available': NUMPY_AVAILABLE,
+                'networkx_available': NETWORKX_AVAILABLE,
+                'transactions_available': self.transactions_table_available,
+                'charts_generated': self._charts_generated,
+                'database_connected': False,
+                'output_dir_writable': False
+            }
             
-            # Define check functions for this service
-            async def check_matplotlib() -> None:
-                """Check matplotlib availability."""
-                if not MATPLOTLIB_AVAILABLE:
-                    raise Exception("Matplotlib is not available - cannot generate charts")
-                # Success - return None as per ServiceHealthCheck pattern
-                return None
+            # Track check failures
+            failures = []
             
-            async def check_data_access() -> None:
-                """Verify database access with explicit schema name."""
-                # Principle #4: Explicit schema name in query
+            # Check 1: Matplotlib availability
+            if not MATPLOTLIB_AVAILABLE:
+                failures.append("matplotlib_unavailable")
+                self.logger.warning("Matplotlib is not available - chart generation disabled")
+            
+            # Check 2: Database access
+            try:
                 query = f"""
                     SELECT COUNT(*) as count
                     FROM {self.db_schema}.holonic_metrics
@@ -318,63 +345,75 @@ class HolonicVisualizer:
                 """
                 result = await self.db_manager.fetch_one(query, ())
                 
-                if result is None:
-                    raise Exception(f"Cannot access holonic_metrics table in schema {self.db_schema}")
-                
-                # Success - return None as per ServiceHealthCheck pattern
-                return None
+                if result is not None:
+                    details['database_connected'] = True
+                else:
+                    failures.append("database_no_result")
+                    
+            except Exception as e:
+                failures.append("database_access")
+                details['database_error'] = str(e)
+                self.logger.error(f"Database connectivity check failed: {e}")
             
-            async def check_output_directory() -> None:
-                """Verify output directory is writable."""
+            # Check 3: Output directory
+            try:
                 if not self.output_dir.exists():
-                    raise Exception(f"Output directory does not exist: {self.output_dir}")
-                
-                if not self.output_dir.is_dir():
-                    raise Exception(f"Output path is not a directory: {self.output_dir}")
-                
-                # Test write access
-                test_file = self.output_dir / '.health_check'
-                try:
-                    test_file.touch()
-                    test_file.unlink()
-                except Exception as e:
-                    raise Exception(f"Output directory is not writable: {e}")
-                
-                # Success - return None as per ServiceHealthCheck pattern
-                return None
+                    failures.append("output_dir_missing")
+                elif not self.output_dir.is_dir():
+                    failures.append("output_dir_not_directory")
+                else:
+                    # Test write access
+                    test_file = self.output_dir / '.health_check'
+                    try:
+                        test_file.touch()
+                        test_file.unlink()
+                        details['output_dir_writable'] = True
+                    except Exception as e:
+                        failures.append("output_dir_not_writable")
+                        details['output_dir_error'] = str(e)
+                        
+            except Exception as e:
+                failures.append("output_dir_check")
+                details['output_dir_error'] = str(e)
             
-            # Use standardized health check utility (Principle #12)
-            checks = [
-                ('matplotlib', check_matplotlib),
-                ('data_access', check_data_access),
-                ('output_directory', check_output_directory)
-            ]
+            # Determine overall status
+            if not self._initialized:
+                status = 'unhealthy'
+                message = 'Service not initialized'
+            elif 'database_access' in failures or not details['database_connected']:
+                status = 'unhealthy'
+                message = 'Database not accessible'
+            elif 'output_dir_not_writable' in failures:
+                status = 'degraded'
+                message = 'Output directory not writable - reports cannot be saved'
+            elif 'matplotlib_unavailable' in failures:
+                status = 'degraded'
+                message = 'Matplotlib unavailable - chart generation disabled'
+            elif len(failures) > 0:
+                status = 'degraded'
+                message = f'Service operational with {len(failures)} warning(s)'
+            else:
+                status = 'healthy'
+                message = 'Service fully operational'
             
-            health_result = await ServiceHealthCheck.database_dependent_health(
-                self.db_manager,
-                self.logger,
-                additional_checks=checks
-            )
+            # Add failure details if any
+            if failures:
+                details['failures'] = failures
             
-            # Add service-specific metrics
-            health_result['service_info'] = {
-                'schema': self.db_schema,
-                'initialized': self._initialized,
-                'charts_generated': self._charts_generated,
-                'matplotlib_available': MATPLOTLIB_AVAILABLE,
-                'numpy_available': NUMPY_AVAILABLE,
-                'networkx_available': NETWORKX_AVAILABLE,
-                'transactions_available': self.transactions_table_available
+            return {
+                'status': status,
+                'message': message,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'details': details
             }
-            
-            return health_result
             
         except Exception as e:
             self.logger.error(f"Health check failed: {e}", exc_info=True)
             return {
                 'status': 'unhealthy',
-                'error': str(e),
-                'timestamp': datetime.now().isoformat()
+                'message': f'Health check error: {str(e)}',
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'error': str(e)
             }
     
     # ═════════════════════════════════════════════════════════════════════════
@@ -759,7 +798,7 @@ class HolonicVisualizer:
         # Footer
         html += f"""
     <div class="footer">
-        <p><strong>UBEC Protocol Suite</strong> - Holonic Visualizer v13.3.0</p>
+        <p><strong>UBEC Protocol Suite</strong> - Holonic Visualizer v13.3.1</p>
         <p>Generated by HolonicVisualizer Service</p>
         <p style="margin-top: 20px; font-size: 0.8em;">
             This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.<br>
@@ -885,10 +924,10 @@ if __name__ == "__main__":
         "  report = await visualizer.generate_html_report('./reports')\n"
         "  health = await visualizer.health_check()\n"
         "  await visualizer.close()\n\n"
-        "Version 13.3.0 - Scheduler Integration:\n"
-        "  - Added generate_html_report() method for scheduler compatibility\n"
-        "  - Fixed scheduler job 'report_generation' execution\n"
-        "  - Pure async implementation with full HTML generation\n"
+        "Version 13.3.1 - Health Check Fix:\n"
+        "  - Fixed health_check() implementation\n"
+        "  - Removed non-existent ServiceHealthCheck.database_dependent_health() call\n"
+        "  - Direct implementation with proper error handling\n"
         "  - All 12 design principles maintained\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
