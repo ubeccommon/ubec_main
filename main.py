@@ -55,8 +55,17 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.9
-Updated: 2025-11-17
+Version: 3.2.0
+Updated: 2025-11-18
+CHANGELOG v3.2.0:
+    - CRITICAL FIX: Corrected field name mismatch in handle_holonic_evaluation()
+    - FIXED: 'evaluated_count' → 'evaluated' (to match evaluator return value)
+    - FIXED: 'skipped_count' → 'skipped' (to match evaluator return value)
+    - FIXED: 'error_count' → 'errors' (to match evaluator return value)
+    - ADDED: Timing measurement for holonic evaluation duration
+    - ADDED: time module import for duration tracking
+    - Resolves issue where statistics displayed as zeros despite successful evaluation
+    - Complies with Principle #12 (Method Singularity) - uses correct field names
 CHANGELOG v3.1.9:
     - ADDED: evaluate-holonic command for holonic evaluation operations
     - ADDED: handle_holonic_evaluation() command handler
@@ -100,6 +109,7 @@ import argparse
 import logging
 import sys
 import os
+import time
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uvicorn
@@ -1136,17 +1146,24 @@ async def handle_holonic_evaluation(
             logger.info(f"Save to DB: {save_to_db}")
             logger.info("")
             
+            # Track evaluation time
+            start_time = time.time()
+            
             results = await holonic_service.evaluate_all_accounts(
                 max_accounts=max_accounts,
                 save_to_db=save_to_db
             )
             
+            # Calculate duration
+            duration = time.time() - start_time
+            
             # Display results
+            # FIXED v3.2.0: Corrected field names to match evaluator return values
             logger.info("\n✅ Evaluation completed")
-            logger.info(f"  Accounts Evaluated: {results.get('evaluated_count', 0):,}")
-            logger.info(f"  Accounts Skipped: {results.get('skipped_count', 0):,}")
-            logger.info(f"  Errors: {results.get('error_count', 0)}")
-            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
+            logger.info(f"  Accounts Evaluated: {results.get('evaluated', 0):,}")
+            logger.info(f"  Accounts Skipped: {results.get('skipped', 0):,}")
+            logger.info(f"  Errors: {results.get('errors', 0)}")
+            logger.info(f"  Duration: {duration:.2f}s")
             
             # Show summary statistics if available
             if 'summary' in results:

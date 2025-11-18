@@ -38,6 +38,10 @@ Usage:
     # Analytics operations
     python main.py analytics --analysis-type overview
     
+    # Holonic evaluation
+    python main.py evaluate-holonic --all
+    python main.py evaluate-holonic --account ACCOUNT_ID
+    
     # Visualization
     python main.py visualize --action report --format html
     
@@ -51,8 +55,16 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.1.8
-Updated: 2025-11-10
+Version: 3.1.9
+Updated: 2025-11-17
+CHANGELOG v3.1.9:
+    - ADDED: evaluate-holonic command for holonic evaluation operations
+    - ADDED: handle_holonic_evaluation() command handler
+    - Supports --all flag to evaluate all accounts
+    - Supports --account to evaluate specific account
+    - Supports --max-accounts to limit batch evaluation
+    - Supports --save-to-db flag to control database storage
+    - Complies with all 12 design principles
 CHANGELOG v3.1.8:
     - CRITICAL FIX: Corrected analytics method names in handle_analytics()
     - FIXED: generate_overview() → get_distribution_overview()
@@ -1085,6 +1097,114 @@ async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'over
         raise
 
 
+async def handle_holonic_evaluation(
+    registry: ServiceRegistry,
+    evaluate_all: bool = False,
+    account_id: Optional[str] = None,
+    max_accounts: Optional[int] = None,
+    save_to_db: bool = True
+):
+    """
+    Run holonic evaluation operations.
+    
+    NEW v3.1.9: Added holonic evaluation command handler.
+    
+    This function orchestrates holonic evaluation of accounts against
+    Ubuntu principles (diversity, reciprocity, mutualism, regeneration).
+    
+    Args:
+        registry: Service registry
+        evaluate_all: Evaluate all accounts
+        account_id: Specific account to evaluate
+        max_accounts: Maximum accounts to evaluate (for batch mode)
+        save_to_db: Save results to database
+        
+    Principle #5: Strict Async Operations
+    Principle #12: Method Singularity - uses holonic evaluator service methods
+    """
+    logger.info("=" * 70)
+    logger.info("HOLONIC EVALUATION")
+    logger.info("=" * 70)
+    
+    holonic_service = await registry.get('holonic')
+    
+    try:
+        if evaluate_all:
+            # Evaluate all accounts
+            logger.info("Evaluating all accounts against Ubuntu principles...")
+            logger.info(f"Max Accounts: {max_accounts or 'All'}")
+            logger.info(f"Save to DB: {save_to_db}")
+            logger.info("")
+            
+            results = await holonic_service.evaluate_all_accounts(
+                max_accounts=max_accounts,
+                save_to_db=save_to_db
+            )
+            
+            # Display results
+            logger.info("\n✅ Evaluation completed")
+            logger.info(f"  Accounts Evaluated: {results.get('evaluated_count', 0):,}")
+            logger.info(f"  Accounts Skipped: {results.get('skipped_count', 0):,}")
+            logger.info(f"  Errors: {results.get('error_count', 0)}")
+            logger.info(f"  Duration: {results.get('duration_seconds', 0):.2f}s")
+            
+            # Show summary statistics if available
+            if 'summary' in results:
+                summary = results['summary']
+                logger.info("\n📊 Evaluation Summary:")
+                logger.info(f"  Average Ubuntu Score: {summary.get('avg_ubuntu_score', 0):.3f}")
+                logger.info(f"  Average Composite Score: {summary.get('avg_composite_score', 0):.3f}")
+                
+                # Category distribution
+                if 'category_distribution' in summary:
+                    logger.info("\n  Category Distribution:")
+                    for category, count in summary['category_distribution'].items():
+                        logger.info(f"    {category}: {count} accounts")
+            
+        elif account_id:
+            # Evaluate specific account
+            logger.info(f"Evaluating account: {account_id}")
+            logger.info(f"Save to DB: {save_to_db}")
+            logger.info("")
+            
+            metrics = await holonic_service.evaluate_account(
+                account_id=account_id,
+                save_to_db=save_to_db
+            )
+            
+            # Display results
+            logger.info("\n✅ Account evaluation completed")
+            logger.info(f"  Account: {account_id}")
+            logger.info(f"\n  Holonic Scores:")
+            logger.info(f"    Autonomy Integration: {metrics.autonomy_integration_score:.3f}")
+            logger.info(f"    Multi-Scale: {metrics.multi_scale_score:.3f}")
+            logger.info(f"    Regenerative Impact: {metrics.regenerative_impact_score:.3f}")
+            logger.info(f"    Network Contribution: {metrics.network_contribution_score:.3f}")
+            logger.info(f"    Ubuntu Alignment: {metrics.ubuntu_alignment_score:.3f}")
+            logger.info(f"\n  Composite Score: {metrics.composite_score:.3f}")
+            logger.info(f"  Category: {metrics.holonic_category.value}")
+            
+            # Show Ubuntu principle scores if available
+            if metrics.diversity_score is not None:
+                logger.info(f"\n  Ubuntu Principles:")
+                logger.info(f"    Diversity (Air): {metrics.diversity_score:.3f}")
+                logger.info(f"    Reciprocity (Water): {metrics.reciprocity_health:.3f}")
+                logger.info(f"    Mutualism (Earth): {metrics.mutualism_capacity:.3f}")
+                logger.info(f"    Regeneration (Fire): {metrics.regeneration_score:.3f}")
+        
+        else:
+            logger.error("Must specify either --all or --account ACCOUNT_ID")
+            return
+        
+        logger.info("\n" + "=" * 70)
+        logger.info("✅ Holonic evaluation completed successfully")
+        logger.info("=" * 70)
+        
+    except Exception as e:
+        logger.error(f"Holonic evaluation failed: {e}", exc_info=True)
+        raise
+
+
 async def handle_visualize(
     registry: ServiceRegistry,
     action: str = 'report',
@@ -1368,6 +1488,21 @@ async def main():
                                  choices=['overview', 'holders', 'metrics'],
                                  help='Type of analysis')
     
+    # ═══════════════════════════════════════════════════════════════════════
+    # NEW v3.1.9: Holonic Evaluation Command
+    # ═══════════════════════════════════════════════════════════════════════
+    holonic_parser = subparsers.add_parser('evaluate-holonic', 
+                                           help='Run holonic evaluation')
+    holonic_parser.add_argument('--all', action='store_true',
+                               help='Evaluate all accounts')
+    holonic_parser.add_argument('--account', type=str,
+                               help='Evaluate specific account (Stellar account ID)')
+    holonic_parser.add_argument('--max-accounts', type=int,
+                               help='Maximum accounts to evaluate (for batch mode)')
+    holonic_parser.add_argument('--no-save', action='store_true',
+                               help='Do not save results to database')
+    # ═══════════════════════════════════════════════════════════════════════
+    
     # Visualize command
     visualize_parser = subparsers.add_parser('visualize', help='Generate visualizations')
     visualize_parser.add_argument('--action', default='report',
@@ -1403,7 +1538,7 @@ async def main():
     print("DEBUG: About to display banner")
     logger.info("")
     logger.info("╔" + "═" * 68 + "╗")
-    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.1.6" + " " * 26 + "║")
+    logger.info("║" + " " * 15 + "UBEC Protocol Suite v3.1.9" + " " * 26 + "║")
     logger.info("║" + " " * 18 + "Main Orchestrator" + " " * 33 + "║")
     logger.info("╚" + "═" * 68 + "╝")
     logger.info("")
@@ -1443,6 +1578,19 @@ async def main():
                 
             elif args.command == 'analytics':
                 await handle_analytics(registry, analysis_type=args.analysis_type)
+            
+            # ═══════════════════════════════════════════════════════════════
+            # NEW v3.1.9: Holonic Evaluation Command Handler
+            # ═══════════════════════════════════════════════════════════════
+            elif args.command == 'evaluate-holonic':
+                await handle_holonic_evaluation(
+                    registry,
+                    evaluate_all=args.all,
+                    account_id=args.account,
+                    max_accounts=args.max_accounts,
+                    save_to_db=not args.no_save
+                )
+            # ═══════════════════════════════════════════════════════════════
                 
             elif args.command == 'visualize':
                 await handle_visualize(
