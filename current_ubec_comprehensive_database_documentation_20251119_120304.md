@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-19T09:05:19.650451
+**Generated:** 2025-11-19T12:03:03.443084
 
 **Database:** ubec
 
@@ -33,7 +33,7 @@
 - **Total Tables:** 80
 - **Total Views:** 35
 - **Total Functions:** 1142
-- **Total Rows:** 100,883
+- **Total Rows:** 155,571
 - **Total Columns:** 1,003
 - **Total Foreign Keys:** 31
 
@@ -44,7 +44,7 @@
 | phenomenal | 28 | 13 | 19 | 1,297 | 742 MB |
 | public | 1 | 2 | 940 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 49 | 20 | 80 | 91,086 | 66 MB |
+| ubec_main | 49 | 20 | 80 | 145,774 | 105 MB |
 
 ---
 
@@ -7733,7 +7733,7 @@
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 49 | **Views:** 20 | **Functions:** 80 | **Total Rows:** 91,086 | **Size:** 66 MB
+**Tables:** 49 | **Views:** 20 | **Functions:** 80 | **Total Rows:** 145,774 | **Size:** 105 MB
 
 ### Schema Permissions
 
@@ -9472,7 +9472,7 @@
 
 *Stellar blockchain accounts with element tracking*
 
-**Rows:** 1,302 | **Size:** 1032 kB
+**Rows:** 1,481 | **Size:** 1032 kB
 
 **Columns:**
 
@@ -9652,7 +9652,7 @@
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 434 | **Size:** 1256 kB
+**Rows:** 30,889 | **Size:** 29 MB
 
 **Columns:**
 
@@ -9690,24 +9690,24 @@
 - stellar_operations_operation_id_key: (operation_id)
 
 **Indexes:**
+- BTREE: (asset_code) - 240 kB
+- BTREE: (created_at) - 936 kB
+- BTREE: (operation_element) - 240 kB
+- BTREE: (from_account) - 368 kB
+- BTREE: (operation_id) - 1672 kB
+- BTREE: (to_account) - 448 kB
+- BTREE: (transaction_hash) - 3320 kB
+- BTREE: (type) - 248 kB
+- BTREE: (asset_code, from_account, to_account, created_at) - 7112 kB
 - BTREE: (asset_code) - 16 kB
-- BTREE: (created_at) - 32 kB
-- BTREE: (operation_element) - 16 kB
-- BTREE: (from_account) - 16 kB
-- BTREE: (operation_id) - 40 kB
-- BTREE: (to_account) - 16 kB
-- BTREE: (transaction_hash) - 56 kB
-- BTREE: (type) - 16 kB
-- BTREE: (asset_code, from_account, to_account, created_at) - 48 kB
-- BTREE: (asset_code) - 16 kB
-- BTREE: (created_at) - 32 kB
-- BTREE: (from_account) - 16 kB
-- BTREE: (asset_code, from_account) - 16 kB
-- BTREE: (source_account) - 16 kB
-- BTREE: (to_account) - 16 kB
-- BTREE: (asset_code, to_account) - 16 kB
-- UNIQUE BTREE: (operation_id) - 40 kB
-- PRIMARY UNIQUE BTREE: (id) - 32 kB
+- BTREE: (created_at) - 864 kB
+- BTREE: (from_account) - 288 kB
+- BTREE: (asset_code, from_account) - 288 kB
+- BTREE: (source_account) - 360 kB
+- BTREE: (to_account) - 376 kB
+- BTREE: (asset_code, to_account) - 384 kB
+- UNIQUE BTREE: (operation_id) - 1640 kB
+- PRIMARY UNIQUE BTREE: (id) - 736 kB
 
 **Permissions:**
 - **PUBLIC:** SELECT
@@ -9726,7 +9726,7 @@
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 74,495 | **Size:** 49 MB
+**Rows:** 98,549 | **Size:** 60 MB
 
 **Columns:**
 
@@ -9764,14 +9764,14 @@
 - stellar_transactions_transaction_hash_key: (transaction_hash)
 
 **Indexes:**
-- BTREE: (created_at) - 2144 kB
-- BTREE: (primary_element) - 536 kB
-- BTREE: (transaction_hash) - 9096 kB
-- BTREE: (ledger_sequence) - 568 kB
-- BTREE: (source_account) - 976 kB
+- BTREE: (created_at) - 2880 kB
+- BTREE: (primary_element) - 1088 kB
+- BTREE: (transaction_hash) - 12 MB
+- BTREE: (ledger_sequence) - 1112 kB
+- BTREE: (source_account) - 1256 kB
 - GIN: (involves_tokens) - 480 kB
-- PRIMARY UNIQUE BTREE: (id) - 1872 kB
-- UNIQUE BTREE: (transaction_hash) - 9216 kB
+- PRIMARY UNIQUE BTREE: (id) - 2408 kB
+- UNIQUE BTREE: (transaction_hash) - 12 MB
 
 **Permissions:**
 - **PUBLIC:** SELECT
