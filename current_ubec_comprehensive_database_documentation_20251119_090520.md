@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-17T11:03:31.066769
+**Generated:** 2025-11-19T09:05:19.650451
 
 **Database:** ubec
 
@@ -33,7 +33,7 @@
 - **Total Tables:** 80
 - **Total Views:** 35
 - **Total Functions:** 1142
-- **Total Rows:** 97,890
+- **Total Rows:** 100,883
 - **Total Columns:** 1,003
 - **Total Foreign Keys:** 31
 
@@ -44,7 +44,7 @@
 | phenomenal | 28 | 13 | 19 | 1,297 | 742 MB |
 | public | 1 | 2 | 940 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 49 | 20 | 80 | 88,093 | 63 MB |
+| ubec_main | 49 | 20 | 80 | 91,086 | 66 MB |
 
 ---
 
@@ -7733,7 +7733,7 @@
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 49 | **Views:** 20 | **Functions:** 80 | **Total Rows:** 88,093 | **Size:** 63 MB
+**Tables:** 49 | **Views:** 20 | **Functions:** 80 | **Total Rows:** 91,086 | **Size:** 66 MB
 
 ### Schema Permissions
 
@@ -8843,7 +8843,7 @@
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 1,286 | **Size:** 2624 kB
+**Rows:** 2,283 | **Size:** 3720 kB
 
 **Columns:**
 
@@ -8882,15 +8882,15 @@
 - valid_ubuntu_score: CHECK (((ubuntu_alignment_score >= (0)::numeric) AND (ubuntu_alignment_score <= (1)::numeric)))
 
 **Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 64 kB
-- UNIQUE BTREE: (account_id) - 168 kB
-- BTREE: (account_id) - 96 kB
-- BTREE: (calculation_mode) - 32 kB
-- BTREE: (holonic_category) - 32 kB
-- BTREE: (composite_score) - 72 kB
-- BTREE: (confidence) - 72 kB
-- BTREE: (evaluation_date) - 96 kB
-- UNIQUE BTREE: (evaluation_date, account_id) - 176 kB
+- PRIMARY UNIQUE BTREE: (id) - 152 kB
+- UNIQUE BTREE: (account_id) - 280 kB
+- BTREE: (account_id) - 144 kB
+- BTREE: (calculation_mode) - 56 kB
+- BTREE: (holonic_category) - 72 kB
+- BTREE: (composite_score) - 168 kB
+- BTREE: (confidence) - 136 kB
+- BTREE: (evaluation_date) - 208 kB
+- UNIQUE BTREE: (evaluation_date, account_id) - 376 kB
 
 **Triggers:**
 - **trg_set_evaluation_date_date:** BEFORE INSERT OR UPDATE ROW
@@ -9652,7 +9652,7 @@
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 434 | **Size:** 1248 kB
+**Rows:** 434 | **Size:** 1256 kB
 
 **Columns:**
 
@@ -10342,7 +10342,7 @@
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 0 | **Size:** 64 kB
+**Rows:** 1,996 | **Size:** 2224 kB
 
 **Columns:**
 
@@ -10376,13 +10376,13 @@
 - valid_score: CHECK (((score >= (0)::numeric) AND (score <= (1)::numeric)))
 
 **Indexes:**
-- BTREE: (account_id) - 8192 bytes
-- BTREE: (calculated_at) - 8192 bytes
-- BTREE: (element) - 8192 bytes
-- BTREE: (health_status) - 8192 bytes
-- BTREE: (principle) - 8192 bytes
-- BTREE: (score) - 8192 bytes
-- PRIMARY UNIQUE BTREE: (id) - 8192 bytes
+- BTREE: (account_id) - 88 kB
+- BTREE: (calculated_at) - 160 kB
+- BTREE: (element) - 48 kB
+- BTREE: (health_status) - 72 kB
+- BTREE: (principle) - 48 kB
+- BTREE: (score) - 192 kB
+- PRIMARY UNIQUE BTREE: (id) - 160 kB
 
 **Row Level Security:** Enabled
 

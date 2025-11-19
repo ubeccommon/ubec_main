@@ -1084,7 +1084,7 @@ class UBECComprehensiveDocumenter:
         if output_filename:
             filename = f"{output_filename}.{file_ext}"
         else:
-            filename = f"ubec_comprehensive_docs_{timestamp}.{file_ext}"
+            filename = f"current_ubec_comprehensive_database_documentation_{timestamp}.{file_ext}"
         
         if format == 'markdown':
             self._save_as_markdown(filename)

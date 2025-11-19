@@ -703,8 +703,6 @@ async def handle_status(registry: ServiceRegistry):
         info = registry.get_info()
         
         logger.info(f"Total Services: {info['total_services']}")
-        logger.info(f"Initialized Services: {info['initialized_services']}")
-        logger.info(f"Pending Services: {info['pending_services']}")
         logger.info("")
         logger.info("Initialization Order:")
         for service_name in info['initialization_order']:
