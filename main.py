@@ -56,8 +56,17 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.3.0
-Updated: 2025-11-18
+Version: 3.3.1
+Updated: 2025-11-19
+
+CHANGELOG v3.3.1:
+    - 🔥 CRITICAL FIX: Corrected analytics service constructor parameters
+    - FIXED: UBECAnalyticsService(db, 'ubec_main') → UBECAnalyticsService(database=db, config=config)
+    - FIXED: Added 'config' to analytics service dependencies list
+    - RESOLVES: TypeError when analytics service tries to get schema from string instead of config object
+    - VERIFIED: Matches updated ubec_analytics_service.py v3.7.0 signature
+    - COMPLIES: Principle #3 (Service Registry) - proper dependency declaration
+    - COMPLIES: Principle #4 (Single Source of Truth) - config from registry
 
 CHANGELOG v3.3.0:
     - ADDED: sync-status command for data freshness monitoring
@@ -509,14 +518,21 @@ def register_core_services():
     # ========================================================================
     
     async def create_analytics(registry: ServiceRegistry):
-        """Create analytics service."""
+        """
+        Create analytics service.
+        
+        FIXED v3.3.1: Corrected constructor parameters to match updated service signature.
+        Analytics service expects (database, config=None, cache_ttl=300), not (database, schema_string).
+        """
         logger.info("Creating analytics service...")
         
         from services.analytics.ubec_analytics_service import UBECAnalyticsService
         
         db = await registry.get('database')
+        config = await registry.get('config')
          
-        analytics = UBECAnalyticsService(db, 'ubec_main')
+        # FIXED v3.3.1: Pass config object, not schema string
+        analytics = UBECAnalyticsService(database=db, config=config)
         await analytics.initialize()
         
         logger.info("✓ Analytics service created")
@@ -525,7 +541,7 @@ def register_core_services():
     registry.register_factory(
         'analytics',
         create_analytics,
-        dependencies=['database']
+        dependencies=['database', 'config']  # FIXED v3.3.1: Added 'config' dependency
     )
     
     async def create_holonic(registry: ServiceRegistry):
