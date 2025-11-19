@@ -1,41 +1,7 @@
 #!/usr/bin/env python3
 """
-UBEC Data Synchronizer v5.1.7 - Database Check Constraint Fix
-==============================================================
-
-CRITICAL FIX in v5.1.7:
-1. ✅ FIXED: Database check constraint compliance for ubec_asset_position
-   - Changed from uppercase 'A'/'B' to lowercase 'a'/'b'
-   - Matches database CHECK constraint: ubec_asset_position IN ('a', 'b')
-   - Resolves: new row violates check constraint "liquidity_pools_ubec_asset_position_check"
-   - Applied fix in both initial discovery and pagination loops
-
-CRITICAL FIX in v5.1.6:
-1. ✅ FIXED: Type conversion for trustline_count parameter
-   - Ensure trustline_count is integer, not string
-   - Resolves: invalid input for query argument $15: '1' ('str' object cannot be interpreted as an integer)
-   - Added explicit int() conversion for pool_data.get('total_trustlines', 0)
-
-CRITICAL FIX in v5.1.5:
-1. ✅ FIXED: Database schema column name alignment
-   - Changed from ubec_position to ubec_asset_position
-   - Matches actual database table structure
-   - Resolves: column "ubec_position" of relation "liquidity_pools" does not exist
-
-CRITICAL FIX in v5.1.4:
-1. ✅ FIXED: Stellar SDK liquidity pool discovery API
-   - Changed from for_assets() to for_reserves([asset])
-   - Stellar SDK requires sequence/list of assets, not single asset
-   - Resolves: 'LiquidityPoolsBuilder' object has no attribute 'for_assets'
-
-CRITICAL FIX in v5.1.3:
-1. ✅ FIXED: None handling for max_accounts parameter in _sync_token_accounts
-   - Prevents None being passed through to downstream operations
-   - Defaults to 5000 if None is provided
-2. ✅ FIXED: None handling for limit parameter in _discover_token_accounts
-   - Changed signature to Optional[int] = None
-   - Defaults to 5000 if None is provided
-3. ✅ COMPLIANCE: Maintains all 12 design principles
+UBEC Data Synchronizer v5.1.2 - Foreign Key Constraint Fix
+============================================================
 
 CRITICAL FIX in v5.1.2:
 1. ✅ FIXED: Foreign key constraint violation in _sync_account_balance
@@ -71,7 +37,6 @@ This module implements the service pattern with:
 - Timeout protection to prevent stalls
 - Progress logging for long-running operations
 - Foreign key constraint compliance
-- Proper None handling for optional parameters
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
@@ -101,8 +66,8 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 5.1.7 (Database Check Constraint Fix)
-Date: November 18, 2025
+Version: 5.1.2 (Foreign Key Constraint Fix)
+Date: November 9, 2025
 """
 
 import asyncio
@@ -244,18 +209,8 @@ class RateLimiterWithCircuitBreaker:
 
 
 class UBECDataSynchronizer:
-    """
-    Synchronizes UBEC token data from Stellar blockchain to PostgreSQL.
+    """UBEC Data Synchronizer - Complete async implementation."""
     
-    Service Pattern Compliance:
-    - Factory-based instantiation via create_synchronizer_service()
-    - No standalone execution (enforced in __main__)
-    - Comprehensive health monitoring
-    - Rate limiting with circuit breaker
-    - Pure async operations
-    """
-    
-    # Element mappings for token family
     ELEMENT_MAP = {
         'UBEC': 'air',
         'UBECrc': 'water',
@@ -263,358 +218,373 @@ class UBECDataSynchronizer:
         'UBECtt': 'fire'
     }
     
-    def __init__(self, db_manager, rate_limit_override: Optional[float] = None):
+    def __init__(
+        self,
+        db_manager,
+        rate_limit_override: Optional[float] = None
+    ):
         """
         Initialize UBEC Data Synchronizer.
         
         Args:
-            db_manager: AsyncDatabaseManager instance
-            rate_limit_override: Optional rate limit override for testing
+            db_manager: Async database manager instance
+            rate_limit_override: Optional rate limit override (for testing only)
+                                If None, loads from database during initialize()
         """
         if not STELLAR_SDK_AVAILABLE:
-            raise RuntimeError(f"Stellar SDK not available: {STELLAR_SDK_IMPORT_ERROR}")
+            raise ImportError(
+                f"Stellar SDK is required but not available: {STELLAR_SDK_IMPORT_ERROR}\n"
+                "Install with: pip install stellar-sdk"
+            )
         
         self.db = db_manager
-        self.logger = logging.getLogger('UBECDataSynchronizer')
+        self.logger = logger
+        self._rate_limit_override = rate_limit_override
+        self.rate_limiter = None  # Created in initialize()
         
-        # Service state
         self.initialized = False
         self.server: Optional[ServerAsync] = None
-        self.rate_limiter: Optional[RateLimiterWithCircuitBreaker] = None
-        self.rate_limit_override = rate_limit_override
-        
-        # Configuration from database (Principle #4: Single Source of Truth)
         self.settings: Dict[str, Any] = {}
-        self.network: str = 'unknown'
+        self.network = 'mainnet'
         
-        # Operational metrics
         self.total_pools_synced = 0
         self.total_owners_synced = 0
         self.total_accounts_synced = 0
         self.last_sync_time: Optional[datetime] = None
-        
-        # Error tracking
         self.error_count = 0
         self.last_error: Optional[str] = None
         self.last_error_time: Optional[datetime] = None
         
-        self.logger.info("UBEC Data Synchronizer instantiated (awaiting initialization)")
+        if rate_limit_override is not None:
+            self.logger.info(f"UBEC Data Synchronizer created (rate override: {rate_limit_override} req/s)")
+        else:
+            self.logger.info("UBEC Data Synchronizer created (rate will load from database)")
     
     async def initialize(self) -> None:
-        """
-        Initialize synchronizer with database-loaded configuration.
+        """Initialize synchronizer: load config from database and create Stellar client."""
+        if self.initialized:
+            self.logger.warning("Synchronizer already initialized")
+            return
         
-        Principle #4: Database as single source of truth
-        Principle #8: No duplicate configuration
-        """
         self.logger.info("Initializing UBEC Data Synchronizer...")
         
-        # Load ALL configuration from database
-        settings_query = """
-        SELECT setting_key, setting_value, setting_type
-        FROM system_settings
-        WHERE is_active = TRUE
-        """
-        
-        rows = await self.db.fetch_all(settings_query)
-        
-        for row in rows:
-            key = row['setting_key']
-            value = row['setting_value']
-            setting_type = row['setting_type']
+        try:
+            # Load settings from database
+            settings_query = """
+            SELECT setting_key, setting_value
+            FROM system_settings
+            WHERE is_active = TRUE
+            """
             
-            # Type conversion
-            if setting_type == 'float':
-                self.settings[key] = float(value)
-            elif setting_type == 'int':
-                self.settings[key] = int(value)
-            elif setting_type == 'bool':
-                self.settings[key] = value.lower() in ('true', '1', 'yes')
+            rows = await self.db.fetch_all(settings_query, ())
+            self.settings = {row['setting_key']: row['setting_value'] for row in rows}
+            
+            if not self.settings:
+                raise Exception("No active settings found in system_settings table")
+            
+            self.logger.info(f"  ✓ Loaded {len(self.settings)} settings from database")
+            
+            # Load rate limit from database (Principle #4 & #8)
+            rate_limit = self._rate_limit_override
+            
+            if rate_limit is None:
+                rate_limit_str = self.settings.get('rate_limit_stellar')
+                
+                if not rate_limit_str:
+                    raise Exception(
+                        "CRITICAL: rate_limit_stellar not found in system_settings. "
+                        "Please run: INSERT INTO system_settings (setting_key, setting_value, setting_type, is_active) "
+                        "VALUES ('rate_limit_stellar', '3.0', 'float', TRUE);"
+                    )
+                
+                try:
+                    rate_limit = float(rate_limit_str)
+                    self.logger.info(f"  ✓ Loaded rate limit from database: {rate_limit} req/s")
+                except (ValueError, TypeError) as e:
+                    raise Exception(f"CRITICAL: Invalid rate_limit_stellar value: '{rate_limit_str}'. Error: {e}")
             else:
-                self.settings[key] = value
-        
-        # Validate required settings
-        required_settings = ['horizon_url', 'rate_limit_stellar']
-        missing = [s for s in required_settings if s not in self.settings]
-        
-        if missing:
-            raise ValueError(f"Missing required settings in database: {', '.join(missing)}")
-        
-        # Initialize Stellar server
-        horizon_url = self.settings['horizon_url']
-        self.server = ServerAsync(horizon_url=horizon_url, client=AiohttpClient())
-        self.network = self.settings.get('network', 'mainnet')
-        
-        # Initialize rate limiter with database-configured rate
-        rate_limit = self.rate_limit_override or self.settings['rate_limit_stellar']
-        self.rate_limiter = RateLimiterWithCircuitBreaker(
-            calls_per_second=rate_limit,
-            burst_size=10,
-            circuit_breaker_threshold=10,
-            circuit_breaker_timeout=300
-        )
-        
-        self.initialized = True
-        
-        self.logger.info(f"✓ Initialized with {len(self.settings)} settings from database")
-        self.logger.info(f"  Network: {self.network}")
-        self.logger.info(f"  Horizon URL: {horizon_url}")
-        self.logger.info(f"  Rate limit: {rate_limit} requests/second")
-    
-    async def sync_liquidity_pools(self) -> Dict[str, Any]:
-        """
-        Discover and sync all UBEC-related liquidity pools.
-        
-        Returns dict with:
-        - total_pools: Total pools discovered
-        - by_token: Breakdown by token type
-        - status: success/error
-        """
-        if not self.initialized:
-            raise RuntimeError("Synchronizer not initialized")
-        
-        self.logger.info("\n" + "=" * 70)
-        self.logger.info("DISCOVERING UBEC LIQUIDITY POOLS")
-        self.logger.info("=" * 70)
-        
-        results_by_token = {}
-        total_pools = 0
-        
-        # Discover pools for each UBEC token
-        for token_code, element in self.ELEMENT_MAP.items():
-            issuer_key = f"{token_code.lower()}_issuer"
-            issuer = self.settings.get(issuer_key)
+                self.logger.warning(f"  ⚠ Using OVERRIDE rate limit: {rate_limit} req/s")
             
-            if not issuer:
-                self.logger.warning(f"No issuer configured for {token_code} (key: {issuer_key})")
+            # Validate rate limit
+            if rate_limit <= 0:
+                raise Exception(f"Invalid rate limit: {rate_limit}. Must be > 0")
+            if rate_limit > 10:
+                self.logger.warning(f"  ⚠ Rate limit {rate_limit} exceeds safe limit. May cause 429 errors.")
+            
+            # Create rate limiter with database value
+            self.rate_limiter = RateLimiterWithCircuitBreaker(
+                calls_per_second=rate_limit,
+                burst_size=max(10, int(rate_limit * 2))
+            )
+            
+            # Get Horizon URL
+            horizon_url = self.settings.get('horizon_url')
+            if not horizon_url:
+                raise Exception("CRITICAL: horizon_url not found in system_settings")
+            
+            self.network = self.settings.get('network', 'mainnet')
+            
+            # Create Stellar server client
+            self.server = ServerAsync(
+                horizon_url=horizon_url,
+                client=AiohttpClient()
+            )
+            
+            self.logger.info(f"  ✓ Connected to Stellar Horizon: {horizon_url}")
+            self.logger.info(f"  ✓ Network: {self.network}")
+            self.logger.info(f"  ✓ Rate limiter configured: {rate_limit} req/s")
+            
+            self.initialized = True
+            self.logger.info("✓ UBEC Data Synchronizer initialized successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize synchronizer: {e}")
+            self.error_count += 1
+            self.last_error = str(e)
+            self.last_error_time = datetime.now(timezone.utc)
+            raise
+    
+    def parse_stellar_asset(self, asset_str: str) -> Tuple[str, Optional[str]]:
+        """Parse Stellar asset string into code and issuer."""
+        if asset_str == 'native' or asset_str == 'XLM':
+            return ('XLM', None)
+        
+        parts = asset_str.split(':')
+        if len(parts) == 2:
+            return (parts[0], parts[1])
+        elif len(parts) == 1:
+            return (parts[0], None)
+        else:
+            self.logger.warning(f"Unexpected asset format: {asset_str}")
+            return (asset_str, None)
+    
+    def determine_ubec_position(
+        self,
+        asset_a_code: str,
+        asset_a_issuer: Optional[str],
+        asset_b_code: str,
+        asset_b_issuer: Optional[str]
+    ) -> Optional[str]:
+        """Determine which side of pool contains UBEC token."""
+        for token_code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
+            issuer_key = f"{token_code.lower()}_issuer"
+            expected_issuer = self.settings.get(issuer_key)
+            
+            if not expected_issuer:
                 continue
             
-            self.logger.info(f"\nDiscovering {token_code} ({element}) pools...")
+            if asset_a_code == token_code and asset_a_issuer == expected_issuer:
+                return 'a'
+            
+            if asset_b_code == token_code and asset_b_issuer == expected_issuer:
+                return 'b'
+        
+        return None
+    
+    def calculate_ubec_balance(
+        self,
+        reserve_a: Decimal,
+        reserve_b: Decimal,
+        ubec_position: str
+    ) -> Decimal:
+        """Calculate UBEC balance in pool based on position."""
+        if ubec_position == 'a':
+            return reserve_a
+        elif ubec_position == 'b':
+            return reserve_b
+        else:
+            return Decimal('0')
+    
+    def get_token_code_from_code(self, token_code: str) -> str:
+        """Get token code from asset code."""
+        return token_code
+    
+    async def sync_liquidity_pools(self, max_pools: int = 1000) -> Dict[str, Any]:
+        """Synchronize liquidity pools for all UBEC tokens."""
+        if not self.initialized:
+            raise RuntimeError("Synchronizer not initialized. Call initialize() first.")
+        
+        start_time = datetime.now(timezone.utc)
+        
+        self.logger.info("=" * 70)
+        self.logger.info("SYNCING LIQUIDITY POOLS FOR ALL UBEC TOKENS")
+        self.logger.info("=" * 70)
+        
+        results = {}
+        total_pools = 0
+        
+        for token_code, element in self.ELEMENT_MAP.items():
+            self.logger.info(f"\nSyncing pools for {token_code} ({element})...")
             
             try:
-                pools = await self._discover_token_pools(token_code, issuer, element)
+                pools_synced = await self._sync_token_liquidity_pools(token_code, max_pools)
                 
-                results_by_token[token_code] = {
-                    'pools': len(pools),
+                results[token_code] = {
+                    'pools_synced': pools_synced,
                     'element': element,
                     'status': 'success'
                 }
                 
-                total_pools += len(pools)
-                self.logger.info(f"  ✓ Found {len(pools)} {token_code} pools")
+                total_pools += pools_synced
+                self.logger.info(f"  ✓ Synced {pools_synced} pools for {token_code}")
                 
             except Exception as e:
-                self.logger.error(f"Failed to discover pools for {token_code}: {e}")
-                results_by_token[token_code] = {
-                    'pools': 0,
+                self.logger.error(f"  ✗ Failed to sync pools for {token_code}: {e}")
+                results[token_code] = {
+                    'pools_synced': 0,
                     'element': element,
                     'status': 'error',
                     'error': str(e)
                 }
+                self.error_count += 1
+                self.last_error = str(e)
+                self.last_error_time = datetime.now(timezone.utc)
+        
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+        
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info(f"POOL SYNC COMPLETE: {total_pools} pools in {duration:.1f}s")
+        self.logger.info("=" * 70 + "\n")
         
         return {
             'total_pools': total_pools,
-            'by_token': results_by_token,
-            'status': 'success'
+            'by_token': results,
+            'duration_seconds': duration,
+            'timestamp': end_time.isoformat()
         }
     
-    async def _discover_token_pools(
+    async def _sync_token_liquidity_pools(self, token_code: str, max_pools: int = 1000) -> int:
+        """Sync liquidity pools for a specific token."""
+        issuer_key = f"{token_code.lower()}_issuer"
+        issuer = self.settings.get(issuer_key)
+        
+        if not issuer:
+            self.logger.warning(f"No issuer configured for {token_code}")
+            return 0
+        
+        pools_synced = 0
+        
+        try:
+            pools = await self._fetch_liquidity_pools(token_code, issuer, max_pools)
+            
+            for pool_data in pools:
+                try:
+                    await self._process_pool(pool_data, token_code)
+                    
+                    pool_id = pool_data.get('id')
+                    if pool_id:
+                        await self._sync_pool_participants(pool_id)
+                    
+                    pools_synced += 1
+                    
+                except Exception as e:
+                    pool_id = pool_data.get('id', 'unknown')
+                    self.logger.error(f"Failed to process pool {pool_id[:16]}...: {e}")
+                    continue
+            
+            self.total_pools_synced += pools_synced
+            
+        except Exception as e:
+            self.logger.error(f"Failed to sync pools for {token_code}: {e}")
+            raise
+        
+        return pools_synced
+    
+    async def _fetch_liquidity_pools(
         self,
-        token_code: str,
+        asset_code: str,
         issuer: str,
-        element: str
+        limit: int = 1000
     ) -> List[Dict[str, Any]]:
-        """Discover all liquidity pools for a specific token."""
+        """Fetch liquidity pools from Stellar API."""
         pools = []
         
         try:
             await self.rate_limiter.acquire()
             
-            asset = Asset(token_code, issuer)
-            # ✅ FIX v5.1.4: Stellar SDK API uses for_reserves() not for_assets()
-            # for_reserves() requires a sequence (list/tuple) of assets, not a single asset
-            # See: BaseLiquidityPoolsBuilder.for_reserves(reserves: Sequence[Asset])
-            builder = self.server.liquidity_pools().for_reserves([asset]).limit(200)
+            builder = self.server.liquidity_pools()
+            builder = builder.for_reserves([Asset(asset_code, issuer)])
+            builder = builder.limit(min(limit, 200))
+            
             response = await builder.call()
             
             self.rate_limiter.record_success()
             
             records = response.get('_embedded', {}).get('records', [])
+            pools.extend(records)
             
-            for pool_data in records:
-                pool_id = pool_data.get('id')
-                
-                if not pool_id:
-                    continue
-                
-                # Determine UBEC position in pool
-                reserves = pool_data.get('reserves', [])
-                ubec_position = None
-                other_asset_code = None
-                other_asset_issuer = None
-                
-                for idx, reserve in enumerate(reserves):
-                    if reserve.get('asset', '').startswith(f"{token_code}:"):
-                        # ✅ FIX v5.1.7: Use lowercase 'a'/'b' to match database check constraint
-                        ubec_position = 'a' if idx == 0 else 'b'
-                    else:
-                        asset_str = reserve.get('asset', 'native')
-                        if asset_str == 'native':
-                            other_asset_code = 'XLM'
-                            other_asset_issuer = None
-                        elif ':' in asset_str:
-                            parts = asset_str.split(':')
-                            other_asset_code = parts[0]
-                            other_asset_issuer = parts[1]
-                
-                if ubec_position:
-                    # Calculate UBEC balance in pool
-                    ubec_reserve = reserves[0 if ubec_position == 'a' else 1]
-                    ubec_balance = Decimal(ubec_reserve.get('amount', '0'))
-                    
-                    pool_info = {
-                        'pool_id': pool_id,
-                        'token_code': token_code,
-                        'element': element,
-                        'ubec_position': ubec_position,
-                        'ubec_balance': ubec_balance,
-                        'other_asset_code': other_asset_code,
-                        'other_asset_issuer': other_asset_issuer,
-                        'pool_data': pool_data
-                    }
-                    
-                    pools.append(pool_info)
-                    
-                    # Store pool in database
-                    await self._store_liquidity_pool(pool_info)
-                    
-                    # Sync pool participants
-                    await self._sync_pool_participants(pool_id)
+            self.logger.debug(f"Fetched {len(records)} pools for {asset_code}")
             
-            self.total_pools_synced += len(pools)
-            
-            # Handle pagination
-            while '_links' in response and 'next' in response['_links']:
+            while len(pools) < limit and '_links' in response and 'next' in response['_links']:
                 await self.rate_limiter.acquire()
                 
                 next_url = response['_links']['next']['href']
-                response_data = await self.server._client.get(next_url)
-                response = response_data.json()
+                response = await self.server._client.get(next_url)
+                response = response.json()
                 
                 self.rate_limiter.record_success()
                 
                 records = response.get('_embedded', {}).get('records', [])
-                
-                for pool_data in records:
-                    pool_id = pool_data.get('id')
-                    
-                    if not pool_id:
-                        continue
-                    
-                    # Same processing as above
-                    reserves = pool_data.get('reserves', [])
-                    ubec_position = None
-                    other_asset_code = None
-                    other_asset_issuer = None
-                    
-                    for idx, reserve in enumerate(reserves):
-                        if reserve.get('asset', '').startswith(f"{token_code}:"):
-                            # ✅ FIX v5.1.7: Use lowercase 'a'/'b' to match database check constraint
-                            ubec_position = 'a' if idx == 0 else 'b'
-                        else:
-                            asset_str = reserve.get('asset', 'native')
-                            if asset_str == 'native':
-                                other_asset_code = 'XLM'
-                                other_asset_issuer = None
-                            elif ':' in asset_str:
-                                parts = asset_str.split(':')
-                                other_asset_code = parts[0]
-                                other_asset_issuer = parts[1]
-                    
-                    if ubec_position:
-                        ubec_reserve = reserves[0 if ubec_position == 'a' else 1]
-                        ubec_balance = Decimal(ubec_reserve.get('amount', '0'))
-                        
-                        pool_info = {
-                            'pool_id': pool_id,
-                            'token_code': token_code,
-                            'element': element,
-                            'ubec_position': ubec_position,
-                            'ubec_balance': ubec_balance,
-                            'other_asset_code': other_asset_code,
-                            'other_asset_issuer': other_asset_issuer,
-                            'pool_data': pool_data
-                        }
-                        
-                        pools.append(pool_info)
-                        
-                        await self._store_liquidity_pool(pool_info)
-                        await self._sync_pool_participants(pool_id)
-                
-                self.total_pools_synced += len(records)
+                pools.extend(records)
                 
                 if not records:
                     break
             
-            return pools
+            return pools[:limit]
             
         except Exception as e:
             self.rate_limiter.record_failure()
-            self.logger.error(f"Failed to discover pools for {token_code}: {e}")
+            self.logger.error(f"Failed to fetch pools for {asset_code}: {e}")
             raise
     
-    async def _store_liquidity_pool(self, pool_info: Dict[str, Any]) -> None:
-        """Store or update liquidity pool in database."""
-        pool_data = pool_info['pool_data']
-        pool_id = pool_info['pool_id']
-        token_code = pool_info['token_code']
-        element = pool_info['element']
-        ubec_position = pool_info['ubec_position']
+    async def _process_pool(self, pool_data: Dict[str, Any], associated_token: str) -> None:
+        """Process and store a single liquidity pool."""
+        pool_id = pool_data.get('id')
+        if not pool_id:
+            self.logger.warning("Pool data missing 'id' field")
+            return
         
         reserves = pool_data.get('reserves', [])
+        if len(reserves) != 2:
+            self.logger.warning(f"Pool {pool_id[:16]}... has unexpected reserves count")
+            return
         
-        # Extract pool details
-        asset_a = reserves[0].get('asset', 'native') if len(reserves) > 0 else 'native'
-        asset_b = reserves[1].get('asset', 'native') if len(reserves) > 1 else 'native'
+        asset_a_str = reserves[0].get('asset', 'native')
+        asset_b_str = reserves[1].get('asset', 'native')
         
-        asset_a_code, asset_a_issuer = self._parse_asset_string(asset_a)
-        asset_b_code, asset_b_issuer = self._parse_asset_string(asset_b)
+        asset_a_code, asset_a_issuer = self.parse_stellar_asset(asset_a_str)
+        asset_b_code, asset_b_issuer = self.parse_stellar_asset(asset_b_str)
         
-        reserve_a = Decimal(reserves[0].get('amount', '0')) if len(reserves) > 0 else Decimal('0')
-        reserve_b = Decimal(reserves[1].get('amount', '0')) if len(reserves) > 1 else Decimal('0')
+        reserve_a = Decimal(reserves[0].get('amount', '0'))
+        reserve_b = Decimal(reserves[1].get('amount', '0'))
         
+        ubec_position = self.determine_ubec_position(
+            asset_a_code, asset_a_issuer,
+            asset_b_code, asset_b_issuer
+        )
+        
+        if not ubec_position:
+            self.logger.warning(f"Pool {pool_id[:16]}... does not contain configured UBEC token")
+            return
+        
+        balance = self.calculate_ubec_balance(reserve_a, reserve_b, ubec_position)
+        pair = f"{asset_a_code}/{asset_b_code}"
+        element = self.ELEMENT_MAP.get(associated_token, 'air')
+        token_code = self.get_token_code_from_code(associated_token)
         total_shares = Decimal(pool_data.get('total_shares', '0'))
-        
-        # Determine pair name and balance
-        if ubec_position == 'A':
-            pair = f"{asset_a_code}/{asset_b_code}"
-            balance = reserve_a
-            associated_token = asset_a_code
-        else:
-            pair = f"{asset_b_code}/{asset_a_code}"
-            balance = reserve_b
-            associated_token = asset_b_code
-        
         fee_bp = int(pool_data.get('fee_bp', 30))
-        
-        # Count accounts (trustlines)
-        # ✅ FIX v5.1.6: Ensure trustline_count is an integer, not a string
         trustline_count = int(pool_data.get('total_trustlines', 0))
         
-        now = datetime.now(timezone.utc)
-        
-        # ✅ FIX v5.1.5: Column name is ubec_asset_position, not ubec_position
-        # This matches the actual liquidity_pools table schema
-        # UPSERT pool
         query = """
         INSERT INTO liquidity_pools (
             id, asset_a_code, asset_a_issuer, asset_b_code, asset_b_issuer,
             pair, primary_element, token_code, ubec_asset_position,
-            reserve_a, reserve_b, total_shares, balance,
-            fee_bp, trustline_count, last_modified_at, sync_status
+            reserve_a, reserve_b, total_shares, balance, fee_bp, trustline_count,
+            sync_timestamp, sync_status
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s::element_type, %s::token_code, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s
         )
         ON CONFLICT (id) DO UPDATE SET
             reserve_a = EXCLUDED.reserve_a,
@@ -622,9 +592,11 @@ class UBECDataSynchronizer:
             total_shares = EXCLUDED.total_shares,
             balance = EXCLUDED.balance,
             trustline_count = EXCLUDED.trustline_count,
-            last_modified_at = EXCLUDED.last_modified_at,
-            sync_status = 'synced'
+            sync_timestamp = CURRENT_TIMESTAMP,
+            sync_status = 'active'
         """
+        
+        now = datetime.now(timezone.utc)
         
         try:
             await self.db.execute(
@@ -785,12 +757,11 @@ class UBECDataSynchronizer:
             'timestamp': end_time.isoformat()
         }
     
-    async def _sync_token_accounts(self, token_code: str, max_accounts: Optional[int] = 5000) -> int:
+    async def _sync_token_accounts(self, token_code: str, max_accounts: int = 5000) -> int:
         """
         Sync accounts for a specific token with timeout protection.
         
-        v5.1.3: Added None handling for max_accounts parameter
-        v5.1.1: Added timeouts and progress logging to prevent stalls.
+        v5.1.1 Enhancement: Added timeouts and progress logging to prevent stalls.
         """
         issuer_key = f"{token_code.lower()}_issuer"
         issuer = self.settings.get(issuer_key)
@@ -799,10 +770,6 @@ class UBECDataSynchronizer:
             return 0
         
         accounts_synced = 0
-        
-        # ✅ FIX v5.1.3: Handle None for max_accounts
-        if max_accounts is None:
-            max_accounts = 5000
         
         try:
             # Add timeout for account discovery to prevent infinite hangs
@@ -849,22 +816,12 @@ class UBECDataSynchronizer:
         
         return accounts_synced
     
-    async def _discover_token_accounts(
-        self,
-        asset_code: str,
-        issuer: str,
-        limit: Optional[int] = None
-    ) -> List[str]:
+    async def _discover_token_accounts(self, asset_code: str, issuer: str, limit: int = 5000) -> List[str]:
         """
         Discover accounts holding a specific asset with pagination.
         
-        v5.1.3: Added None handling for limit parameter
-        v5.1.1: Added progress logging and safety limits.
+        v5.1.1 Enhancement: Added progress logging and safety limits.
         """
-        # ✅ FIX v5.1.3: Handle None for limit
-        if limit is None:
-            limit = 5000
-        
         accounts = []
         pages_fetched = 0
         max_pages = 50  # Safety limit: max 50 pages (10,000 accounts at 200/page)
@@ -1067,16 +1024,6 @@ class UBECDataSynchronizer:
         """Legacy method name for sync_all()."""
         return await self.sync_all(max_accounts_per_token)
     
-    def _parse_asset_string(self, asset_str: str) -> Tuple[str, Optional[str]]:
-        """Parse asset string into code and issuer."""
-        if asset_str == 'native':
-            return ('XLM', None)
-        elif ':' in asset_str:
-            parts = asset_str.split(':')
-            return (parts[0], parts[1])
-        else:
-            return (asset_str, None)
-    
     async def health_check(self) -> Dict[str, Any]:
         """Comprehensive health check using ServiceHealthCheck utility."""
         async def check_settings_loaded():
@@ -1183,30 +1130,6 @@ __all__ = [
 if __name__ == "__main__":
     raise RuntimeError(
         "This module implements the service pattern and should not be run directly.\n\n"
-        "v5.1.7 - Database Check Constraint Fix:\n"
-        "  ✅ Fixed database check constraint compliance\n"
-        "  ✅ Changed from uppercase 'A'/'B' to lowercase 'a'/'b'\n"
-        "  ✅ Matches CHECK constraint: ubec_asset_position IN ('a', 'b')\n"
-        "  ✅ Fixed in both discovery and pagination loops\n\n"
-        "v5.1.6 - Type Conversion Fix:\n"
-        "  ✅ Fixed trustline_count type conversion\n"
-        "  ✅ Ensure integer, not string for database parameter\n"
-        "  ✅ Added explicit int() conversion\n\n"
-        "v5.1.5 - Database Schema Column Fix:\n"
-        "  ✅ Fixed database schema column name\n"
-        "  ✅ Changed from ubec_position to ubec_asset_position\n"
-        "  ✅ Matches actual liquidity_pools table structure\n\n"
-        "v5.1.4 - Stellar SDK API Fix:\n"
-        "  ✅ Fixed liquidity pool discovery API\n"
-        "  ✅ Changed from for_assets() to for_reserves([asset])\n"
-        "  ✅ Stellar SDK requires list of assets, not single asset\n\n"
-        "v5.1.3 - None Handling Fix:\n"
-        "  ✅ Added None handling for max_accounts parameter\n"
-        "  ✅ Added None handling for limit parameter\n"
-        "  ✅ Defaults to 5000 if None is provided\n\n"
-        "v5.1.2 - Foreign Key Constraint Fix:\n"
-        "  ✅ Ensures account exists in stellar_accounts before balance insert\n"
-        "  ✅ Prevents FK constraint violations\n\n"
         "v5.1.1 - Stall Prevention & Timeout Protection:\n"
         "  ✅ Added timeout protection (60s discovery, 10s per account)\n"
         "  ✅ Added progress logging (every 10 accounts)\n"
