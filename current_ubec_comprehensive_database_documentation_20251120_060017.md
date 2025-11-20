@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-19T12:03:03.443084
+**Generated:** 2025-11-20T06:00:16.653016
 
 **Database:** ubec
 
@@ -30,11 +30,11 @@
 ### Summary Statistics
 
 - **Total Schemas:** 4
-- **Total Tables:** 80
+- **Total Tables:** 81
 - **Total Views:** 35
-- **Total Functions:** 1142
-- **Total Rows:** 155,571
-- **Total Columns:** 1,003
+- **Total Functions:** 1143
+- **Total Rows:** 166,795
+- **Total Columns:** 1,011
 - **Total Foreign Keys:** 31
 
 ### Schema Summary
@@ -44,7 +44,7 @@
 | phenomenal | 28 | 13 | 19 | 1,297 | 742 MB |
 | public | 1 | 2 | 940 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 49 | 20 | 80 | 145,774 | 105 MB |
+| ubec_main | 50 | 20 | 81 | 156,998 | 112 MB |
 
 ---
 
@@ -7733,7 +7733,7 @@
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 49 | **Views:** 20 | **Functions:** 80 | **Total Rows:** 145,774 | **Size:** 105 MB
+**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 156,998 | **Size:** 112 MB
 
 ### Schema Permissions
 
@@ -7741,7 +7741,7 @@
 - **reward_admin:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **reward_data_writer:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **ubec_admin:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
-- **ubec_app:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
+- **ubec_app:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **ubec_sync:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 
 ### Sequences
@@ -7945,6 +7945,14 @@
 - **Min:** 1, **Max:** 2147483647
 - **Cache:** 1
 - **Owned By:** regenerative_projects.id
+
+#### scheduler_execution_log_id_seq
+
+- **Start:** 1
+- **Increment:** 1
+- **Min:** 1, **Max:** 2147483647
+- **Cache:** 1
+- **Owned By:** scheduler_execution_log.id
 
 #### scheduler_jobs_id_seq
 
@@ -8843,7 +8851,7 @@
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 2,283 | **Size:** 3720 kB
+**Rows:** 3,281 | **Size:** 4856 kB
 
 **Columns:**
 
@@ -8882,15 +8890,15 @@
 - valid_ubuntu_score: CHECK (((ubuntu_alignment_score >= (0)::numeric) AND (ubuntu_alignment_score <= (1)::numeric)))
 
 **Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 152 kB
-- UNIQUE BTREE: (account_id) - 280 kB
-- BTREE: (account_id) - 144 kB
+- PRIMARY UNIQUE BTREE: (id) - 168 kB
+- UNIQUE BTREE: (account_id) - 320 kB
+- BTREE: (account_id) - 152 kB
 - BTREE: (calculation_mode) - 56 kB
 - BTREE: (holonic_category) - 72 kB
-- BTREE: (composite_score) - 168 kB
-- BTREE: (confidence) - 136 kB
-- BTREE: (evaluation_date) - 208 kB
-- UNIQUE BTREE: (evaluation_date, account_id) - 376 kB
+- BTREE: (composite_score) - 208 kB
+- BTREE: (confidence) - 152 kB
+- BTREE: (evaluation_date) - 224 kB
+- UNIQUE BTREE: (evaluation_date, account_id) - 560 kB
 
 **Triggers:**
 - **trg_set_evaluation_date_date:** BEFORE INSERT OR UPDATE ROW
@@ -9382,9 +9390,40 @@
 
 ---
 
+#### scheduler_execution_log
+
+**Rows:** 0 | **Size:** 40 kB
+
+**Columns:**
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|----------|
+| id | integer(32) | ✗ | nextval('scheduler_execution_log_id_seq'::regclass) |
+| job_name | character varying(100) | ✗ |  |
+| executed_at | timestamp without time zone | ✗ | now() |
+| duration_ms | integer(32) | ✓ |  |
+| success | boolean | ✗ |  |
+| error_message | text | ✓ |  |
+| error_traceback | text | ✓ |  |
+| created_at | timestamp without time zone | ✓ | now() |
+
+**Primary Key:**
+- scheduler_execution_log_pkey: (id)
+
+**Indexes:**
+- BTREE: (executed_at) - 8192 bytes
+- BTREE: (job_name) - 8192 bytes
+- BTREE: (success) - 8192 bytes
+- PRIMARY UNIQUE BTREE: (id) - 8192 bytes
+
+**Permissions:**
+- **ubec_app:** INSERT, SELECT
+
+---
+
 #### scheduler_jobs
 
-*Scheduled jobs for automated distribution management*
+*Scheduled jobs configuration. job_function must be in format: service_name.method_name where both service and method exist in the registry.*
 
 **Rows:** 7 | **Size:** 112 kB
 
@@ -9397,9 +9436,9 @@
 | schedule_interval | character varying(50) | ✗ |  |
 | next_run | timestamp without time zone | ✗ |  |
 | last_run | timestamp without time zone | ✓ |  |
-| job_function | text | ✗ |  |
+| job_function *(Format: service_name.method_name - Service must be registered in service registry and method must exist on that service.)* | text | ✗ |  |
 | parameters | jsonb | ✓ |  |
-| enabled | boolean | ✓ | true |
+| enabled *(When false, job is disabled. blockchain_sync disabled because sync service not registered. bioregion_analysis disabled because bioregion_manager not registered.)* | boolean | ✓ | true |
 | created_at | timestamp without time zone | ✗ | now() |
 | updated_at | timestamp without time zone | ✗ | now() |
 
@@ -9472,7 +9511,7 @@
 
 *Stellar blockchain accounts with element tracking*
 
-**Rows:** 1,481 | **Size:** 1032 kB
+**Rows:** 1,492 | **Size:** 1040 kB
 
 **Columns:**
 
@@ -9511,7 +9550,7 @@
 - BTREE: (created_at) - 40 kB
 - BTREE: (primary_element) - 40 kB
 - UNIQUE BTREE: (account_id) - 216 kB
-- PRIMARY UNIQUE BTREE: (id) - 72 kB
+- PRIMARY UNIQUE BTREE: (id) - 80 kB
 
 **Triggers:**
 - **trg_stellar_accounts_modified:** BEFORE UPDATE ROW
@@ -9652,7 +9691,7 @@
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 30,889 | **Size:** 29 MB
+**Rows:** 34,498 | **Size:** 32 MB
 
 **Columns:**
 
@@ -9690,24 +9729,24 @@
 - stellar_operations_operation_id_key: (operation_id)
 
 **Indexes:**
-- BTREE: (asset_code) - 240 kB
-- BTREE: (created_at) - 936 kB
-- BTREE: (operation_element) - 240 kB
-- BTREE: (from_account) - 368 kB
-- BTREE: (operation_id) - 1672 kB
-- BTREE: (to_account) - 448 kB
-- BTREE: (transaction_hash) - 3320 kB
-- BTREE: (type) - 248 kB
-- BTREE: (asset_code, from_account, to_account, created_at) - 7112 kB
+- BTREE: (asset_code) - 304 kB
+- BTREE: (created_at) - 1024 kB
+- BTREE: (operation_element) - 304 kB
+- BTREE: (from_account) - 432 kB
+- BTREE: (operation_id) - 1888 kB
+- BTREE: (to_account) - 504 kB
+- BTREE: (transaction_hash) - 3728 kB
+- BTREE: (type) - 304 kB
+- BTREE: (asset_code, from_account, to_account, created_at) - 7344 kB
 - BTREE: (asset_code) - 16 kB
-- BTREE: (created_at) - 864 kB
-- BTREE: (from_account) - 288 kB
-- BTREE: (asset_code, from_account) - 288 kB
-- BTREE: (source_account) - 360 kB
-- BTREE: (to_account) - 376 kB
-- BTREE: (asset_code, to_account) - 384 kB
-- UNIQUE BTREE: (operation_id) - 1640 kB
-- PRIMARY UNIQUE BTREE: (id) - 736 kB
+- BTREE: (created_at) - 968 kB
+- BTREE: (from_account) - 304 kB
+- BTREE: (asset_code, from_account) - 304 kB
+- BTREE: (source_account) - 416 kB
+- BTREE: (to_account) - 392 kB
+- BTREE: (asset_code, to_account) - 400 kB
+- UNIQUE BTREE: (operation_id) - 1864 kB
+- PRIMARY UNIQUE BTREE: (id) - 832 kB
 
 **Permissions:**
 - **PUBLIC:** SELECT
@@ -9726,7 +9765,7 @@
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 98,549 | **Size:** 60 MB
+**Rows:** 101,163 | **Size:** 62 MB
 
 **Columns:**
 
@@ -9764,13 +9803,13 @@
 - stellar_transactions_transaction_hash_key: (transaction_hash)
 
 **Indexes:**
-- BTREE: (created_at) - 2880 kB
-- BTREE: (primary_element) - 1088 kB
+- BTREE: (created_at) - 2960 kB
+- BTREE: (primary_element) - 1104 kB
 - BTREE: (transaction_hash) - 12 MB
-- BTREE: (ledger_sequence) - 1112 kB
-- BTREE: (source_account) - 1256 kB
+- BTREE: (ledger_sequence) - 1128 kB
+- BTREE: (source_account) - 1288 kB
 - GIN: (involves_tokens) - 480 kB
-- PRIMARY UNIQUE BTREE: (id) - 2408 kB
+- PRIMARY UNIQUE BTREE: (id) - 2464 kB
 - UNIQUE BTREE: (transaction_hash) - 12 MB
 
 **Permissions:**
@@ -10342,7 +10381,7 @@
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 1,996 | **Size:** 2224 kB
+**Rows:** 5,988 | **Size:** 3840 kB
 
 **Columns:**
 
@@ -10376,13 +10415,13 @@
 - valid_score: CHECK (((score >= (0)::numeric) AND (score <= (1)::numeric)))
 
 **Indexes:**
-- BTREE: (account_id) - 88 kB
-- BTREE: (calculated_at) - 160 kB
-- BTREE: (element) - 48 kB
-- BTREE: (health_status) - 72 kB
-- BTREE: (principle) - 48 kB
-- BTREE: (score) - 192 kB
-- PRIMARY UNIQUE BTREE: (id) - 160 kB
+- BTREE: (account_id) - 168 kB
+- BTREE: (calculated_at) - 208 kB
+- BTREE: (element) - 80 kB
+- BTREE: (health_status) - 96 kB
+- BTREE: (principle) - 80 kB
+- BTREE: (score) - 248 kB
+- PRIMARY UNIQUE BTREE: (id) - 208 kB
 
 **Row Level Security:** Enabled
 
@@ -10706,12 +10745,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(bytea, text)
+#### digest(text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### digest(text, text)
+#### digest(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -10796,12 +10835,12 @@
 - **Returns:** TABLE(setting_key character varying, setting_value text, setting_type character varying, description text)
 - **Language:** plpgsql
 
-#### hmac(text, text, text)
+#### hmac(bytea, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### hmac(bytea, bytea, text)
+#### hmac(text, text, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -10827,12 +10866,12 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt(bytea, bytea, text)
+#### pgp_pub_decrypt(bytea, bytea, text, text)
 
 - **Returns:** text
 - **Language:** c
 
-#### pgp_pub_decrypt(bytea, bytea, text, text)
+#### pgp_pub_decrypt(bytea, bytea, text)
 
 - **Returns:** text
 - **Language:** c
@@ -10842,17 +10881,12 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_decrypt_bytea(bytea, bytea, text)
-
-- **Returns:** bytea
-- **Language:** c
-
 #### pgp_pub_decrypt_bytea(bytea, bytea)
 
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt(text, bytea, text)
+#### pgp_pub_decrypt_bytea(bytea, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -10862,7 +10896,7 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_pub_encrypt_bytea(bytea, bytea, text)
+#### pgp_pub_encrypt(text, bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -10872,9 +10906,9 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_decrypt(bytea, text, text)
+#### pgp_pub_encrypt_bytea(bytea, bytea, text)
 
-- **Returns:** text
+- **Returns:** bytea
 - **Language:** c
 
 #### pgp_sym_decrypt(bytea, text)
@@ -10882,9 +10916,9 @@
 - **Returns:** text
 - **Language:** c
 
-#### pgp_sym_decrypt_bytea(bytea, text)
+#### pgp_sym_decrypt(bytea, text, text)
 
-- **Returns:** bytea
+- **Returns:** text
 - **Language:** c
 
 #### pgp_sym_decrypt_bytea(bytea, text, text)
@@ -10892,7 +10926,7 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_encrypt(text, text)
+#### pgp_sym_decrypt_bytea(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -10902,12 +10936,17 @@
 - **Returns:** bytea
 - **Language:** c
 
-#### pgp_sym_encrypt_bytea(bytea, text)
+#### pgp_sym_encrypt(text, text)
 
 - **Returns:** bytea
 - **Language:** c
 
 #### pgp_sym_encrypt_bytea(bytea, text, text)
+
+- **Returns:** bytea
+- **Language:** c
+
+#### pgp_sym_encrypt_bytea(bytea, text)
 
 - **Returns:** bytea
 - **Language:** c
@@ -11062,6 +11101,11 @@
 
 - **Returns:** uuid
 - **Language:** c
+
+#### validate_ecosystem_metrics()
+
+- **Returns:** trigger
+- **Language:** plpgsql
 
 #### verify_user_setup()
 

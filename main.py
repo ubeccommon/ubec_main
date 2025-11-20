@@ -63,9 +63,46 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.7.10
+Version: 3.7.14
 Updated: 2025-11-19
 
+
+CHANGELOG v3.7.14:
+    - 🔧 ENHANCEMENT: Added blockchain sync service registration
+    - ADDED: Registered 'sync' service in register_core_services() function
+    - ADDED: Sync service to health check monitoring list
+    - ENABLES: blockchain_sync scheduler job can now be activated
+    - USES: core.db.ubec_data_synchronizer.register_factory for service creation
+    - DEPENDENCIES: database, config, stellar_client
+    - IMPACT: Blockchain synchronization now available for automated scheduling
+    - TOTAL SERVICES: Now 16 (added sync service)
+    - COMPLIANCE: Follows Design Principle #2 (Service Pattern) and #3 (Service Registry)
+
+CHANGELOG v3.7.13:
+    - 🔧 CRITICAL FIX: Added missing API service registration
+    - FIXED: Registered 'api_service' in register_core_services() function
+    - FIXED: Changed handle_serve() to use registry.get('api_service') instead of import from non-existent 'api.main'
+    - FIXED: API service now properly initialized with BackendAPIService from services.api.api_service
+    - RESOLVES: ModuleNotFoundError - "No module named 'api'"
+    - IMPACT: API server now starts successfully with all 15 services operational
+    - COMPLIANCE: Follows Design Principle #2 (Service Pattern) and #3 (Service Registry)
+    - TOTAL SERVICES: Now 15 (config, database, rate_limiter, stellar_client, air_protocol, 
+                            water_protocol, earth_protocol, fire_protocol, analytics, audit, 
+                            distribution, holonic_evaluator, visualizer, api_service, scheduler)
+
+CHANGELOG v3.7.12:
+    - 🔧 FIX: Fixed transaction detail display for nested transaction data
+    - FIXED: Access tx.get('transaction', tx) to handle nested structure
+    - IMPACT: Transaction amounts and destinations now display correctly
+    - NOTE: Distribution service wraps transaction data in result object
+
+CHANGELOG v3.7.11:
+    - 🔧 FIX: Fixed string formatting error in execute-rebalance results display
+    - FIXED: Convert total_distributed from string to float before formatting
+    - FIXED: Convert transaction amounts from string to float before formatting  
+    - RESOLVES: "Unknown format code 'f' for object of type 'str'" error
+    - IMPACT: Distribution execution results now display correctly
+    - NOTE: Distribution service returns Decimal as string for JSON serialization
 
 CHANGELOG v3.7.10:
     - 🔧 FIX: Added missing initialize() call for distribution service
@@ -477,6 +514,44 @@ def register_core_services() -> ServiceRegistry:
                              dependencies=['database', 'stellar_client', 'config'])
     
     # ========================================================================
+    # SYNC SERVICE (Depends on database and stellar_client)
+    # ========================================================================
+    
+    async def create_sync(registry):
+        """
+        Create blockchain synchronization service.
+        
+        The sync service synchronizes UBEC token family data from the Stellar
+        blockchain to the PostgreSQL database. Handles all four UBEC tokens:
+        UBEC (Air), UBECrc (Water), UBECgpi (Earth), UBECtt (Fire).
+        
+        Dependencies:
+            - database: For storing synchronized blockchain data
+            - stellar_client: For accessing Stellar Horizon API
+            - config: For system configuration
+        """
+        from core.db.ubec_data_synchronizer import register_factory as create_synchronizer
+        logger.info("✅ Registering: Blockchain Sync Service")
+        
+        # Get dependencies from registry
+        database = await registry.get('database')
+        config = await registry.get('config')
+        stellar_client = await registry.get('stellar_client')
+        
+        # Create and initialize synchronizer service
+        service = await create_synchronizer(
+            database=database,
+            config=config,
+            stellar_client=stellar_client
+        )
+        
+        logger.info("✅ Blockchain sync service initialized")
+        return service
+    
+    registry.register_factory('sync', create_sync,
+                             dependencies=['database', 'config', 'stellar_client'])
+    
+    # ========================================================================
     # ANALYTICS SERVICES (Depends on protocol services)
     # ========================================================================
     
@@ -593,6 +668,36 @@ def register_core_services() -> ServiceRegistry:
                              dependencies=['database', 'config'])
     
     # ========================================================================
+    # API SERVICE (Depends on infrastructure and analytics services)
+    # ========================================================================
+    
+    async def create_api_service(registry):
+        """
+        Create Backend API Service for REST endpoints.
+        
+        The API service provides read-only REST endpoints for the public website,
+        with comprehensive rate limiting and proper error handling.
+        
+        Dependencies:
+            - database: For direct database queries
+            - config: For system configuration
+            - analytics: For ecosystem metrics
+            - distribution: For tokenomics compliance
+            - holonic_evaluator: For Ubuntu alignment scores
+        """
+        from services.api.api_service import create_backend_api_service
+        logger.info("✅ Registering: Backend API Service")
+        
+        # Create API service with registry for dependency injection
+        api_service = await create_backend_api_service(registry)
+        
+        logger.info("✅ Backend API service initialized")
+        return api_service
+    
+    registry.register_factory('api_service', create_api_service,
+                             dependencies=['database', 'config', 'analytics', 'distribution', 'holonic_evaluator'])
+    
+    # ========================================================================
     # SCHEDULER SERVICE (Depends on all services)
     # ========================================================================
     
@@ -649,11 +754,14 @@ async def handle_health(registry: ServiceRegistry, detailed: bool = False):
         ('water_protocol', 'Water Protocol (UBECrc)'),
         ('earth_protocol', 'Earth Protocol (UBECgpi)'),
         ('fire_protocol', 'Fire Protocol (UBECtt)'),
+        ('sync', 'Blockchain Sync Service'),
         ('analytics', 'Analytics Service'),
         ('distribution', 'Distribution Service'),
         ('holonic_evaluator', 'Holonic Evaluator'),
         ('visualizer', 'Holonic Visualizer'),
         ('audit', 'Audit Service'),
+        ('api_service', 'API Service'),
+        ('scheduler', 'Scheduler Service'),
     ]
     
     healthy_count = 0
@@ -1253,11 +1361,11 @@ async def handle_serve(
         await scheduler.start()
         logger.info("✅ Scheduler started")
         
-        # Import FastAPI app
-        from api.main import create_app
+        # Get API service from registry
+        api_service = await registry.get('api_service')
         
-        # Create app with registry
-        app = create_app(registry)
+        # Get the FastAPI app instance from the service
+        app = api_service.app
         
         # Configure uvicorn
         config = uvicorn.Config(
@@ -1417,13 +1525,21 @@ async def handle_distribution(registry: ServiceRegistry, action: str, dry_run: b
             if result.get('success'):
                 logger.info(f"\n✅ {'Simulation' if dry_run else 'Execution'} completed")
                 logger.info(f"\nResults:")
-                logger.info(f"  Total to distribute: {result.get('total_distributed', 0):,.2f} UBEC")
+                # Convert string to float for formatting (distribution service returns string)
+                total_dist = result.get('total_distributed', '0')
+                total_dist = float(total_dist) if isinstance(total_dist, str) else total_dist
+                logger.info(f"  Total to distribute: {total_dist:,.2f} UBEC")
                 logger.info(f"  Transactions: {result.get('accounts_updated', 0)}")
                 
                 if result.get('transactions'):
                     logger.info(f"\nTransactions:")
                     for tx in result['transactions'][:5]:
-                        logger.info(f"  - {tx.get('amount', 0):,.2f} UBEC to {tx.get('destination', 'N/A')[:10]}...")
+                        # Transaction data is nested in 'transaction' key
+                        tx_data = tx.get('transaction', tx)
+                        amount = tx_data.get('amount', '0')
+                        amount = float(amount) if isinstance(amount, str) else amount
+                        destination = tx_data.get('destination', 'N/A')
+                        logger.info(f"  - {amount:,.2f} UBEC to {destination[:10]}...")
                     
                     if len(result['transactions']) > 5:
                         logger.info(f"  ... and {len(result['transactions']) - 5} more")
