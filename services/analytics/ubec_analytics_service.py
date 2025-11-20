@@ -463,6 +463,7 @@ class UBECAnalyticsService:
         return await ServiceHealthCheck.database_dependent_health(
             service_name='ubec_analytics_service',
             version='3.7.0',
+            db_manager=self._db,
             check_functions=[
                 ('database_connectivity', check_database),
                 ('data_freshness', check_data_freshness),
