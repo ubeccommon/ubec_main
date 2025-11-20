@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-20T06:00:16.653016
+**Generated:** 2025-11-20T07:04:14.698101
 
 **Database:** ubec
 
@@ -33,7 +33,7 @@
 - **Total Tables:** 81
 - **Total Views:** 35
 - **Total Functions:** 1143
-- **Total Rows:** 166,795
+- **Total Rows:** 168,044
 - **Total Columns:** 1,011
 - **Total Foreign Keys:** 31
 
@@ -44,7 +44,7 @@
 | phenomenal | 28 | 13 | 19 | 1,297 | 742 MB |
 | public | 1 | 2 | 940 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 50 | 20 | 81 | 156,998 | 112 MB |
+| ubec_main | 50 | 20 | 81 | 158,247 | 113 MB |
 
 ---
 
@@ -7733,7 +7733,7 @@
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 156,998 | **Size:** 112 MB
+**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 158,247 | **Size:** 113 MB
 
 ### Schema Permissions
 
@@ -8851,7 +8851,7 @@
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 3,281 | **Size:** 4856 kB
+**Rows:** 3,281 | **Size:** 4904 kB
 
 **Columns:**
 
@@ -8890,14 +8890,14 @@
 - valid_ubuntu_score: CHECK (((ubuntu_alignment_score >= (0)::numeric) AND (ubuntu_alignment_score <= (1)::numeric)))
 
 **Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 168 kB
+- PRIMARY UNIQUE BTREE: (id) - 184 kB
 - UNIQUE BTREE: (account_id) - 320 kB
 - BTREE: (account_id) - 152 kB
 - BTREE: (calculation_mode) - 56 kB
 - BTREE: (holonic_category) - 72 kB
 - BTREE: (composite_score) - 208 kB
 - BTREE: (confidence) - 152 kB
-- BTREE: (evaluation_date) - 224 kB
+- BTREE: (evaluation_date) - 256 kB
 - UNIQUE BTREE: (evaluation_date, account_id) - 560 kB
 
 **Triggers:**
@@ -9691,7 +9691,7 @@
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 34,498 | **Size:** 32 MB
+**Rows:** 35,280 | **Size:** 33 MB
 
 **Columns:**
 
@@ -9729,24 +9729,24 @@
 - stellar_operations_operation_id_key: (operation_id)
 
 **Indexes:**
-- BTREE: (asset_code) - 304 kB
-- BTREE: (created_at) - 1024 kB
-- BTREE: (operation_element) - 304 kB
-- BTREE: (from_account) - 432 kB
-- BTREE: (operation_id) - 1888 kB
+- BTREE: (asset_code) - 352 kB
+- BTREE: (created_at) - 1040 kB
+- BTREE: (operation_element) - 352 kB
+- BTREE: (from_account) - 440 kB
+- BTREE: (operation_id) - 1936 kB
 - BTREE: (to_account) - 504 kB
-- BTREE: (transaction_hash) - 3728 kB
+- BTREE: (transaction_hash) - 3864 kB
 - BTREE: (type) - 304 kB
-- BTREE: (asset_code, from_account, to_account, created_at) - 7344 kB
+- BTREE: (asset_code, from_account, to_account, created_at) - 7384 kB
 - BTREE: (asset_code) - 16 kB
-- BTREE: (created_at) - 968 kB
-- BTREE: (from_account) - 304 kB
-- BTREE: (asset_code, from_account) - 304 kB
-- BTREE: (source_account) - 416 kB
+- BTREE: (created_at) - 992 kB
+- BTREE: (from_account) - 312 kB
+- BTREE: (asset_code, from_account) - 328 kB
+- BTREE: (source_account) - 424 kB
 - BTREE: (to_account) - 392 kB
 - BTREE: (asset_code, to_account) - 400 kB
-- UNIQUE BTREE: (operation_id) - 1864 kB
-- PRIMARY UNIQUE BTREE: (id) - 832 kB
+- UNIQUE BTREE: (operation_id) - 1904 kB
+- PRIMARY UNIQUE BTREE: (id) - 864 kB
 
 **Permissions:**
 - **PUBLIC:** SELECT
@@ -9765,7 +9765,7 @@
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 101,163 | **Size:** 62 MB
+**Rows:** 101,630 | **Size:** 62 MB
 
 **Columns:**
 
@@ -9803,13 +9803,13 @@
 - stellar_transactions_transaction_hash_key: (transaction_hash)
 
 **Indexes:**
-- BTREE: (created_at) - 2960 kB
+- BTREE: (created_at) - 2968 kB
 - BTREE: (primary_element) - 1104 kB
 - BTREE: (transaction_hash) - 12 MB
 - BTREE: (ledger_sequence) - 1128 kB
-- BTREE: (source_account) - 1288 kB
+- BTREE: (source_account) - 1296 kB
 - GIN: (involves_tokens) - 480 kB
-- PRIMARY UNIQUE BTREE: (id) - 2464 kB
+- PRIMARY UNIQUE BTREE: (id) - 2472 kB
 - UNIQUE BTREE: (transaction_hash) - 12 MB
 
 **Permissions:**
@@ -10381,7 +10381,7 @@
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 5,988 | **Size:** 3840 kB
+**Rows:** 5,988 | **Size:** 3936 kB
 
 **Columns:**
 
@@ -10416,12 +10416,12 @@
 
 **Indexes:**
 - BTREE: (account_id) - 168 kB
-- BTREE: (calculated_at) - 208 kB
+- BTREE: (calculated_at) - 280 kB
 - BTREE: (element) - 80 kB
-- BTREE: (health_status) - 96 kB
+- BTREE: (health_status) - 104 kB
 - BTREE: (principle) - 80 kB
-- BTREE: (score) - 248 kB
-- PRIMARY UNIQUE BTREE: (id) - 208 kB
+- BTREE: (score) - 312 kB
+- PRIMARY UNIQUE BTREE: (id) - 280 kB
 
 **Row Level Security:** Enabled
 
