@@ -68,19 +68,9 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.8.4
+Version: 3.8.3
 Updated: 2025-11-27
 
-
-CHANGELOG v3.8.4:
-    - ✅ ADDED: sync-operations command for network-wide token operation sync
-    - ✅ ADDED: handle_sync_operations() function
-    - ✅ FEATURE: Fetches ALL operations for UBEC tokens from Stellar network
-    - ✅ FEATURE: Captures transactions from ALL accounts, not just known ones
-    - ✅ CLI: python main.py sync-operations --token all --limit 1000
-    - ✅ USES: sync.sync_token_operations() method (v5.2.14)
-    - ✅ USES: sync.sync_all_token_operations() method (v5.2.14)
-    - 🎯 COMPLIANCE: All 12 design principles verified and maintained
 
 CHANGELOG v3.8.3:
     - ✅ ADDED: cleanup command for removing irrelevant accounts
@@ -1104,89 +1094,6 @@ async def handle_cleanup(
         raise
 
 
-async def handle_sync_operations(
-    registry: ServiceRegistry,
-    token: str = 'all',
-    limit: int = 1000
-):
-    """
-    Sync ALL UBEC token operations network-wide.
-    
-    NEW in v3.8.4: This command fetches operations directly by asset,
-    capturing ALL network activity for UBEC tokens regardless of whether
-    we know about the accounts involved.
-    
-    This is the proper way to get complete transaction history - by watching
-    the assets themselves rather than individual accounts.
-    
-    Args:
-        registry: Service registry
-        token: Token to sync (all, UBEC, UBECrc, UBECgpi, UBECtt)
-        limit: Maximum operations per token (default: 1000)
-    
-    Design Principles:
-        ✅ #4: Database as single source of truth
-        ✅ #5: Strict async operations
-        ✅ #9: Rate limiting (built into sync service)
-        ✅ #10: Separation of concerns
-    """
-    logger.info("=" * 70)
-    logger.info("NETWORK-WIDE TOKEN OPERATIONS SYNC")
-    logger.info("=" * 70)
-    logger.info(f"Token: {token}")
-    logger.info(f"Limit per token: {limit}")
-    
-    try:
-        sync_service = await registry.get('sync')
-        
-        # Check if sync service has the new method
-        if not hasattr(sync_service, 'sync_token_operations'):
-            logger.error("Sync service does not have sync_token_operations method")
-            logger.error("Please update ubec_data_synchronizer.py to v5.2.14 or later")
-            return
-        
-        if token == 'all':
-            # Sync all tokens
-            if hasattr(sync_service, 'sync_all_token_operations'):
-                result = await sync_service.sync_all_token_operations(limit_per_token=limit)
-            else:
-                # Fallback: sync each token individually
-                result = {'total_operations_synced': 0, 'by_token': {}}
-                for tk in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                    logger.info(f"\nSyncing {tk}...")
-                    tk_result = await sync_service.sync_token_operations(tk, limit=limit)
-                    result['by_token'][tk] = tk_result
-                    result['total_operations_synced'] += tk_result.get('operations_synced', 0)
-        else:
-            # Sync specific token
-            if token not in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
-                logger.error(f"Invalid token: {token}. Must be: all, UBEC, UBECrc, UBECgpi, UBECtt")
-                return
-            result = await sync_service.sync_token_operations(token, limit=limit)
-            result = {
-                'total_operations_synced': result.get('operations_synced', 0),
-                'by_token': {token: result}
-            }
-        
-        # Display results
-        logger.info("\n" + "=" * 70)
-        logger.info("SYNC RESULTS")
-        logger.info("=" * 70)
-        logger.info(f"Total operations synced: {result['total_operations_synced']}")
-        
-        if result.get('by_token'):
-            logger.info("\nBy token:")
-            for tk, tk_result in result['by_token'].items():
-                ops = tk_result.get('operations_synced', 0)
-                logger.info(f"  {tk}: {ops} operations")
-        
-        logger.info("\n✓ Sync completed successfully")
-        
-    except Exception as e:
-        logger.error(f"Sync operations failed: {e}", exc_info=True)
-        raise
-
-
 async def handle_analytics(registry: ServiceRegistry, analysis_type: str = 'overview'):
     """Run analytics on ecosystem data."""
     logger.info("=" * 70)
@@ -1567,16 +1474,6 @@ def create_argument_parser() -> argparse.ArgumentParser:
                             help='Force resync even if recently synced')
     
     # ════════════════════════════════════════════════════════════════════
-    # NEW v3.8.4: Sync operations command (network-wide)
-    # ════════════════════════════════════════════════════════════════════
-    sync_ops_parser = subparsers.add_parser('sync-operations', 
-                                            help='Sync ALL UBEC token operations network-wide')
-    sync_ops_parser.add_argument('--token', type=str, default='all',
-                                help='Token to sync: all, UBEC, UBECrc, UBECgpi, UBECtt')
-    sync_ops_parser.add_argument('--limit', type=int, default=1000,
-                                help='Maximum operations to fetch per token (default: 1000)')
-    
-    # ════════════════════════════════════════════════════════════════════
     # NEW v3.8.3: Cleanup command
     # ════════════════════════════════════════════════════════════════════
     cleanup_parser = subparsers.add_parser('cleanup', 
@@ -1684,16 +1581,6 @@ async def main():
                     sync_type=args.sync_type,
                     max_accounts=args.max_accounts,
                     force=args.force
-                )
-            
-            # ════════════════════════════════════════════════════════════════
-            # NEW v3.8.4: Sync operations command handler (network-wide)
-            # ════════════════════════════════════════════════════════════════
-            elif args.command == 'sync-operations':
-                await handle_sync_operations(
-                    registry,
-                    token=args.token,
-                    limit=args.limit
                 )
             
             # ════════════════════════════════════════════════════════════════

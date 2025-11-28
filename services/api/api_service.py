@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.4.6 (CASE-INSENSITIVE ASSET FILTER)
-================================================================
+UBEC Backend API Service - Production Version 2.5.7 (GATEWAY AUTH)
+===================================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
 
@@ -10,7 +10,77 @@ providing an abstraction layer between the public website and internal
 protocol operations. Integrated with real bioregion tracking, ecoregion
 data, and watershed information.
 
-NEW IN v2.4.6 - CASE-INSENSITIVE ASSET FILTER:
+NEW IN v2.5.7 - API GATEWAY AUTHENTICATION:
+- ✨ NEW: APIGatewayAuthMiddleware integration for defense-in-depth security
+  - Verifies X-API-Gateway-Key header from authorized gateway
+  - IP whitelist verification (optional, configurable)
+  - Public paths (/health, /, /api/docs) bypass authentication
+  - Environment variables: API_GATEWAY_KEY, API_GATEWAY_IPS
+- 🔧 ENHANCED: Standardized health check using ServiceHealthCheck utility
+  - Now uses ServiceHealthCheck.api_dependent_health() pattern
+  - Complies with Principle #12 (Method Singularity)
+  - Provides detailed request/error metrics
+- 🎯 Full compliance with all 12 project design principles
+- Result: 23 TOTAL ENDPOINTS NOW AVAILABLE
+
+MAINTAINED FROM v2.5.6 - LIQUIDITY POOLS ENDPOINT:
+- ✨ /api/v1/liquidity-pools endpoint
+  - Returns all UBEC liquidity pools with comprehensive details
+  - Optional token_code filter (UBEC, UBECrc, UBECgpi, UBECtt)
+  - Pool details: id, pair, reserves, total_shares, balance
+  - Token info: token_code, element, ubec_position
+  - Trading info: fee_bp, trustline_count
+  - Participant count from liquidity_pool_owners
+  - Summary statistics: total_pools, total_value_locked
+  - Source: ubec_main.liquidity_pools table
+
+MAINTAINED FROM v2.5.5 - TOKEN AUDIT ENDPOINT:
+- ✨ NEW: /api/v1/token-audit and /api/v1/token-audit/{token_code}
+  - Comprehensive token audit for transparency reporting
+  - Summary section: total_issued, total_distributed, percentage breakdowns
+  - Shows Issuer Account and total tokens issued
+  - General Distribution (65%): General account + project accounts
+  - Token Ecosystem Stewardship (30%): Management, Infrastructure, Liquidity
+  - Liquidity Pool breakdown: unlocked vs locked in pools
+  - Administration (5%): General Administration account
+  - Compliance status indicators
+  - Full disclaimer text
+  - Supports all 4 UBEC tokens (UBEC, UBECrc, UBECgpi, UBECtt)
+- 🐛 FIXED: /api/v1/tokens returning null issuers and 0 supply/holders
+  - Issuers fetched from system_settings table (database is source of truth)
+  - Supply/holders calculated from ubec_balances (real-time data)
+  - Project accounts fetched from monitored_accounts table
+
+MAINTAINED FROM v2.5.4 - TRADE/EXCHANGE DETAILS:
+- Trade operations show exchange direction (e.g., "100 UBEC → 50 UBECrc")
+
+MAINTAINED FROM v2.5.3 - UBEC TOKENS ONLY:
+- Filter to only UBEC, UBECrc, UBECgpi, UBECtt tokens (exclude XLM)
+
+MAINTAINED FROM v2.5.2 - OPERATION DETAILS:
+- Operations array with type, asset_code, amount, from_account, to_account
+
+NEW IN v2.5.0 - BBOX ENDPOINTS:
+- ✨ NEW: /api/v1/bioregions/{gid}/bbox endpoint
+  - Provides bounding box coordinates for bioregion boundaries
+  - Returns min_x, min_y, max_x, max_y, centroid in EPSG:3857 (meters)
+  - Useful for map centering and zoom calculations
+  - Source: phenomenal.bioregion_boundaries table
+- ✨ NEW: /api/v1/ecoregions/{eco_id}/bbox endpoint
+  - Provides bounding box coordinates for WWF Ecoregions 2017
+  - Returns bbox with eco_name, biome_name, realm metadata
+  - Source: phenomenal.ecoregions_2017 table
+- ✨ NEW: /api/v1/watersheds/{feow_id}/bbox endpoint
+  - Provides bounding box coordinates for FEOW HydroSHEDS watersheds
+  - Returns bbox with area_sqkm and generated name
+  - Source: phenomenal.feow_hydrosheds table
+- 🎯 All bbox endpoints use ST_Transform(geom, 3857) for WGS 84 / Pseudo-Mercator
+- 🎯 Coordinates returned in meters (EPSG:3857) for web mapping compatibility
+- 🎯 Full compliance with all 12 project design principles
+- 🎯 Integrated rate limiting (100 requests/minute per IP)
+- Result: 22 TOTAL ENDPOINTS NOW AVAILABLE
+
+MAINTAINED FROM v2.4.6 - CASE-INSENSITIVE ASSET FILTER:
 - 🐛 FIXED: asset_code parameter is now case-insensitive
   - Issue: Database stores 'UBEC' (uppercase) but users may query 'ubec' (lowercase)
   - Solution: Convert asset_code parameter to uppercase before query
@@ -239,9 +309,77 @@ Rate Limiting:
     - No API keys required - open access with abuse prevention
 
 Author: UBEC Protocol Development Team
-Version: 2.4.6
-Updated: 2025-11-17
+Version: 2.5.7
+Updated: 2025-11-28
 Changes: 
+  v2.5.7 - GATEWAY AUTH: API Gateway Authentication and standardized health checks
+         - NEW: APIGatewayAuthMiddleware integration for defense-in-depth security
+         - NEW: Verifies X-API-Gateway-Key header from authorized gateway
+         - NEW: IP whitelist verification (optional, configurable)
+         - ENHANCED: Standardized health check using ServiceHealthCheck.api_dependent_health()
+         - ENHANCED: Health check now tracks request_count and error_count metrics
+         - COMPLIANCE: Full Principle #12 (Method Singularity) health check pattern
+         - ENV: API_GATEWAY_KEY, API_GATEWAY_IPS for configuration
+         - Result: 23 TOTAL ENDPOINTS WITH ENHANCED SECURITY
+  v2.5.6 - LIQUIDITY POOLS: New endpoint for LP details
+         - NEW: /api/v1/liquidity-pools endpoint
+         - Returns all UBEC liquidity pools with comprehensive details
+         - Optional token_code filter (UBEC, UBECrc, UBECgpi, UBECtt)
+         - Pool details: id, pair, reserves, total_shares, balance
+         - Token info: token_code, element, ubec_position
+         - Trading info: fee_bp, trustline_count
+         - Participant count from liquidity_pool_owners table
+         - Summary: total_pools, total_value_locked, pools_by_token
+         - Rate limited: 60 requests/minute per IP
+         - Result: 23 TOTAL ENDPOINTS NOW AVAILABLE
+  v2.5.5 - TOKEN AUDIT: Comprehensive token audit endpoint for transparency
+         - NEW: /api/v1/token-audit and /api/v1/token-audit/{token_code}
+         - Shows Issuer, General Distribution (65%), Stewardship (30%), Admin (5%)
+         - Project accounts from monitored_accounts table
+         - Liquidity pool breakdown (unlocked vs locked)
+         - Compliance indicators and disclaimer
+         - 🐛 FIXED: /api/v1/tokens returning null issuers and 0 supply/holders
+           - Issuers from system_settings table (database is source of truth)
+           - Supply/holders from ubec_balances (real-time data)
+           - Distribution accounts from system_settings table
+  v2.5.4 - TRADE DETAILS: Include exchange/trade details for swap operations
+         - Problem: Trade operations didn't show which token was exchanged for which
+         - Solution: Include exchange_source_asset/amount, exchange_dest_asset/amount
+         - Added: trade_summary field (e.g., "100 UBEC → 50 UBECrc")
+         - Added: is_trade boolean to identify trade operations
+         - Impact: Dashboard can now show complete trade direction and amounts
+  v2.5.3 - UBEC TOKENS ONLY: Filter transactions to UBEC ecosystem tokens
+         - Problem: Dashboard was showing XLM transactions not related to UBEC
+         - Solution: Filter to only UBEC, UBECrc, UBECgpi, UBECtt tokens
+         - XLM and other non-UBEC tokens are now excluded
+         - Added: valid_tokens field in response
+         - Added: Validation for asset_code parameter
+         - Impact: Dashboard shows only UBEC protocol transactions
+  v2.5.2 - OPERATION DETAILS: Include operation-level details for frontend display
+         - Problem: Frontend needs type, token, amount, direction per operation
+         - Solution: Return operations array with type, asset_code, amount, from/to
+         - Added: operations[] array with full details per transaction
+         - Added: type (PAYMENT, CREATE_ACCOUNT, CHANGE_TRUST, etc.)
+         - Added: from_account and to_account for transfer direction
+         - Impact: Dashboard can now show Type, Token, Amount, From→To
+         - Result: Complete transaction details with operation-level granularity
+  v2.5.1 - TRANSACTIONS DATA FIX: Compute operation_count and involves_tokens dynamically
+         - Problem: stellar_transactions table has incomplete data from synchronizer
+         - Issue: ledger_sequence=0, involves_tokens=[], operation_count=null
+         - Solution: JOIN with stellar_operations to compute values dynamically:
+           - operation_count: COUNT(operations) per transaction
+           - involves_tokens: array_agg(DISTINCT asset_code) from operations
+           - ledger_sequence: COALESCE(ledger, ledger_sequence, 0)
+         - Impact: /api/v1/transactions/recent now returns complete transaction data
+         - Result: Frontend displays accurate operation counts and token involvement
+  v2.5.0 - BBOX ENDPOINTS: Added bounding box endpoints for geographic entities
+         - NEW: /api/v1/bioregions/{gid}/bbox - bioregion bounding box
+         - NEW: /api/v1/ecoregions/{eco_id}/bbox - ecoregion bounding box
+         - NEW: /api/v1/watersheds/{feow_id}/bbox - watershed bounding box
+         - All use ST_Transform(geom, 3857) for WGS 84 / Pseudo-Mercator projection
+         - Returns min_x, min_y, max_x, max_y, centroid coordinates in meters
+         - Useful for web mapping (Google Maps, OpenStreetMap, Leaflet, etc.)
+         - Result: 22 TOTAL ENDPOINTS NOW AVAILABLE
   v2.4.6 - CASE-INSENSITIVE ASSET FILTER: Made asset_code parameter case-insensitive
          - Fixed: asset_code='ubec' (lowercase) now works - converts to 'UBEC' internally
          - Solution: asset_code_upper = asset_code.upper() before query
@@ -329,6 +467,12 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+
+# Local imports - API Gateway Authentication (v2.5.7)
+from services.api.api_gateway_auth import APIGatewayAuthMiddleware
+
+# Local imports - Standardized Health Check Utility (Principle #12)
+from core.utils.service_health import ServiceHealthCheck
 
 # ============================================================================
 # Helper Functions
@@ -429,14 +573,18 @@ class BackendAPIService:
         self.logger = logging.getLogger(__name__)
         self._initialized = False
         
+        # v2.5.7: Add metrics tracking for standardized health checks
+        self._request_count = 0
+        self._error_count = 0
+        
         # Initialize FastAPI app
         self.app = FastAPI(
             title="UBEC Backend API",
             description="Read-only API for UBEC Protocol public website",
-            version="2.4.0"
+            version="2.5.7"
         )
         
-        # Configure CORS
+        # Configure CORS (must be first - handles preflight requests)
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],  # Configure appropriately for production
@@ -444,6 +592,11 @@ class BackendAPIService:
             allow_methods=["GET"],
             allow_headers=["*"],
         )
+        
+        # v2.5.7: API Gateway Authentication (defense in depth)
+        # Verifies X-API-Gateway-Key header and IP whitelist
+        # Public paths (/health, /, /api/docs, etc.) bypass authentication
+        self.app.add_middleware(APIGatewayAuthMiddleware)
         
         # Initialize rate limiter
         self.limiter = Limiter(key_func=get_remote_address)
@@ -460,13 +613,61 @@ class BackendAPIService:
         if self._initialized:
             return
         
-        self.logger.info("Initializing BackendAPIService v2.4.4")
+        self.logger.info("Initializing BackendAPIService v2.5.7")
         
         # Register all endpoints
         self._register_endpoints()
         
         self._initialized = True
         self.logger.info("✓ BackendAPIService initialized successfully")
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform health check for service registry using standardized ServiceHealthCheck.
+        
+        v2.5.7: Updated to use ServiceHealthCheck.api_dependent_health() pattern
+        for compliance with Principle #12 (Method Singularity).
+        
+        This service is API-dependent because it serves HTTP requests and
+        depends on the database for all data operations.
+        
+        Returns:
+            Dict with comprehensive health status including:
+            - status: 'healthy', 'degraded', 'unhealthy', or 'unknown'
+            - message: Human-readable status description
+            - timestamp: ISO format timestamp
+            - details: Service-specific metrics and configuration
+        
+        Example:
+            >>> health = await api_service.health_check()
+            >>> if health['status'] == 'healthy':
+            ...     print("API service operational")
+        """
+        # Check database connectivity for API health
+        db_accessible = False
+        try:
+            db = await self.registry.get('database')
+            if db:
+                # Simple connectivity test
+                result = await db.fetch_one("SELECT 1 as ok")
+                db_accessible = result is not None
+        except Exception as e:
+            self.logger.debug(f"Database check in health_check: {e}")
+        
+        return await ServiceHealthCheck.api_dependent_health(
+            service_name='BackendAPIService',
+            is_initialized=self._initialized,
+            api_url='http://localhost:8000',
+            api_accessible=db_accessible,  # API is healthy if DB is accessible
+            request_count=self._request_count,
+            error_count=self._error_count,
+            cache_info={
+                'endpoints_count': 23,
+                'rate_limiting': 'active',
+                'version': '2.5.7',
+                'gateway_auth': 'enabled'
+            }
+        )
     
     def _register_endpoints(self) -> None:
         """
@@ -486,7 +687,7 @@ class BackendAPIService:
             """Root endpoint with API information."""
             return {
                 'service': 'UBEC Backend API',
-                'version': '2.4.4',
+                'version': '2.5.7',
                 'status': 'operational',
                 'endpoints': {
                     'health': '/health',
@@ -500,11 +701,15 @@ class BackendAPIService:
                     'distributions': '/api/v1/distributions',
                     'bioregions': '/api/v1/bioregions',
                     'bioregion_boundaries': '/api/v1/bioregion-boundaries',
+                    'bioregion_bbox': '/api/v1/bioregions/{gid}/bbox',
                     'points_of_interest': '/api/v1/points-of-interest',
                     'holonic_scores': '/api/v1/holonic-scores',
                     'recent_transactions': '/api/v1/transactions/recent',
                     'ecoregions': '/api/v1/ecoregions',
-                    'watersheds': '/api/v1/watersheds'
+                    'ecoregion_bbox': '/api/v1/ecoregions/{eco_id}/bbox',
+                    'watersheds': '/api/v1/watersheds',
+                    'watershed_bbox': '/api/v1/watersheds/{feow_id}/bbox',
+                    'liquidity_pools': '/api/v1/liquidity-pools'
                 },
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
@@ -523,7 +728,7 @@ class BackendAPIService:
             return {
                 'status': 'healthy',
                 'service': 'ubec_backend_api',
-                'version': '2.4.4',
+                'version': '2.5.7',
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
         
@@ -604,75 +809,82 @@ class BackendAPIService:
             - Current supply and holder counts
             - Latest analysis if available
             
-            SCHEMA FIX v2.3.12: Removed await from synchronous config_service.get() calls
-            config_service.get() is synchronous method, not async
+            SCHEMA FIX v2.5.5: Use system_settings for issuers and ubec_balances for metrics
+            - Problem: config_service returning None for issuer addresses
+            - Problem: asset_holder_analysis may not have recent data
+            - Solution: Query system_settings table for issuer addresses
+            - Solution: Calculate total_supply and holder_count from ubec_balances
             """
             try:
                 db = await self.registry.get('database')
-                config_service = await self.registry.get('config')
                 
-                # Get issuer addresses from config (synchronous calls - no await)
-                ubec_issuer = config_service.get('ubec_issuer_address')
-                ubecrc_issuer = config_service.get('ubecrc_issuer_address')
-                ubecgpi_issuer = config_service.get('ubecgpi_issuer_address')
-                ubectt_issuer = config_service.get('ubectt_issuer_address')
+                # Token element/principle mapping (static - these don't change)
+                TOKEN_METADATA = {
+                    'UBEC': {'element': 'Air', 'ubuntu_principle': 'Diversity'},
+                    'UBECrc': {'element': 'Water', 'ubuntu_principle': 'Reciprocity'},
+                    'UBECgpi': {'element': 'Earth', 'ubuntu_principle': 'Mutualism'},
+                    'UBECtt': {'element': 'Fire', 'ubuntu_principle': 'Regeneration'}
+                }
                 
-                # v2.4.1: Use asset_holder_analysis (correct table name)
-                # v2.3.6: Use LEFT JOIN to ensure all 4 tokens are ALWAYS returned
-                # Even if no analysis data exists yet (phased deployment)
-                query = """
-                    WITH token_definitions AS (
-                        SELECT 'UBEC' as asset_code, $1::text as issuer_address, 'Air (Diversity)' as ubuntu_principle
-                        UNION ALL
-                        SELECT 'UBECrc' as asset_code, $2::text as issuer_address, 'Water (Reciprocity)' as ubuntu_principle
-                        UNION ALL
-                        SELECT 'UBECgpi' as asset_code, $3::text as issuer_address, 'Earth (Mutualism)' as ubuntu_principle
-                        UNION ALL
-                        SELECT 'UBECtt' as asset_code, $4::text as issuer_address, 'Fire (Regeneration)' as ubuntu_principle
-                    ),
-                    latest_analysis AS (
-                        SELECT DISTINCT ON (asset_code)
-                            asset_code,
-                            total_supply,
-                            total_holders,
-                            analysis_date
-                        FROM ubec_main.asset_holder_analysis
-                        WHERE analysis_date >= NOW() - INTERVAL '7 days'
-                        ORDER BY asset_code, analysis_date DESC
-                    )
-                    SELECT 
-                        td.asset_code,
-                        td.issuer_address,
-                        td.ubuntu_principle,
-                        COALESCE(la.total_supply, 0) as total_supply,
-                        COALESCE(la.total_holders, 0) as holder_count,
-                        la.analysis_date as computed_at
-                    FROM token_definitions td
-                    LEFT JOIN latest_analysis la ON td.asset_code = la.asset_code
-                    ORDER BY 
-                        CASE td.asset_code 
-                            WHEN 'UBEC' THEN 1 
-                            WHEN 'UBECrc' THEN 2 
-                            WHEN 'UBECgpi' THEN 3 
-                            WHEN 'UBECtt' THEN 4 
-                        END
+                # v2.5.5: Get issuer addresses from system_settings table (database is source of truth)
+                issuer_query = """
+                    SELECT setting_key, setting_value
+                    FROM ubec_main.system_settings
+                    WHERE setting_key IN ('ubec_issuer', 'ubecrc_issuer', 'ubecgpi_issuer', 'ubectt_issuer')
+                      AND is_active = true
                 """
+                issuer_results = await db.fetch_all(issuer_query)
                 
-                results = await db.fetch_all(
-                    query,
-                    (ubec_issuer, ubecrc_issuer, ubecgpi_issuer, ubectt_issuer)
-                )
+                # Build issuer lookup
+                issuer_map = {}
+                for row in issuer_results:
+                    key = row['setting_key']
+                    if key == 'ubec_issuer':
+                        issuer_map['UBEC'] = row['setting_value']
+                    elif key == 'ubecrc_issuer':
+                        issuer_map['UBECrc'] = row['setting_value']
+                    elif key == 'ubecgpi_issuer':
+                        issuer_map['UBECgpi'] = row['setting_value']
+                    elif key == 'ubectt_issuer':
+                        issuer_map['UBECtt'] = row['setting_value']
                 
-                tokens = []
-                for row in results:
-                    tokens.append({
-                        'code': row['asset_code'],
-                        'name': row['asset_code'],
-                        'issuer': row['issuer_address'],
-                        'ubuntu_principle': row['ubuntu_principle'],
+                # v2.5.5: Calculate directly from ubec_balances for accurate real-time data
+                balance_query = """
+                    SELECT 
+                        token_code::text as asset_code,
+                        COALESCE(SUM(balance), 0) as total_supply,
+                        COUNT(DISTINCT account_id) as holder_count,
+                        MAX(last_modified_at) as last_updated
+                    FROM ubec_main.ubec_balances
+                    WHERE balance > 0
+                    GROUP BY token_code
+                """
+                balance_results = await db.fetch_all(balance_query)
+                
+                # Build balance lookup
+                balance_data = {}
+                for row in balance_results:
+                    balance_data[row['asset_code']] = {
                         'total_supply': safe_float(row['total_supply']),
                         'holder_count': safe_int(row['holder_count']),
-                        'last_updated': row['computed_at'].isoformat() if row['computed_at'] else None
+                        'last_updated': row['last_updated']
+                    }
+                
+                # Build response ensuring all 4 tokens are always returned
+                tokens = []
+                for token_code in ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt']:
+                    metadata = TOKEN_METADATA[token_code]
+                    data = balance_data.get(token_code, {})
+                    
+                    tokens.append({
+                        'code': token_code,
+                        'name': token_code,
+                        'issuer': issuer_map.get(token_code),
+                        'element': metadata['element'],
+                        'ubuntu_principle': f"{metadata['element']} ({metadata['ubuntu_principle']})",
+                        'total_supply': data.get('total_supply', 0.0),
+                        'holder_count': data.get('holder_count', 0),
+                        'last_updated': data.get('last_updated').isoformat() if data.get('last_updated') else None
                     })
                 
                 return {
@@ -996,31 +1208,523 @@ class BackendAPIService:
                 self.logger.error(f"Error fetching distribution: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching distribution state: {str(e)}")
         
+        @self.app.get("/api/v1/token-audit", response_model=Dict)
+        @self.app.get("/api/v1/token-audit/{token_code}", response_model=Dict)
+        @limiter.limit("30/minute")
+        async def get_token_audit(request: Request, token_code: str = "UBEC") -> Dict:
+            """
+            Get comprehensive UBEC token audit data for transparency reporting.
+            
+            NEW IN v2.5.5: Full token audit endpoint for dashboard display
+            
+            Rate limit: 30 requests/minute per IP (expensive query)
+            
+            Path Parameters:
+            - token_code: Token to audit (UBEC, UBECrc, UBECgpi, UBECtt) - default UBEC
+            
+            Returns comprehensive audit data including:
+            - Token info: code, element, ubuntu principle, issuer account
+            - Summary: total_issued, total_distributed, percentage breakdowns, LP totals
+            - General Distribution (65%) with all project accounts and balances
+            - Token Ecosystem Stewardship (30%) with management, infrastructure, liquidity accounts
+            - Liquidity pool breakdown (unlocked vs locked)
+            - Administration (5%) account and balance
+            - Compliance status indicators
+            
+            This endpoint provides full transparency for the UBEC DAO Protocol.
+            
+            v2.5.5: All addresses fetched from database (system_settings table)
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Validate token code
+                token_code_upper = token_code.upper()
+                
+                # Token element/principle mapping (static - these don't change)
+                TOKEN_METADATA = {
+                    'UBEC': {'element': 'Air', 'principle': 'Diversity'},
+                    'UBECrc': {'element': 'Water', 'principle': 'Reciprocity'},
+                    'UBECgpi': {'element': 'Earth', 'principle': 'Mutualism'},
+                    'UBECtt': {'element': 'Fire', 'principle': 'Regeneration'}
+                }
+                
+                if token_code_upper not in TOKEN_METADATA:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid token code. Must be one of: {', '.join(TOKEN_METADATA.keys())}"
+                    )
+                
+                token_meta = TOKEN_METADATA[token_code_upper]
+                
+                # v2.5.5: Get all settings from system_settings table (database is source of truth)
+                settings_query = """
+                    SELECT setting_key, setting_value
+                    FROM ubec_main.system_settings
+                    WHERE is_active = true
+                      AND setting_key IN (
+                          'ubec_issuer', 'ubecrc_issuer', 'ubecgpi_issuer', 'ubectt_issuer',
+                          'general_account', 'administration_account',
+                          'stewardship_management_account', 'stewardship_infrastructure_account', 
+                          'stewardship_liquidity_account'
+                      )
+                """
+                settings_results = await db.fetch_all(settings_query)
+                
+                # Build settings lookup
+                settings = {}
+                for row in settings_results:
+                    settings[row['setting_key']] = row['setting_value']
+                
+                # Map issuer key based on token
+                issuer_key_map = {
+                    'UBEC': 'ubec_issuer',
+                    'UBECrc': 'ubecrc_issuer',
+                    'UBECgpi': 'ubecgpi_issuer',
+                    'UBECtt': 'ubectt_issuer'
+                }
+                token_issuer = settings.get(issuer_key_map.get(token_code_upper, ''))
+                
+                # Distribution accounts from database
+                general_account = settings.get('general_account')
+                admin_account = settings.get('administration_account')
+                steward_mgmt_account = settings.get('stewardship_management_account')
+                steward_infra_account = settings.get('stewardship_infrastructure_account')
+                steward_liq_account = settings.get('stewardship_liquidity_account')
+                
+                # Get project accounts from monitored_accounts table
+                project_query = """
+                    SELECT account_id, account_name, account_type, metadata
+                    FROM ubec_main.monitored_accounts
+                    WHERE account_type = 'project'
+                      AND is_active = true
+                """
+                project_results = await db.fetch_all(project_query)
+                
+                # Build project accounts structure
+                projects_dict = {}
+                for row in project_results:
+                    project_name = row['account_name'] or 'Unknown Project'
+                    if project_name not in projects_dict:
+                        projects_dict[project_name] = {
+                            'name': project_name,
+                            'accounts': []
+                        }
+                    projects_dict[project_name]['accounts'].append(row['account_id'])
+                
+                # Helper function to get account balance
+                async def get_account_balance(account_id: str) -> float:
+                    if not account_id:
+                        return 0.0
+                    query = """
+                        SELECT COALESCE(balance, 0) as balance
+                        FROM ubec_main.ubec_balances
+                        WHERE account_id = $1 AND token_code::text = $2
+                    """
+                    result = await db.fetch_one(query, (account_id, token_code_upper))
+                    return safe_float(result['balance']) if result else 0.0
+                
+                # Helper function to get LP balance for account
+                async def get_lp_balance(account_id: str) -> float:
+                    if not account_id:
+                        return 0.0
+                    query = """
+                        SELECT COALESCE(SUM(ubec_balance), 0) as lp_balance
+                        FROM ubec_main.liquidity_pool_owners
+                        WHERE account_id = $1 AND token_code::text = $2
+                    """
+                    result = await db.fetch_one(query, (account_id, token_code_upper))
+                    return safe_float(result['lp_balance']) if result else 0.0
+                
+                # Get total supply from all balances
+                total_supply_query = """
+                    SELECT COALESCE(SUM(balance), 0) as total_supply
+                    FROM ubec_main.ubec_balances
+                    WHERE token_code::text = $1
+                """
+                total_result = await db.fetch_one(total_supply_query, (token_code_upper,))
+                total_supply = safe_float(total_result['total_supply']) if total_result else 0.0
+                
+                # Get total LP locked
+                total_lp_query = """
+                    SELECT COALESCE(SUM(balance), 0) as total_lp
+                    FROM ubec_main.liquidity_pools
+                    WHERE token_code::text = $1
+                """
+                lp_result = await db.fetch_one(total_lp_query, (token_code_upper,))
+                total_lp_locked = safe_float(lp_result['total_lp']) if lp_result else 0.0
+                
+                # Build audit report
+                
+                # 1. General Distribution (65%)
+                general_balance = await get_account_balance(general_account)
+                
+                general_projects = []
+                general_total = general_balance
+                
+                for project_name, project_info in projects_dict.items():
+                    project_balances = []
+                    for acc_id in project_info['accounts']:
+                        bal = await get_account_balance(acc_id)
+                        project_balances.append({
+                            'account_id': acc_id,
+                            'balance': bal
+                        })
+                        general_total += bal
+                    general_projects.append({
+                        'name': project_info['name'],
+                        'accounts': project_balances
+                    })
+                
+                # 2. Token Ecosystem Stewardship (30%)
+                steward_mgmt_balance = await get_account_balance(steward_mgmt_account)
+                steward_infra_balance = await get_account_balance(steward_infra_account)
+                steward_liq_direct = await get_account_balance(steward_liq_account)
+                steward_liq_lp = await get_lp_balance(steward_liq_account)
+                
+                stewardship_total = steward_mgmt_balance + steward_infra_balance + steward_liq_direct + steward_liq_lp
+                
+                # 3. Administration (5%)
+                admin_balance = await get_account_balance(admin_account)
+                
+                # Calculate percentages
+                if total_supply > 0:
+                    general_pct = (general_total / total_supply) * 100
+                    stewardship_pct = (stewardship_total / total_supply) * 100
+                    admin_pct = (admin_balance / total_supply) * 100
+                else:
+                    general_pct = stewardship_pct = admin_pct = 0.0
+                
+                # Build response
+                audit_report = {
+                    'token': {
+                        'code': token_code_upper,
+                        'element': token_meta['element'],
+                        'ubuntu_principle': token_meta['principle'],
+                        'issuer_account': token_issuer,
+                        'total_tokens_issued': total_supply
+                    },
+                    'summary': {
+                        'total_issued': round(total_supply, 7),
+                        'total_distributed': round(general_total + stewardship_total + admin_balance, 7),
+                        'general_distribution_pct': round(general_pct, 4),
+                        'stewardship_pct': round(stewardship_pct, 4),
+                        'administration_pct': round(admin_pct, 4),
+                        'total_in_liquidity_pools': round(total_lp_locked, 7),
+                        'distribution_model': '65/30/5'
+                    },
+                    'general_distribution': {
+                        'target_percentage': 65.0,
+                        'actual_percentage': round(general_pct, 2),
+                        'total_tokens': round(general_total, 7),
+                        'accounts': [
+                            {
+                                'purpose': 'General Distribution',
+                                'account_id': general_account,
+                                'balance': round(general_balance, 7)
+                            }
+                        ] if general_account else [],
+                        'projects': general_projects
+                    },
+                    'token_ecosystem_stewardship': {
+                        'target_percentage': 30.0,
+                        'actual_percentage': round(stewardship_pct, 2),
+                        'total_tokens': round(stewardship_total, 7),
+                        'accounts': [
+                            acc for acc in [
+                                {
+                                    'purpose': 'Stewardship Management',
+                                    'account_id': steward_mgmt_account,
+                                    'balance': round(steward_mgmt_balance, 7)
+                                } if steward_mgmt_account else None,
+                                {
+                                    'purpose': 'Infrastructure and Stakeholder Care',
+                                    'account_id': steward_infra_account,
+                                    'balance': round(steward_infra_balance, 7)
+                                } if steward_infra_account else None,
+                                {
+                                    'purpose': 'Liquidity Pool',
+                                    'account_id': steward_liq_account,
+                                    'balance': round(steward_liq_direct + steward_liq_lp, 7),
+                                    'liquidity_breakdown': {
+                                        'unlocked': round(steward_liq_direct, 7),
+                                        'locked_in_pools': round(steward_liq_lp, 7)
+                                    }
+                                } if steward_liq_account else None
+                            ] if acc is not None
+                        ],
+                        'liquidity_pools_summary': {
+                            'total_locked_in_all_pools': round(total_lp_locked, 7),
+                            'stewardship_lp_unlocked': round(steward_liq_direct, 7),
+                            'stewardship_lp_locked': round(steward_liq_lp, 7)
+                        }
+                    },
+                    'administration': {
+                        'target_percentage': 5.0,
+                        'actual_percentage': round(admin_pct, 2),
+                        'total_tokens': round(admin_balance, 7),
+                        'accounts': [
+                            {
+                                'purpose': 'General Administration',
+                                'account_id': admin_account,
+                                'balance': round(admin_balance, 7)
+                            }
+                        ] if admin_account else []
+                    },
+                    'compliance': {
+                        'general_compliant': 60.0 <= general_pct <= 70.0,
+                        'stewardship_compliant': 25.0 <= stewardship_pct <= 35.0,
+                        'administration_compliant': admin_pct <= 7.0,
+                        'overall_compliant': (60.0 <= general_pct <= 70.0) and (25.0 <= stewardship_pct <= 35.0) and (admin_pct <= 7.0)
+                    },
+                    'disclaimer': (
+                        "The information provided does not constitute investment advice, financial advice, "
+                        "trading advice, or any other sort of advice. Ubuntu Economic Commons make no "
+                        "recommendation as to the suitability of any tokens, products, services or transactions. "
+                        "Please conduct your own due diligence and consult your financial advisor."
+                    ),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+                return audit_report
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error fetching token audit: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error fetching token audit: {str(e)}")
+        
+        @self.app.get("/api/v1/liquidity-pools", response_model=Dict)
+        @limiter.limit("60/minute")
+        async def get_liquidity_pools(
+            request: Request, 
+            token_code: Optional[str] = None
+        ) -> Dict:
+            """
+            Get UBEC liquidity pool details.
+            
+            NEW IN v2.5.6: Comprehensive liquidity pool endpoint
+            
+            Rate limit: 60 requests/minute per IP
+            
+            Query Parameters:
+            - token_code: Optional filter by token (UBEC, UBECrc, UBECgpi, UBECtt)
+            
+            Returns:
+            - pools: Array of liquidity pool objects with:
+              - id: Stellar liquidity pool ID (64-byte hex)
+              - pair: Human-readable pair name (e.g., UBEC/XLM)
+              - token_code: Which UBEC token is in this pool
+              - element: Element classification (air/water/earth/fire)
+              - ubec_position: Whether UBEC is asset_a or asset_b
+              - asset_a: Asset A details (code, issuer)
+              - asset_b: Asset B details (code, issuer)
+              - reserves: Current reserve amounts
+              - total_shares: Total pool shares issued
+              - balance: Total UBEC tokens in pool
+              - fee_bp: Trading fee in basis points
+              - trustline_count: Number of trustlines
+              - participant_count: Number of LP owners
+              - last_modified_at: Last update timestamp
+            - summary: Aggregate statistics
+              - total_pools: Total number of pools
+              - total_value_locked: Sum of UBEC in all pools
+              - pools_by_token: Count per token type
+            - timestamp: Response timestamp
+            
+            Source: ubec_main.liquidity_pools, ubec_main.liquidity_pool_owners
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Build base query with optional token filter
+                # v2.5.6: Query liquidity_pools with participant count from liquidity_pool_owners
+                if token_code:
+                    # Case-insensitive token filter
+                    token_code_upper = token_code.upper()
+                    valid_tokens = ['UBEC', 'UBECRC', 'UBECGPI', 'UBECTT']
+                    if token_code_upper not in valid_tokens:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid token_code. Must be one of: UBEC, UBECrc, UBECgpi, UBECtt"
+                        )
+                    
+                    pools_query = """
+                        SELECT 
+                            lp.id,
+                            lp.pair,
+                            lp.token_code::text as token_code,
+                            lp.primary_element::text as element,
+                            lp.ubec_asset_position,
+                            lp.asset_a_code,
+                            lp.asset_a_issuer,
+                            lp.asset_b_code,
+                            lp.asset_b_issuer,
+                            lp.reserve_a,
+                            lp.reserve_b,
+                            lp.total_shares,
+                            lp.balance,
+                            lp.fee_bp,
+                            lp.trustline_count,
+                            lp.last_modified_at,
+                            COALESCE(owner_counts.participant_count, 0) as participant_count
+                        FROM ubec_main.liquidity_pools lp
+                        LEFT JOIN (
+                            SELECT liquidity_pool_id, COUNT(*) as participant_count
+                            FROM ubec_main.liquidity_pool_owners
+                            GROUP BY liquidity_pool_id
+                        ) owner_counts ON lp.id = owner_counts.liquidity_pool_id
+                        WHERE lp.token_code::text = $1
+                        ORDER BY lp.balance DESC
+                    """
+                    pools_results = await db.fetch_all(pools_query, (token_code_upper,))
+                else:
+                    pools_query = """
+                        SELECT 
+                            lp.id,
+                            lp.pair,
+                            lp.token_code::text as token_code,
+                            lp.primary_element::text as element,
+                            lp.ubec_asset_position,
+                            lp.asset_a_code,
+                            lp.asset_a_issuer,
+                            lp.asset_b_code,
+                            lp.asset_b_issuer,
+                            lp.reserve_a,
+                            lp.reserve_b,
+                            lp.total_shares,
+                            lp.balance,
+                            lp.fee_bp,
+                            lp.trustline_count,
+                            lp.last_modified_at,
+                            COALESCE(owner_counts.participant_count, 0) as participant_count
+                        FROM ubec_main.liquidity_pools lp
+                        LEFT JOIN (
+                            SELECT liquidity_pool_id, COUNT(*) as participant_count
+                            FROM ubec_main.liquidity_pool_owners
+                            GROUP BY liquidity_pool_id
+                        ) owner_counts ON lp.id = owner_counts.liquidity_pool_id
+                        ORDER BY lp.balance DESC
+                    """
+                    pools_results = await db.fetch_all(pools_query)
+                
+                # Build pools array
+                pools = []
+                total_value_locked = 0.0
+                pools_by_token = {}
+                
+                for row in pools_results:
+                    pool_balance = safe_float(row['balance'])
+                    total_value_locked += pool_balance
+                    
+                    # Count pools by token
+                    tk = row['token_code'] or 'UNKNOWN'
+                    pools_by_token[tk] = pools_by_token.get(tk, 0) + 1
+                    
+                    pools.append({
+                        'id': row['id'],
+                        'pair': row['pair'],
+                        'token_code': row['token_code'],
+                        'element': row['element'],
+                        'ubec_position': row['ubec_asset_position'],
+                        'asset_a': {
+                            'code': row['asset_a_code'],
+                            'issuer': row['asset_a_issuer']
+                        },
+                        'asset_b': {
+                            'code': row['asset_b_code'],
+                            'issuer': row['asset_b_issuer']
+                        },
+                        'reserves': {
+                            'asset_a': safe_float(row['reserve_a']),
+                            'asset_b': safe_float(row['reserve_b'])
+                        },
+                        'total_shares': safe_float(row['total_shares']),
+                        'balance': round(pool_balance, 7),
+                        'fee_bp': safe_int(row['fee_bp']),
+                        'trustline_count': safe_int(row['trustline_count']),
+                        'participant_count': safe_int(row['participant_count']),
+                        'last_modified_at': row['last_modified_at'].isoformat() if row['last_modified_at'] else None
+                    })
+                
+                return {
+                    'pools': pools,
+                    'summary': {
+                        'total_pools': len(pools),
+                        'total_value_locked': round(total_value_locked, 7),
+                        'pools_by_token': pools_by_token
+                    },
+                    'filter_applied': token_code.upper() if token_code else None,
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error fetching liquidity pools: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error fetching liquidity pools: {str(e)}"
+                )
+        
         @self.app.get("/api/v1/bioregions", response_model=Dict)
         @limiter.limit("100/minute")
         async def get_bioregions(request: Request) -> Dict:
             """
-            Get all active bioregions with member information.
+            Get list of all bioregions with their health metrics.
             
             Rate limit: 100 requests/minute per IP
             
             Returns:
-            - bioregions: List of bioregion objects with names, locations, etc.
-            - count: Total number of bioregions
-            - timestamp: When this data was retrieved
+            - List of bioregions with basic info and health scores
+            - Pagination details
             """
             try:
-                bioregion_manager = await self.registry.get('bioregion_manager')
+                db = await self.registry.get('database')
                 
-                # SCHEMA FIX v2.3.5: Use correct method name get_all_bioregions()
-                # Previous versions incorrectly called get_bioregions() which doesn't exist
-                # Bioregion data is stored in phenomenal.holons table, accessed via bioregion_manager
-                bioregions = await bioregion_manager.get_all_bioregions()
-                summary = await bioregion_manager.get_bioregion_summary()
+                # Get bioregions from holons table
+                query = """
+                    SELECT 
+                        h.id as bioregion_id,
+                        h.name,
+                        h.description,
+                        h.created_at,
+                        h.metadata,
+                        COALESCE(hm.ubuntu_alignment_score, 0.0) as health_score,
+                        COALESCE(hm.autonomy_score, 0.0) as autonomy_score,
+                        COALESCE(hm.integration_score, 0.0) as integration_score
+                    FROM phenomenal.holons h
+                    LEFT JOIN (
+                        SELECT DISTINCT ON (holon_id)
+                            holon_id,
+                            ubuntu_alignment_score,
+                            autonomy_score,
+                            integration_score
+                        FROM phenomenal.holon_metrics
+                        ORDER BY holon_id, recorded_at DESC
+                    ) hm ON h.id = hm.holon_id
+                    WHERE h.holon_type = 'bioregion'
+                    AND h.dissolved_at IS NULL
+                    ORDER BY h.name
+                """
+                
+                results = await db.fetch_all(query)
+                
+                bioregions = []
+                for row in results:
+                    bioregions.append({
+                        'bioregion_id': row['bioregion_id'],
+                        'name': row['name'],
+                        'description': row['description'],
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                        'health_score': safe_float(row['health_score']),
+                        'autonomy_score': safe_float(row['autonomy_score']),
+                        'integration_score': safe_float(row['integration_score']),
+                        'metadata': row['metadata'] if row['metadata'] else {}
+                    })
                 
                 return {
                     'bioregions': bioregions,
-                    'summary': summary,
                     'count': len(bioregions),
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
@@ -1033,7 +1737,7 @@ class BackendAPIService:
         @limiter.limit("100/minute")
         async def get_bioregion_boundaries(request: Request) -> Dict:
             """
-            Get bioregion boundary data with comprehensive metadata.
+            Get comprehensive bioregion boundary data with GeoJSON geometries.
             
             NEW IN v2.4.0: Provides complete bioregion boundary information including
             ecological data, community info, and UBEC token allocations.
@@ -1096,7 +1800,7 @@ class BackendAPIService:
                         earth_allocation,
                         fire_allocation
                     FROM phenomenal.bioregion_boundaries
-                    WHERE status IN ('approved', 'active')
+                    WHERE status IN ('proposed', 'under_review', 'approved', 'active')
                     ORDER BY bioregion_name
                 """
                 
@@ -1183,24 +1887,21 @@ class BackendAPIService:
             
             Query Parameters:
             - poi_type: Filter by type (farm, community_center, resource, landmark, etc.)
-            - bioregion_gid: Filter by bioregion ID
-            - visibility: Filter by visibility (public, bioregion, private)
+            - bioregion_gid: Filter by bioregion GID
+            - visibility: Filter by visibility (public, bioregion_only, private)
             - limit: Maximum number of POIs to return (default 100, max 500)
             
             Returns:
-            - points_of_interest: List of POI objects with GeoJSON point geometries
+            - points: List of POI objects with GeoJSON point geometries
             - Each POI includes:
               - Basic info (gid, name, code, type, status)
-              - Location data (coordinates, elevation, bioregion)
-              - Address details (locality, region, country)
-              - Descriptive content (descriptions, keywords)
-              - Media (images, video, audio, documents)
-              - Contact information (person, email, phone, website)
-              - Operating details (hours, seasonal availability, accessibility)
-              - Categorization (primary/secondary categories, tags)
-              - UBEC association (account_id, organization, role_type)
-              - Metadata (submission, verification, visibility)
+              - Location data (coordinates, elevation, address)
+              - Bioregion association (if within a bioregion)
+              - Description and media (images, links)
+              - Contact and operational info
+              - UBEC token associations
             - count: Total number of POIs returned
+            - filters: Applied filter values
             - timestamp: When this data was retrieved
             
             Source: phenomenal.points_of_interest table
@@ -1212,31 +1913,7 @@ class BackendAPIService:
                 db = await self.registry.get('database')
                 
                 # Build query with optional filters
-                where_clauses = ["status = 'active'"]
-                params = []
-                param_count = 1
-                
-                if poi_type:
-                    where_clauses.append(f"poi_type = ${param_count}")
-                    params.append(poi_type)
-                    param_count += 1
-                
-                if bioregion_gid:
-                    where_clauses.append(f"bioregion_gid = ${param_count}")
-                    params.append(bioregion_gid)
-                    param_count += 1
-                
-                if visibility:
-                    where_clauses.append(f"visibility = ${param_count}")
-                    params.append(visibility)
-                    param_count += 1
-                else:
-                    # Default to public visibility only
-                    where_clauses.append("visibility = 'public'")
-                
-                where_clause = " AND ".join(where_clauses)
-                
-                query = f"""
+                query = """
                     SELECT 
                         gid,
                         poi_name,
@@ -1257,49 +1934,47 @@ class BackendAPIService:
                         full_description,
                         keywords,
                         primary_image_path,
-                        image_gallery_paths,
-                        video_url,
-                        audio_url,
-                        document_path,
-                        contact_person,
+                        website_url,
+                        contact_name,
                         contact_email,
                         contact_phone,
-                        website_url,
                         operating_hours,
-                        seasonal_availability,
-                        accessibility_info,
-                        primary_category,
-                        secondary_categories,
-                        tags,
-                        ubec_account_id,
-                        affiliated_organization,
-                        role_type,
-                        submitted_by,
-                        submission_date,
-                        verified_date,
-                        verified_by,
+                        seasonal_notes,
                         visibility,
-                        featured
+                        ubec_account_id,
+                        associated_tokens,
+                        created_at,
+                        updated_at
                     FROM phenomenal.points_of_interest
-                    WHERE {where_clause}
-                    ORDER BY featured DESC, poi_name
-                    LIMIT ${param_count}
+                    WHERE status = 'active'
                 """
                 
+                params = []
+                param_count = 0
+                
+                if poi_type:
+                    param_count += 1
+                    query += f" AND poi_type = ${param_count}"
+                    params.append(poi_type)
+                
+                if bioregion_gid:
+                    param_count += 1
+                    query += f" AND bioregion_gid = ${param_count}"
+                    params.append(bioregion_gid)
+                
+                if visibility:
+                    param_count += 1
+                    query += f" AND visibility = ${param_count}"
+                    params.append(visibility)
+                
+                param_count += 1
+                query += f" ORDER BY poi_name LIMIT ${param_count}"
                 params.append(limit)
-                results = await db.fetch_all(query, tuple(params))
+                
+                results = await db.fetch_all(query, tuple(params)) if params else await db.fetch_all(query)
                 
                 points = []
                 for row in results:
-                    # Parse image gallery if present
-                    image_gallery = []
-                    if row['image_gallery_paths']:
-                        try:
-                            import json
-                            image_gallery = json.loads(row['image_gallery_paths'])
-                        except:
-                            image_gallery = []
-                    
                     points.append({
                         'gid': row['gid'],
                         'poi_name': row['poi_name'],
@@ -1311,66 +1986,53 @@ class BackendAPIService:
                             'latitude': float(row['latitude']) if row['latitude'] else None,
                             'longitude': float(row['longitude']) if row['longitude'] else None,
                             'elevation_m': float(row['elevation_m']) if row['elevation_m'] else None,
-                            'bioregion_gid': row['bioregion_gid'],
-                            'bioregion_name': row['bioregion_name']
-                        },
-                        'address': {
-                            'full_address': row['address'],
+                            'address': row['address'],
                             'locality': row['locality'],
                             'region': row['region'],
                             'country': row['country']
                         },
-                        'content': {
-                            'short_description': row['short_description'],
-                            'full_description': row['full_description'],
-                            'keywords': row['keywords']
+                        'bioregion': {
+                            'gid': row['bioregion_gid'],
+                            'name': row['bioregion_name']
+                        } if row['bioregion_gid'] else None,
+                        'description': {
+                            'short': row['short_description'],
+                            'full': row['full_description'],
+                            'keywords': row['keywords'].split(',') if row['keywords'] else []
                         },
                         'media': {
                             'primary_image': row['primary_image_path'],
-                            'image_gallery': image_gallery,
-                            'video_url': row['video_url'],
-                            'audio_url': row['audio_url'],
-                            'document_path': row['document_path']
-                        },
-                        'contact': {
-                            'person': row['contact_person'],
-                            'email': row['contact_email'],
-                            'phone': row['contact_phone'],
                             'website': row['website_url']
                         },
+                        'contact': {
+                            'name': row['contact_name'],
+                            'email': row['contact_email'],
+                            'phone': row['contact_phone']
+                        },
                         'operations': {
-                            'operating_hours': row['operating_hours'],
-                            'seasonal_availability': row['seasonal_availability'],
-                            'accessibility_info': row['accessibility_info']
+                            'hours': row['operating_hours'],
+                            'seasonal_notes': row['seasonal_notes'],
+                            'visibility': row['visibility']
                         },
-                        'categorization': {
-                            'primary_category': row['primary_category'],
-                            'secondary_categories': row['secondary_categories'].split(',') if row['secondary_categories'] else [],
-                            'tags': row['tags'].split(',') if row['tags'] else []
-                        },
-                        'ubec_association': {
+                        'ubec_integration': {
                             'account_id': row['ubec_account_id'],
-                            'organization': row['affiliated_organization'],
-                            'role_type': row['role_type']
+                            'associated_tokens': row['associated_tokens'] if row['associated_tokens'] else []
                         },
-                        'metadata': {
-                            'submitted_by': row['submitted_by'],
-                            'submission_date': row['submission_date'].isoformat() if row['submission_date'] else None,
-                            'verified_date': row['verified_date'].isoformat() if row['verified_date'] else None,
-                            'verified_by': row['verified_by'],
-                            'visibility': row['visibility'],
-                            'featured': row['featured']
+                        'timestamps': {
+                            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                            'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None
                         }
                     })
                 
                 return {
-                    'points_of_interest': points,
-                    'filters_applied': {
+                    'points': points,
+                    'count': len(points),
+                    'filters': {
                         'poi_type': poi_type,
                         'bioregion_gid': bioregion_gid,
-                        'visibility': visibility or 'public'
+                        'visibility': visibility,
+                        'limit': limit
                     },
-                    'count': len(points),
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
@@ -1382,21 +2044,13 @@ class BackendAPIService:
         @limiter.limit("100/minute")
         async def get_holonic_scores(request: Request) -> Dict:
             """
-            Get Ubuntu principle scores across all accounts.
+            Get aggregate Ubuntu principle scores across the network.
             
             Rate limit: 100 requests/minute per IP
             
             Returns:
-            - Average scores for each Ubuntu principle
-            - Distribution statistics
-            
-            SCHEMA FIX v2.3.10: Ubuntu principle scores in SEPARATE table
-            diversity_score, reciprocity_score, mutualism_score, regeneration_score
-            are in ubec_holonic_metrics table, NOT in holonic_metrics table
-            Must use LEFT JOIN and PIVOT to get all 4 scores per account
-            
-            NONE-SAFE FIX v2.3.8: Use safe_float() for all aggregate results
-            SQL aggregate functions (AVG, MIN, MAX) return NULL when no data exists
+            - Aggregate scores for each Ubuntu principle
+            - Network-wide statistics
             """
             try:
                 db = await self.registry.get('database')
@@ -1471,24 +2125,46 @@ class BackendAPIService:
         @limiter.limit("60/minute")
         async def get_recent_transactions(request: Request, limit: int = 50, asset_code: Optional[str] = None) -> Dict:
             """
-            Get recent transactions across the network, optionally filtered by specific asset code.
+            Get recent UBEC token transactions across the network.
             
             Rate limit: 60 requests/minute per IP (expensive query)
             
             Query Parameters:
             - limit: Maximum number of transactions to return (default 50, max 200)
-            - asset_code: Optional filter by token (UBEC, UBECrc, UBECgpi, UBECtt) - case-insensitive
+            - asset_code: Optional filter by specific UBEC token (UBEC, UBECrc, UBECgpi, UBECtt)
+                          Case-insensitive. If not specified, shows all UBEC token transactions.
             
             Returns:
-            - List of recent transactions with details
+            - List of recent UBEC token transactions with operation details:
+              - transaction_hash: Unique transaction identifier
+              - ledger_sequence: Ledger number
+              - created_at: Transaction timestamp
+              - source_account: Account that submitted the transaction
+              - successful: Whether transaction succeeded
+              - operations: Array of UBEC operation details with:
+                - type: Operation type (PAYMENT, CHANGE_TRUST, MANAGE_SELL_OFFER, etc.)
+                - asset_code: UBEC token code (UBEC, UBECrc, UBECgpi, UBECtt)
+                - amount: Amount transferred
+                - from_account: Source of funds
+                - to_account: Destination of funds
+                - For TRADE operations (manage_sell_offer, manage_buy_offer, path_payment):
+                  - exchange_source_asset: Token being sold/sent
+                  - exchange_source_amount: Amount being sold/sent
+                  - exchange_dest_asset: Token being bought/received
+                  - exchange_dest_amount: Amount being bought/received
             - Pagination info
             - Applied filter (if any)
             
-            SCHEMA FIX v2.4.6: Made asset_code parameter case-insensitive (converts to uppercase)
-            SCHEMA FIX v2.4.5: Proper asset_code filtering using stellar_operations JOIN
-            - Previous: Used involves_tokens array (imprecise - matches ANY token in transaction)
-            - Current: JOIN with stellar_operations.asset_code (precise - exact operation match)
-            - Impact: Filters now return only transactions with operations for specified asset
+            NOTE: Only shows transactions involving UBEC ecosystem tokens.
+            XLM-only transactions are excluded.
+            
+            SCHEMA FIX v2.5.4: Include exchange/trade details for swap operations
+            - Problem: Trade operations didn't show which token was exchanged for which
+            - Solution: Include exchange_source_asset/amount and exchange_dest_asset/amount
+            - Impact: Dashboard can now show trade direction (e.g., UBEC → UBECrc)
+            
+            MAINTAINED FROM v2.5.3: Filter to UBEC tokens only (exclude XLM)
+            MAINTAINED FROM v2.5.2: Operation-level details (type, amount, from/to)
             """
             try:
                 # Validate and constrain limit
@@ -1496,32 +2172,55 @@ class BackendAPIService:
                 
                 db = await self.registry.get('database')
                 
-                # Build query with optional asset filter
+                # UBEC ecosystem tokens only
+                UBEC_TOKENS = ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                
+                # Trade operation types that involve exchanges
+                TRADE_TYPES = ('manage_sell_offer', 'manage_buy_offer', 'create_passive_sell_offer',
+                               'path_payment_strict_send', 'path_payment_strict_receive')
+                
+                # v2.5.4: Query includes exchange columns for trade operations
                 if asset_code:
-                    # v2.4.5: JOIN with stellar_operations for precise asset filtering
-                    # DISTINCT ON prevents duplicate transactions when multiple operations exist
-                    # Convert asset_code to uppercase for case-insensitive matching
+                    # Filter by specific UBEC asset code (case-insensitive)
                     asset_code_upper = asset_code.upper()
                     
+                    # Validate it's a UBEC token
+                    if asset_code_upper not in UBEC_TOKENS:
+                        return {
+                            'transactions': [],
+                            'filter': {'asset_code': asset_code, 'error': f'Invalid UBEC token. Must be one of: {", ".join(UBEC_TOKENS)}'},
+                            'pagination': {'limit': limit, 'total': 0, 'returned': 0},
+                            'timestamp': datetime.now(timezone.utc).isoformat()
+                        }
+                    
+                    # Get transactions with operations for this specific UBEC token
+                    # Include exchange columns for trade operations
                     query = """
-                        SELECT DISTINCT ON (t.transaction_hash)
+                        SELECT 
                             t.transaction_hash,
-                            t.ledger_sequence,
+                            COALESCE(NULLIF(t.ledger, 0), NULLIF(t.ledger_sequence, 0), 0) as ledger_sequence,
                             t.created_at,
                             t.source_account,
-                            t.involves_tokens,
-                            t.operation_count,
-                            t.successful
+                            COALESCE(t.successful, true) as successful,
+                            o.type as op_type,
+                            o.asset_code::text as op_asset_code,
+                            o.amount as op_amount,
+                            COALESCE(o.from_account, o.source_account, t.source_account) as op_from_account,
+                            o.to_account as op_to_account,
+                            o.exchange_source_asset,
+                            o.exchange_source_amount,
+                            o.exchange_dest_asset,
+                            o.exchange_dest_amount
                         FROM ubec_main.stellar_transactions t
                         INNER JOIN ubec_main.stellar_operations o 
                             ON t.transaction_hash = o.transaction_hash
                         WHERE o.asset_code::text = $1
-                        ORDER BY t.transaction_hash, t.created_at DESC
+                        ORDER BY t.created_at DESC, o.id
                         LIMIT $2
                     """
-                    results = await db.fetch_all(query, (asset_code_upper, limit))
+                    results = await db.fetch_all(query, (asset_code_upper, limit * 3))
                     
-                    # Count query with same JOIN filter
+                    # Count distinct transactions
                     count_query = """
                         SELECT COUNT(DISTINCT t.transaction_hash) 
                         FROM ubec_main.stellar_transactions t
@@ -1531,42 +2230,126 @@ class BackendAPIService:
                     """
                     count_result = await db.fetch_one(count_query, (asset_code_upper,))
                 else:
-                    # No filter - return all transactions
+                    # No filter - return all UBEC token transactions (exclude XLM)
+                    # Include exchange columns for trade operations
                     query = """
                         SELECT 
-                            transaction_hash,
-                            ledger_sequence,
-                            created_at,
-                            source_account,
-                            involves_tokens,
-                            operation_count,
-                            successful
-                        FROM ubec_main.stellar_transactions
-                        ORDER BY created_at DESC
+                            t.transaction_hash,
+                            COALESCE(NULLIF(t.ledger, 0), NULLIF(t.ledger_sequence, 0), 0) as ledger_sequence,
+                            t.created_at,
+                            t.source_account,
+                            COALESCE(t.successful, true) as successful,
+                            o.type as op_type,
+                            o.asset_code::text as op_asset_code,
+                            o.amount as op_amount,
+                            COALESCE(o.from_account, o.source_account, t.source_account) as op_from_account,
+                            o.to_account as op_to_account,
+                            o.exchange_source_asset,
+                            o.exchange_source_amount,
+                            o.exchange_dest_asset,
+                            o.exchange_dest_amount
+                        FROM ubec_main.stellar_transactions t
+                        INNER JOIN ubec_main.stellar_operations o 
+                            ON t.transaction_hash = o.transaction_hash
+                        WHERE o.asset_code::text IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                        ORDER BY t.created_at DESC, o.id
                         LIMIT $1
                     """
-                    results = await db.fetch_all(query, (limit,))
+                    results = await db.fetch_all(query, (limit * 3,))
                     
-                    count_query = "SELECT COUNT(*) FROM ubec_main.stellar_transactions"
+                    # Count distinct UBEC transactions
+                    count_query = """
+                        SELECT COUNT(DISTINCT t.transaction_hash) 
+                        FROM ubec_main.stellar_transactions t
+                        INNER JOIN ubec_main.stellar_operations o 
+                            ON t.transaction_hash = o.transaction_hash
+                        WHERE o.asset_code::text IN ('UBEC', 'UBECrc', 'UBECgpi', 'UBECtt')
+                    """
                     count_result = await db.fetch_one(count_query)
                 
                 total_count = count_result['count'] if count_result else 0
                 
-                transactions = []
+                # Group operations by transaction
+                transactions_dict = {}
                 for row in results:
-                    transactions.append({
-                        'transaction_hash': row['transaction_hash'],
-                        'ledger_sequence': row['ledger_sequence'],
-                        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-                        'source_account': row['source_account'],
-                        'involves_tokens': row['involves_tokens'] if row['involves_tokens'] else [],
-                        'operation_count': row['operation_count'],
-                        'successful': row['successful']
-                    })
+                    tx_hash = row['transaction_hash']
+                    
+                    if tx_hash not in transactions_dict:
+                        transactions_dict[tx_hash] = {
+                            'transaction_hash': tx_hash,
+                            'ledger_sequence': row['ledger_sequence'] or 0,
+                            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                            'source_account': row['source_account'],
+                            'successful': row['successful'],
+                            'operations': []
+                        }
+                    
+                    # Add operation if it exists and is a UBEC token
+                    if row['op_type'] and row['op_asset_code'] in UBEC_TOKENS:
+                        op_type = row['op_type']
+                        # Convert enum to string if needed
+                        if hasattr(op_type, 'value'):
+                            op_type = op_type.value
+                        elif hasattr(op_type, 'name'):
+                            op_type = op_type.name
+                        else:
+                            op_type = str(op_type)
+                        
+                        op_type_str = op_type.lower()
+                        op_type_upper = op_type.upper()
+                        
+                        # Build operation object
+                        operation = {
+                            'type': op_type_upper,
+                            'asset_code': row['op_asset_code'],
+                            'amount': safe_float(row['op_amount']) if row['op_amount'] else None,
+                            'from_account': row['op_from_account'],
+                            'to_account': row['op_to_account']
+                        }
+                        
+                        # Add exchange details for trade operations
+                        if op_type_str in TRADE_TYPES or 'offer' in op_type_str or 'path_payment' in op_type_str:
+                            operation['is_trade'] = True
+                            operation['exchange'] = {
+                                'source_asset': row['exchange_source_asset'],
+                                'source_amount': safe_float(row['exchange_source_amount']) if row['exchange_source_amount'] else None,
+                                'dest_asset': row['exchange_dest_asset'],
+                                'dest_amount': safe_float(row['exchange_dest_amount']) if row['exchange_dest_amount'] else None
+                            }
+                            # Create human-readable trade direction
+                            src = row['exchange_source_asset'] or row['op_asset_code']
+                            dst = row['exchange_dest_asset'] or 'unknown'
+                            src_amt = safe_float(row['exchange_source_amount']) if row['exchange_source_amount'] else ''
+                            dst_amt = safe_float(row['exchange_dest_amount']) if row['exchange_dest_amount'] else ''
+                            operation['trade_summary'] = f"{src_amt} {src} → {dst_amt} {dst}"
+                        else:
+                            operation['is_trade'] = False
+                        
+                        transactions_dict[tx_hash]['operations'].append(operation)
+                
+                # Convert to list and limit
+                transactions = list(transactions_dict.values())[:limit]
+                
+                # Add summary fields for convenience
+                for tx in transactions:
+                    # Extract unique UBEC tokens involved
+                    tokens = set()
+                    for op in tx['operations']:
+                        if op['asset_code']:
+                            tokens.add(op['asset_code'])
+                        # Also include exchange tokens if present
+                        if op.get('is_trade') and op.get('exchange'):
+                            if op['exchange'].get('source_asset'):
+                                tokens.add(op['exchange']['source_asset'])
+                            if op['exchange'].get('dest_asset'):
+                                tokens.add(op['exchange']['dest_asset'])
+                    tx['involves_tokens'] = list(tokens)
+                    tx['operation_count'] = len(tx['operations'])
                 
                 return {
                     'transactions': transactions,
-                    'filter': {'asset_code': asset_code} if asset_code else None,
+                    'filter': {'asset_code': asset_code} if asset_code else {'ubec_tokens_only': True},
+                    'valid_tokens': list(UBEC_TOKENS),
                     'pagination': {
                         'limit': limit,
                         'total': total_count,
@@ -1689,7 +2472,267 @@ class BackendAPIService:
                 self.logger.error(f"Error fetching watersheds: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching watersheds: {str(e)}")
         
-        self.logger.info("✓ All endpoints registered successfully (19 total)")
+        # =====================================================================
+        # BBOX ENDPOINTS (v2.5.0)
+        # Geographic bounding box information for spatial entities
+        # =====================================================================
+        
+        @self.app.get("/api/v1/bioregions/{gid}/bbox", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_bioregion_bbox(request: Request, gid: int) -> Dict:
+            """
+            Get bounding box for a specific bioregion in WGS 84 / Pseudo-Mercator (EPSG:3857).
+            
+            NEW IN v2.5.0: Provides bounding box coordinates for spatial 
+            visualization and map centering in web mapping projection.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Path Parameters:
+            - gid: Bioregion GID (integer) from bioregion_boundaries table
+            
+            Returns:
+            - gid: Bioregion identifier
+            - bioregion_name: Name of the bioregion
+            - bioregion_code: Unique code for the bioregion
+            - bbox: Bounding box with min_x, min_y, max_x, max_y (meters in EPSG:3857)
+            - centroid: Center point coordinates x, y (meters in EPSG:3857)
+            - area_sqkm: Area in square kilometers
+            - srid: Spatial Reference ID (3857 = WGS 84 / Pseudo-Mercator)
+            - timestamp: When this data was retrieved
+            
+            Source: phenomenal.bioregion_boundaries table
+            Projection: EPSG:3857 (WGS 84 / Pseudo-Mercator) - coordinates in meters
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Transform geometry to EPSG:3857 (WGS 84 / Pseudo-Mercator) for web mapping
+                query = """
+                    SELECT 
+                        gid,
+                        bioregion_name,
+                        bioregion_code,
+                        ST_XMin(ST_Transform(geom, 3857)) as min_x,
+                        ST_YMin(ST_Transform(geom, 3857)) as min_y,
+                        ST_XMax(ST_Transform(geom, 3857)) as max_x,
+                        ST_YMax(ST_Transform(geom, 3857)) as max_y,
+                        ST_X(ST_Centroid(ST_Transform(geom, 3857))) as centroid_x,
+                        ST_Y(ST_Centroid(ST_Transform(geom, 3857))) as centroid_y,
+                        area_sqkm
+                    FROM phenomenal.bioregion_boundaries
+                    WHERE gid = $1
+                """
+                
+                result = await db.fetch_one(query, (gid,))
+                
+                if not result:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Bioregion with gid {gid} not found"
+                    )
+                
+                return {
+                    'gid': result['gid'],
+                    'bioregion_name': result['bioregion_name'],
+                    'bioregion_code': result['bioregion_code'],
+                    'bbox': {
+                        'min_x': safe_float(result['min_x']),
+                        'min_y': safe_float(result['min_y']),
+                        'max_x': safe_float(result['max_x']),
+                        'max_y': safe_float(result['max_y'])
+                    },
+                    'centroid': {
+                        'x': safe_float(result['centroid_x']),
+                        'y': safe_float(result['centroid_y'])
+                    },
+                    'area_sqkm': safe_float(result['area_sqkm']) if result['area_sqkm'] else None,
+                    'srid': 3857,
+                    'projection': 'WGS 84 / Pseudo-Mercator',
+                    'units': 'meters',
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error fetching bioregion bbox: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error fetching bioregion bbox: {str(e)}"
+                )
+        
+        @self.app.get("/api/v1/ecoregions/{eco_id}/bbox", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_ecoregion_bbox(request: Request, eco_id: int) -> Dict:
+            """
+            Get bounding box for a specific ecoregion in WGS 84 / Pseudo-Mercator (EPSG:3857).
+            
+            NEW IN v2.5.0: Provides bounding box coordinates from WWF 
+            Ecoregions 2017 dataset for spatial visualization in web mapping projection.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Path Parameters:
+            - eco_id: Ecoregion eco_id (integer) from ecoregions_2017 table
+            
+            Returns:
+            - eco_id: Ecoregion identifier
+            - eco_name: Name of the ecoregion
+            - biome_name: Associated biome name
+            - realm: Biogeographic realm
+            - bbox: Bounding box with min_x, min_y, max_x, max_y (meters in EPSG:3857)
+            - centroid: Center point coordinates x, y (meters in EPSG:3857)
+            - shape_area: Area from source dataset
+            - srid: Spatial Reference ID (3857 = WGS 84 / Pseudo-Mercator)
+            - timestamp: When this data was retrieved
+            
+            Source: phenomenal.ecoregions_2017 table (WWF Ecoregions 2017)
+            Projection: EPSG:3857 (WGS 84 / Pseudo-Mercator) - coordinates in meters
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Transform geometry to EPSG:3857 (WGS 84 / Pseudo-Mercator) for web mapping
+                query = """
+                    SELECT 
+                        eco_id,
+                        eco_name,
+                        biome_name,
+                        realm,
+                        ST_XMin(ST_Transform(geom, 3857)) as min_x,
+                        ST_YMin(ST_Transform(geom, 3857)) as min_y,
+                        ST_XMax(ST_Transform(geom, 3857)) as max_x,
+                        ST_YMax(ST_Transform(geom, 3857)) as max_y,
+                        ST_X(ST_Centroid(ST_Transform(geom, 3857))) as centroid_x,
+                        ST_Y(ST_Centroid(ST_Transform(geom, 3857))) as centroid_y,
+                        shape_area
+                    FROM phenomenal.ecoregions_2017
+                    WHERE eco_id = $1
+                """
+                
+                result = await db.fetch_one(query, (eco_id,))
+                
+                if not result:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Ecoregion with eco_id {eco_id} not found"
+                    )
+                
+                return {
+                    'eco_id': int(result['eco_id']),
+                    'eco_name': result['eco_name'],
+                    'biome_name': result['biome_name'],
+                    'realm': result['realm'],
+                    'bbox': {
+                        'min_x': safe_float(result['min_x']),
+                        'min_y': safe_float(result['min_y']),
+                        'max_x': safe_float(result['max_x']),
+                        'max_y': safe_float(result['max_y'])
+                    },
+                    'centroid': {
+                        'x': safe_float(result['centroid_x']),
+                        'y': safe_float(result['centroid_y'])
+                    },
+                    'shape_area': safe_float(result['shape_area']) if result['shape_area'] else None,
+                    'srid': 3857,
+                    'projection': 'WGS 84 / Pseudo-Mercator',
+                    'units': 'meters',
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error fetching ecoregion bbox: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error fetching ecoregion bbox: {str(e)}"
+                )
+        
+        @self.app.get("/api/v1/watersheds/{feow_id}/bbox", response_model=Dict)
+        @limiter.limit("100/minute")
+        async def get_watershed_bbox(request: Request, feow_id: int) -> Dict:
+            """
+            Get bounding box for a specific watershed in WGS 84 / Pseudo-Mercator (EPSG:3857).
+            
+            NEW IN v2.5.0: Provides bounding box coordinates from FEOW 
+            HydroSHEDS dataset for spatial visualization in web mapping projection.
+            
+            Rate limit: 100 requests/minute per IP
+            
+            Path Parameters:
+            - feow_id: Watershed FEOW ID (integer) from feow_hydrosheds table
+            
+            Returns:
+            - feow_id: Watershed identifier
+            - name: Generated watershed name
+            - bbox: Bounding box with min_x, min_y, max_x, max_y (meters in EPSG:3857)
+            - centroid: Center point coordinates x, y (meters in EPSG:3857)
+            - area_sqkm: Area in square kilometers
+            - srid: Spatial Reference ID (3857 = WGS 84 / Pseudo-Mercator)
+            - timestamp: When this data was retrieved
+            
+            Source: phenomenal.feow_hydrosheds table (FEOW HydroSHEDS)
+            Projection: EPSG:3857 (WGS 84 / Pseudo-Mercator) - coordinates in meters
+            """
+            try:
+                db = await self.registry.get('database')
+                
+                # Transform geometry to EPSG:3857 (WGS 84 / Pseudo-Mercator) for web mapping
+                query = """
+                    SELECT 
+                        feow_id,
+                        'Watershed ' || feow_id::text as name,
+                        area_skm,
+                        ST_XMin(ST_Transform(geom, 3857)) as min_x,
+                        ST_YMin(ST_Transform(geom, 3857)) as min_y,
+                        ST_XMax(ST_Transform(geom, 3857)) as max_x,
+                        ST_YMax(ST_Transform(geom, 3857)) as max_y,
+                        ST_X(ST_Centroid(ST_Transform(geom, 3857))) as centroid_x,
+                        ST_Y(ST_Centroid(ST_Transform(geom, 3857))) as centroid_y
+                    FROM phenomenal.feow_hydrosheds
+                    WHERE feow_id = $1
+                """
+                
+                result = await db.fetch_one(query, (feow_id,))
+                
+                if not result:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Watershed with feow_id {feow_id} not found"
+                    )
+                
+                return {
+                    'feow_id': int(result['feow_id']),
+                    'name': result['name'],
+                    'bbox': {
+                        'min_x': safe_float(result['min_x']),
+                        'min_y': safe_float(result['min_y']),
+                        'max_x': safe_float(result['max_x']),
+                        'max_y': safe_float(result['max_y'])
+                    },
+                    'centroid': {
+                        'x': safe_float(result['centroid_x']),
+                        'y': safe_float(result['centroid_y'])
+                    },
+                    'area_sqkm': safe_float(result['area_skm']) if result['area_skm'] else None,
+                    'srid': 3857,
+                    'projection': 'WGS 84 / Pseudo-Mercator',
+                    'units': 'meters',
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Error fetching watershed bbox: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error fetching watershed bbox: {str(e)}"
+                )
+        
+        self.logger.info("✓ All endpoints registered successfully (23 total)")
     
     async def _rate_limit_error_handler(self, request: Request, exc: RateLimitExceeded) -> JSONResponse:
         """

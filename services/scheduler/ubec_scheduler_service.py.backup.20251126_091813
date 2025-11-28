@@ -74,7 +74,7 @@ CHANGELOG v1.0.3:
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
 import traceback
@@ -134,11 +134,11 @@ class ScheduledJob:
     
     def is_due(self) -> bool:
         """Check if job is due to run"""
-        return self.enabled and datetime.now(timezone.utc) >= self.next_run
+        return self.enabled and datetime.now() >= self.next_run
     
     def calculate_next_run(self) -> datetime:
         """Calculate next run time based on interval"""
-        return datetime.now(timezone.utc) + timedelta(seconds=self.schedule_interval)
+        return datetime.now() + timedelta(seconds=self.schedule_interval)
     
     @property
     def success_rate(self) -> float:

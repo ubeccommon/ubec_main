@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-21T17:24:50.053739
+**Generated:** 2025-11-28T07:45:44.966160
 
 **Database:** ubec
 
@@ -33,7 +33,7 @@
 - **Total Tables:** 82
 - **Total Views:** 37
 - **Total Functions:** 1626
-- **Total Rows:** 194,970
+- **Total Rows:** 60,312
 - **Total Columns:** 1,016
 - **Total Foreign Keys:** 31
 
@@ -44,7 +44,7 @@
 | phenomenal | 29 | 13 | 21 | 22,638 | 1009 MB |
 | public | 1 | 4 | 1421 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 50 | 20 | 81 | 163,832 | 118 MB |
+| ubec_main | 50 | 20 | 81 | 29,174 | 145 MB |
 
 ---
 
@@ -158,6 +158,14 @@
 #### ubecgpi_readonly
 
 - **User ID:** 30297736
+- **Superuser:** No
+- **Can Create DB:** No
+- **Can Replicate:** No
+- **Bypass RLS:** No
+
+#### ubecwww
+
+- **User ID:** 37520969
 - **Superuser:** No
 - **Can Create DB:** No
 - **Can Replicate:** No
@@ -286,6 +294,14 @@
 - **Can Create DB:** No
 
 #### ubecgpi_readonly
+
+- **Can Login:** Yes
+- **Superuser:** No
+- **Inherit Privileges:** Yes
+- **Can Create Role:** No
+- **Can Create DB:** No
+
+#### ubecwww
 
 - **Can Login:** Yes
 - **Superuser:** No
@@ -743,7 +759,7 @@
 
 **Check Constraints:**
 - positive_area: CHECK (((area_sqkm IS NULL) OR (area_sqkm > (0)::numeric)))
-- positive_population: CHECK (((population_estimate IS NULL) OR (population_estimate > 0)))
+- positive_population: CHECK (((population_estimate IS NULL) OR (population_estimate >= 0)))
 - valid_email: CHECK (((contact_email)::text ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$'::text))
 - valid_status: CHECK (((status)::text = ANY ((ARRAY['proposed'::character varying, 'under_review'::character varying, 'approved'::character varying, 'active'::character varying, 'inactive'::character varying, 'archived'::character varying])::text[])))
 
@@ -1975,13 +1991,12 @@
 - **Language:** plpgsql
 - **Description:** Calculates the gravitational mass of an entity based on its connections and age. Returns a numeric value representing the entity's influence in the network.
 
-#### calculate_polygon_population(polygon_geom geometry, raster_schema text DEFAULT 'phenomenal'::text, raster_table text DEFAULT 'population_raster_2025'::text)
+#### calculate_polygon_population(polygon_geom geometry, schema_name text DEFAULT 'phenomenal'::text, raster_table text DEFAULT 'population_raster_2025'::text)
 
 - **Returns:** numeric
 - **Language:** plpgsql
 - **Description:** Calculates total population within a polygon boundary using WorldPop raster data.
-Uses ST_Clip and ST_SummaryStats for accurate zonal statistics.
-Returns 0 on error to maintain data integrity.
+Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 #### calculate_spacetime_curvature(p_mass_id bigint)
 
@@ -2039,7 +2054,6 @@ Returns 0 on error to maintain data integrity.
 
 - **Returns:** trigger
 - **Language:** plpgsql
-- **Description:** Trigger function that automatically calculates population_estimate when bioregion geom is inserted or updated
 
 #### update_poi_coordinates()
 
@@ -10523,7 +10537,7 @@ Returns 0 on error to maintain data integrity.
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 163,832 | **Size:** 118 MB
+**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 29,174 | **Size:** 145 MB
 
 ### Schema Permissions
 
@@ -11641,7 +11655,7 @@ Returns 0 on error to maintain data integrity.
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 3,281 | **Size:** 4944 kB
+**Rows:** 4,776 | **Size:** 6648 kB
 
 **Columns:**
 
@@ -11680,15 +11694,15 @@ Returns 0 on error to maintain data integrity.
 - valid_ubuntu_score: CHECK (((ubuntu_alignment_score >= (0)::numeric) AND (ubuntu_alignment_score <= (1)::numeric)))
 
 **Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 200 kB
-- UNIQUE BTREE: (account_id) - 320 kB
+- PRIMARY UNIQUE BTREE: (id) - 272 kB
+- UNIQUE BTREE: (account_id) - 568 kB
 - BTREE: (account_id) - 152 kB
-- BTREE: (calculation_mode) - 56 kB
-- BTREE: (holonic_category) - 72 kB
-- BTREE: (composite_score) - 208 kB
-- BTREE: (confidence) - 152 kB
-- BTREE: (evaluation_date) - 280 kB
-- UNIQUE BTREE: (evaluation_date, account_id) - 560 kB
+- BTREE: (calculation_mode) - 80 kB
+- BTREE: (holonic_category) - 104 kB
+- BTREE: (composite_score) - 272 kB
+- BTREE: (confidence) - 264 kB
+- BTREE: (evaluation_date) - 392 kB
+- UNIQUE BTREE: (evaluation_date, account_id) - 752 kB
 
 **Triggers:**
 - **trg_set_evaluation_date_date:** BEFORE INSERT OR UPDATE ROW
@@ -12190,12 +12204,12 @@ Returns 0 on error to maintain data integrity.
 |--------|------|----------|----------|
 | id | integer(32) | ✗ | nextval('scheduler_execution_log_id_seq'::regclass) |
 | job_name | character varying(100) | ✗ |  |
-| executed_at | timestamp without time zone | ✗ | now() |
+| executed_at | timestamp with time zone | ✗ | now() |
 | duration_ms | integer(32) | ✓ |  |
 | success | boolean | ✗ |  |
 | error_message | text | ✓ |  |
 | error_traceback | text | ✓ |  |
-| created_at | timestamp without time zone | ✓ | now() |
+| created_at | timestamp with time zone | ✓ | now() |
 
 **Primary Key:**
 - scheduler_execution_log_pkey: (id)
@@ -12215,7 +12229,7 @@ Returns 0 on error to maintain data integrity.
 
 *Scheduled jobs configuration. job_function must be in format: service_name.method_name where both service and method exist in the registry.*
 
-**Rows:** 7 | **Size:** 112 kB
+**Rows:** 8 | **Size:** 112 kB
 
 **Columns:**
 
@@ -12224,13 +12238,13 @@ Returns 0 on error to maintain data integrity.
 | id | integer(32) | ✗ | nextval('scheduler_jobs_id_seq'::regclass) |
 | job_name | character varying(100) | ✗ |  |
 | schedule_interval | character varying(50) | ✗ |  |
-| next_run | timestamp without time zone | ✗ |  |
-| last_run | timestamp without time zone | ✓ |  |
+| next_run | timestamp with time zone | ✗ |  |
+| last_run | timestamp with time zone | ✓ |  |
 | job_function *(Format: service_name.method_name - Service must be registered in service registry and method must exist on that service.)* | text | ✗ |  |
 | parameters | jsonb | ✓ |  |
 | enabled *(When false, job is disabled. blockchain_sync disabled because sync service not registered. bioregion_analysis disabled because bioregion_manager not registered.)* | boolean | ✓ | true |
-| created_at | timestamp without time zone | ✗ | now() |
-| updated_at | timestamp without time zone | ✗ | now() |
+| created_at | timestamp with time zone | ✗ | now() |
+| updated_at | timestamp with time zone | ✗ | now() |
 
 **Primary Key:**
 - scheduler_jobs_pkey: (id)
@@ -12260,7 +12274,7 @@ Returns 0 on error to maintain data integrity.
 
 *Tracks all schema migrations applied to the database. Provides audit trail and version control for database structure changes.*
 
-**Rows:** 2 | **Size:** 80 kB
+**Rows:** 3 | **Size:** 80 kB
 
 **Columns:**
 
@@ -12268,7 +12282,7 @@ Returns 0 on error to maintain data integrity.
 |--------|------|----------|----------|
 | migration_id *(Auto-incrementing primary key)* | integer(32) | ✗ | nextval('schema_migrations_migration_id_seq'::regclass) |
 | migration_name *(Unique migration identifier, typically: YYYYMMDD_HHMM_description)* | character varying(255) | ✗ |  |
-| applied_at *(Timestamp when migration was executed)* | timestamp without time zone | ✗ | now() |
+| applied_at *(Timestamp when migration was executed)* | timestamp with time zone | ✗ | now() |
 | applied_by *(Database user who executed the migration)* | character varying(100) | ✗ |  |
 | description *(Human-readable description of what the migration does)* | text | ✓ |  |
 | checksum *(SHA256 checksum of migration file for integrity verification)* | character varying(64) | ✓ |  |
@@ -12301,7 +12315,7 @@ Returns 0 on error to maintain data integrity.
 
 *Stellar blockchain accounts with element tracking*
 
-**Rows:** 1,498 | **Size:** 1040 kB
+**Rows:** 654 | **Size:** 992 kB
 
 **Columns:**
 
@@ -12339,8 +12353,8 @@ Returns 0 on error to maintain data integrity.
 - BTREE: (last_activity_at) - 40 kB
 - BTREE: (created_at) - 40 kB
 - BTREE: (primary_element) - 40 kB
-- UNIQUE BTREE: (account_id) - 216 kB
-- PRIMARY UNIQUE BTREE: (id) - 80 kB
+- UNIQUE BTREE: (account_id) - 224 kB
+- PRIMARY UNIQUE BTREE: (id) - 88 kB
 
 **Triggers:**
 - **trg_stellar_accounts_modified:** BEFORE UPDATE ROW
@@ -12481,7 +12495,7 @@ Returns 0 on error to maintain data integrity.
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 38,511 | **Size:** 36 MB
+**Rows:** 647 | **Size:** 52 MB
 
 **Columns:**
 
@@ -12519,24 +12533,24 @@ Returns 0 on error to maintain data integrity.
 - stellar_operations_operation_id_key: (operation_id)
 
 **Indexes:**
-- BTREE: (asset_code) - 448 kB
-- BTREE: (created_at) - 1192 kB
-- BTREE: (operation_element) - 448 kB
-- BTREE: (from_account) - 520 kB
-- BTREE: (operation_id) - 2128 kB
-- BTREE: (to_account) - 528 kB
-- BTREE: (transaction_hash) - 4224 kB
-- BTREE: (type) - 368 kB
-- BTREE: (asset_code, from_account, to_account, created_at) - 7768 kB
+- BTREE: (asset_code) - 704 kB
+- BTREE: (created_at) - 1704 kB
+- BTREE: (operation_element) - 704 kB
+- BTREE: (from_account) - 752 kB
+- BTREE: (operation_id) - 3176 kB
+- BTREE: (to_account) - 632 kB
+- BTREE: (transaction_hash) - 5840 kB
+- BTREE: (type) - 640 kB
+- BTREE: (asset_code, from_account, to_account, created_at) - 10 MB
 - BTREE: (asset_code) - 16 kB
-- BTREE: (created_at) - 1128 kB
-- BTREE: (from_account) - 368 kB
-- BTREE: (asset_code, from_account) - 384 kB
-- BTREE: (source_account) - 488 kB
-- BTREE: (to_account) - 408 kB
-- BTREE: (asset_code, to_account) - 416 kB
-- UNIQUE BTREE: (operation_id) - 2088 kB
-- PRIMARY UNIQUE BTREE: (id) - 1080 kB
+- BTREE: (created_at) - 1704 kB
+- BTREE: (from_account) - 552 kB
+- BTREE: (asset_code, from_account) - 568 kB
+- BTREE: (source_account) - 808 kB
+- BTREE: (to_account) - 448 kB
+- BTREE: (asset_code, to_account) - 448 kB
+- UNIQUE BTREE: (operation_id) - 3104 kB
+- PRIMARY UNIQUE BTREE: (id) - 1872 kB
 
 **Permissions:**
 - **PUBLIC:** SELECT
@@ -12555,7 +12569,7 @@ Returns 0 on error to maintain data integrity.
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 103,978 | **Size:** 63 MB
+**Rows:** 567 | **Size:** 70 MB
 
 **Columns:**
 
@@ -12593,14 +12607,14 @@ Returns 0 on error to maintain data integrity.
 - stellar_transactions_transaction_hash_key: (transaction_hash)
 
 **Indexes:**
-- BTREE: (created_at) - 3032 kB
-- BTREE: (primary_element) - 1120 kB
-- BTREE: (transaction_hash) - 12 MB
-- BTREE: (ledger_sequence) - 1144 kB
-- BTREE: (source_account) - 1312 kB
-- GIN: (involves_tokens) - 480 kB
-- PRIMARY UNIQUE BTREE: (id) - 2528 kB
-- UNIQUE BTREE: (transaction_hash) - 12 MB
+- BTREE: (created_at) - 3448 kB
+- BTREE: (primary_element) - 1224 kB
+- BTREE: (transaction_hash) - 14 MB
+- BTREE: (ledger_sequence) - 1232 kB
+- BTREE: (source_account) - 1488 kB
+- GIN: (involves_tokens) - 488 kB
+- PRIMARY UNIQUE BTREE: (id) - 2904 kB
+- UNIQUE BTREE: (transaction_hash) - 14 MB
 
 **Permissions:**
 - **PUBLIC:** SELECT
@@ -12626,14 +12640,14 @@ Returns 0 on error to maintain data integrity.
 | id | integer(32) | ✗ | nextval('sync_jobs_id_seq'::regclass) |
 | job_type | character varying(50) | ✗ |  |
 | schedule_interval | interval | ✗ |  |
-| last_run | timestamp without time zone | ✓ |  |
-| next_run | timestamp without time zone | ✗ |  |
+| last_run | timestamp with time zone | ✓ |  |
+| next_run | timestamp with time zone | ✗ |  |
 | enabled | boolean | ✓ | true |
 | parameters | jsonb | ✓ |  |
 | last_status | character varying(20) | ✓ |  |
 | error_message | text | ✓ |  |
-| created_at | timestamp without time zone | ✗ | now() |
-| updated_at | timestamp without time zone | ✗ | now() |
+| created_at | timestamp with time zone | ✗ | now() |
+| updated_at | timestamp with time zone | ✗ | now() |
 
 **Primary Key:**
 - sync_jobs_pkey: (id)
@@ -12660,7 +12674,7 @@ Returns 0 on error to maintain data integrity.
 | Column | Type | Nullable | Default |
 |--------|------|----------|----------|
 | account_id | character varying(56) | ✗ |  |
-| last_sync | timestamp without time zone | ✗ | now() |
+| last_sync | timestamp with time zone | ✗ | now() |
 | last_block_height | bigint(64) | ✓ |  |
 | last_ledger_sequence | bigint(64) | ✓ |  |
 | last_transaction_id | character varying(64) | ✓ |  |
@@ -12668,7 +12682,7 @@ Returns 0 on error to maintain data integrity.
 | status | character varying(20) | ✓ | 'active'::character varying |
 | error_count | integer(32) | ✓ | 0 |
 | last_error | text | ✓ |  |
-| last_error_at | timestamp without time zone | ✓ |  |
+| last_error_at | timestamp with time zone | ✓ |  |
 
 **Primary Key:**
 - sync_status_pkey: (account_id)
@@ -12702,8 +12716,8 @@ Returns 0 on error to maintain data integrity.
 | parameter_type | character varying(20) | ✓ | 'string'::character varying |
 | description | text | ✓ |  |
 | is_sensitive | boolean | ✓ | false |
-| created_at | timestamp without time zone | ✗ | now() |
-| updated_at | timestamp without time zone | ✗ | now() |
+| created_at | timestamp with time zone | ✗ | now() |
+| updated_at | timestamp with time zone | ✗ | now() |
 
 **Primary Key:**
 - system_configuration_pkey: (id)
@@ -13030,7 +13044,7 @@ Returns 0 on error to maintain data integrity.
 
 *Token balances for all four elements with distribution tracking*
 
-**Rows:** 654 | **Size:** 560 kB
+**Rows:** 654 | **Size:** 616 kB
 
 **Columns:**
 
@@ -13070,10 +13084,10 @@ Returns 0 on error to maintain data integrity.
 - BTREE: (balance) - 72 kB
 - BTREE: (distribution_category) - 16 kB
 - BTREE: (element) - 16 kB
-- BTREE: (last_modified_at) - 80 kB
+- BTREE: (last_modified_at) - 88 kB
 - BTREE: (token_code) - 16 kB
 - PRIMARY UNIQUE BTREE: (id) - 40 kB
-- UNIQUE BTREE: (account_id, token_code) - 72 kB
+- UNIQUE BTREE: (account_id, token_code) - 120 kB
 
 **Triggers:**
 - **trg_ubec_balances_modified:** BEFORE UPDATE ROW
@@ -13171,7 +13185,7 @@ Returns 0 on error to maintain data integrity.
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 5,988 | **Size:** 4064 kB
+**Rows:** 11,952 | **Size:** 6864 kB
 
 **Columns:**
 
@@ -13205,13 +13219,13 @@ Returns 0 on error to maintain data integrity.
 - valid_score: CHECK (((score >= (0)::numeric) AND (score <= (1)::numeric)))
 
 **Indexes:**
-- BTREE: (account_id) - 168 kB
-- BTREE: (calculated_at) - 280 kB
-- BTREE: (element) - 80 kB
-- BTREE: (health_status) - 112 kB
-- BTREE: (principle) - 80 kB
-- BTREE: (score) - 312 kB
-- PRIMARY UNIQUE BTREE: (id) - 280 kB
+- BTREE: (account_id) - 176 kB
+- BTREE: (calculated_at) - 496 kB
+- BTREE: (element) - 168 kB
+- BTREE: (health_status) - 208 kB
+- BTREE: (principle) - 168 kB
+- BTREE: (score) - 632 kB
+- PRIMARY UNIQUE BTREE: (id) - 496 kB
 
 **Row Level Security:** Enabled
 

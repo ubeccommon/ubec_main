@@ -1,7 +1,83 @@
 #!/usr/bin/env python3
 """
-UBEC Data Synchronizer v5.2.8 - Complete Stellar Operation Type Support
+UBEC Data Synchronizer v5.2.14 - Network-Wide Token Operations Sync
 ========================================================================
+
+ENHANCEMENT in v5.2.14:
+1. ✅ ADDED: sync_token_operations() method
+   - Fetches ALL operations for a UBEC token network-wide
+   - Uses Stellar's operations().for_asset() API
+   - Captures ALL payments, trades, trustlines regardless of account
+   - Supports pagination with cursor for large result sets
+2. ✅ ADDED: sync_all_token_operations() method
+   - Syncs recent operations for all 4 UBEC tokens
+   - Configurable limit per token (default: 1000)
+   - Provides complete network activity coverage
+3. ✅ ADDED: UBEC-only operation filter
+   - Only stores operations involving UBEC, UBECrc, UBECgpi, or UBECtt
+   - Prevents database pollution with unrelated DEX trades (SSLX, yXLM, etc.)
+4. ✅ COMPLIANCE: Maintains all 12 design principles
+
+ENHANCEMENT in v5.2.13:
+1. ✅ ADDED: Complete exchange pair extraction for DEX operations
+   - manage_sell_offer: extracts selling_asset -> buying_asset pair
+   - manage_buy_offer: extracts selling_asset -> buying_asset pair
+   - path_payment_strict_send: extracts source_asset -> dest_asset pair
+   - path_payment_strict_receive: extracts source_asset -> dest_asset pair
+   - create_passive_sell_offer: extracts selling -> buying pair
+2. ✅ ADDED: Populates all exchange columns:
+   - exchange_source_asset: what's being sold/sent
+   - exchange_source_amount: amount being sold/sent
+   - exchange_dest_asset: what's being bought/received
+   - exchange_dest_amount: amount being bought/received
+3. ✅ FIXED: Handles native XLM as 'XLM' in exchange pairs
+4. ✅ COMPLIANCE: Maintains all 12 design principles
+
+CRITICAL FIX in v5.2.12:
+1. ✅ FIXED: Asset extraction now works for ALL operation types
+   - Previously only extracted for 'payment' operations (bug since ~Oct 14, 2025)
+   - Now handles: payment, change_trust, manage_sell_offer, manage_buy_offer,
+     path_payment_strict_send, path_payment_strict_receive, create_claimable_balance,
+     claim_claimable_balance, liquidity_pool_deposit, liquidity_pool_withdraw
+   - Resolves: 33,000+ operations with NULL asset_code since October 2025
+2. ✅ FIXED: Added asset_type and asset_issuer to INSERT query
+   - Database schema has these columns but they weren't being populated
+   - Now fully populates: asset_code, asset_type, asset_issuer, operation_element
+3. ✅ FIXED: Handles credit_alphanum12 assets (not just credit_alphanum4)
+4. ✅ FIXED: Parses combined asset strings (e.g., "UBEC:ISSUER") for claimable balance ops
+5. ✅ COMPLIANCE: Maintains all 12 design principles
+
+CRITICAL FIX in v5.2.11:
+1. ✅ FIXED: FK constraint violation in _sync_pool_participants()
+   - Issue: liquidity_pool_owners has FK to stellar_accounts (fk_lp_owner_account)
+   - Root cause: Pool participants not added to stellar_accounts before LP insert
+   - Solution: UPSERT account into stellar_accounts BEFORE liquidity_pool_owners insert
+   - Resolves: violates foreign key constraint "fk_lp_owner_account" on table "liquidity_pool_owners"
+2. ✅ FIXED: Used explicit schema names (ubec_main.) in pool queries
+3. ✅ FIXED: Changed placeholder style from %s to $1 for asyncpg compatibility
+4. ✅ COMPLIANCE: Maintains all 12 design principles
+
+CRITICAL FIX in v5.2.10:
+1. ✅ FIXED: Foreign key constraint violation in cleanup_irrelevant_accounts()
+   - Issue: ubec_holonic_metrics has FK to stellar_accounts (fk_holonic_account)
+   - Root cause: Cleanup didn't delete holonic metrics before accounts
+   - Solution: Added deletion of ubec_holonic_metrics FIRST in cleanup order
+   - Deletion order now: holonic_metrics → operations → transactions → balances → accounts
+   - Resolves: violates foreign key constraint "fk_holonic_account" on table "ubec_holonic_metrics"
+2. ✅ ENHANCED: Result structure includes holonic_metrics deletion count
+3. ✅ ENHANCED: Completion logging includes holonic metrics count
+4. ✅ COMPLIANCE: Maintains all 12 design principles
+
+ENHANCEMENT in v5.2.9:
+1. ✅ ADDED: cleanup_irrelevant_accounts() method
+   - Removes accounts with no UBEC trustlines (no entry in ubec_balances)
+   - Optionally removes accounts with zero balance across all tokens
+   - Supports dry_run mode for safe preview before deletion
+   - Deletes related records in correct FK order: operations → transactions → balances → accounts
+   - Reduces database bloat from dormant/inactive accounts
+   - Integrated into health monitoring metrics
+2. ✅ ADDED: total_accounts_cleaned metric for tracking cleanup operations
+3. ✅ COMPLIANCE: Maintains all 12 design principles
 
 ENHANCEMENT in v5.2.8:
 1. ✅ EXPANDED: Full support for all 27 Stellar Protocol 20 operation types
@@ -187,6 +263,7 @@ This module implements the service pattern with:
 - Foreign key constraint compliance
 - Proper None handling for optional parameters
 - **NEW v5.2.0+:** Operations sync for accurate activity metrics
+- **NEW v5.2.9:** Irrelevant account cleanup for database hygiene
 
 Design Principles Compliance:
 ════════════════════════════════════════════════════════════════════════════
@@ -216,8 +293,8 @@ Attribution:
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 5.2.5 (Operations Sync Re-Enabled)
-Date: November 19, 2025
+Version: 5.2.9 (Irrelevant Account Cleanup)
+Date: November 27, 2025
 """
 
 import asyncio
@@ -369,6 +446,7 @@ class UBECDataSynchronizer:
     - Rate limiting with circuit breaker
     - Pure async operations
     
+    v5.2.9: Added cleanup_irrelevant_accounts() for database hygiene
     v5.2.0: Enhanced with operations sync for accurate activity metrics
     """
     
@@ -409,7 +487,9 @@ class UBECDataSynchronizer:
         self.total_owners_synced = 0
         self.total_accounts_synced = 0
         self.total_operations_synced = 0  # NEW v5.2.0: Track operations synced
+        self.total_accounts_cleaned = 0   # NEW v5.2.9: Track accounts cleaned
         self.last_sync_time: Optional[datetime] = None
+        self.last_cleanup_time: Optional[datetime] = None  # NEW v5.2.9
         
         # Error tracking
         self.error_count = 0
@@ -478,6 +558,283 @@ class UBECDataSynchronizer:
         self.logger.info(f"  Network: {self.network}")
         self.logger.info(f"  Horizon URL: {horizon_url}")
         self.logger.info(f"  Rate limit: {rate_limit} requests/second")
+    
+    async def cleanup_irrelevant_accounts(
+        self,
+        dry_run: bool = True,
+        include_zero_balance: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Remove accounts that have no relevance to UBEC tokens.
+        
+        NEW in v5.2.9: This method removes database bloat by cleaning up accounts that:
+        1. Have no trustline to any UBEC token (no entry in ubec_balances)
+        2. Optionally: Have trustlines but zero balance across all tokens
+        
+        These accounts typically result from:
+        - One-time interactions that never materialized into holdings
+        - Accounts that removed their trustlines
+        - Historical sync artifacts
+        
+        The cleanup respects foreign key constraints by deleting in the correct order:
+        1. stellar_operations (references transactions and accounts)
+        2. stellar_transactions (references accounts)
+        3. ubec_balances (references accounts)
+        4. stellar_accounts (parent table)
+        
+        Args:
+            dry_run: If True, only report what would be deleted without making changes.
+                     If False, perform actual deletion. Default: True for safety.
+            include_zero_balance: If True, also remove accounts that have trustlines
+                                  but zero balance across all UBEC tokens. Default: True.
+        
+        Returns:
+            Dict containing:
+            - dry_run: Whether this was a preview run
+            - no_trustline_count: Accounts with no UBEC trustlines
+            - zero_balance_count: Accounts with zero balance (if include_zero_balance)
+            - total_accounts: Total accounts identified for removal
+            - deleted: Counts of deleted records (if not dry_run)
+            - sample_accounts: Sample of accounts to be removed (if dry_run)
+            - timestamp: When cleanup was performed
+            - duration_seconds: How long the operation took
+        
+        Principle #4: Database as single source of truth (explicit schema names)
+        Principle #5: Strict async operations
+        Principle #11: Comprehensive documentation
+        
+        This project uses the services of Claude and Anthropic PBC.
+        """
+        if not self.initialized:
+            raise RuntimeError("Synchronizer not initialized")
+        
+        start_time = datetime.now(timezone.utc)
+        
+        self.logger.info("=" * 70)
+        self.logger.info(f"CLEANUP IRRELEVANT ACCOUNTS (dry_run={dry_run})")
+        self.logger.info("=" * 70)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 1: Identify accounts with no UBEC trustlines
+        # These accounts exist in stellar_accounts but have no entry in ubec_balances
+        # ═══════════════════════════════════════════════════════════════════
+        no_trustline_query = """
+            SELECT sa.account_id
+            FROM ubec_main.stellar_accounts sa
+            LEFT JOIN ubec_main.ubec_balances ub ON sa.account_id = ub.account_id
+            WHERE ub.account_id IS NULL
+        """
+        
+        no_trustline_rows = await self.db.fetch_all(no_trustline_query)
+        no_trustline_ids = [row['account_id'] for row in no_trustline_rows]
+        
+        self.logger.info(f"Found {len(no_trustline_ids)} accounts with no UBEC trustlines")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 2: Identify accounts with zero balance (optional)
+        # These accounts have trustlines but hold zero tokens across all elements
+        # ═══════════════════════════════════════════════════════════════════
+        zero_balance_ids = []
+        if include_zero_balance:
+            zero_balance_query = """
+                SELECT ub.account_id
+                FROM ubec_main.ubec_balances ub
+                GROUP BY ub.account_id
+                HAVING SUM(ub.balance) = 0
+            """
+            zero_balance_rows = await self.db.fetch_all(zero_balance_query)
+            zero_balance_ids = [row['account_id'] for row in zero_balance_rows]
+            
+            self.logger.info(f"Found {len(zero_balance_ids)} accounts with zero balance")
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 3: Combine lists (deduplicated)
+        # ═══════════════════════════════════════════════════════════════════
+        accounts_to_remove = list(set(no_trustline_ids + zero_balance_ids))
+        
+        self.logger.info(f"Total accounts to remove: {len(accounts_to_remove)}")
+        
+        # Initialize result structure
+        result = {
+            'dry_run': dry_run,
+            'no_trustline_count': len(no_trustline_ids),
+            'zero_balance_count': len(zero_balance_ids),
+            'total_accounts': len(accounts_to_remove),
+            'deleted': {
+                'accounts': 0,
+                'transactions': 0,
+                'operations': 0,
+                'balances': 0,
+                'holonic_metrics': 0
+            },
+            'timestamp': start_time.isoformat()
+        }
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 4: Dry run mode - preview only
+        # ═══════════════════════════════════════════════════════════════════
+        if dry_run:
+            result['sample_accounts'] = accounts_to_remove[:20]
+            
+            # Count related records that would be affected
+            if accounts_to_remove:
+                # Count transactions
+                tx_count_query = """
+                    SELECT COUNT(*) as cnt
+                    FROM ubec_main.stellar_transactions
+                    WHERE source_account = ANY($1)
+                """
+                tx_count_row = await self.db.fetch_one(tx_count_query, (accounts_to_remove,))
+                result['affected_transactions'] = tx_count_row['cnt'] if tx_count_row else 0
+                
+                # Count operations
+                ops_count_query = """
+                    SELECT COUNT(*) as cnt
+                    FROM ubec_main.stellar_operations
+                    WHERE source_account = ANY($1)
+                       OR from_account = ANY($1)
+                       OR to_account = ANY($1)
+                """
+                ops_count_row = await self.db.fetch_one(ops_count_query, (accounts_to_remove,))
+                result['affected_operations'] = ops_count_row['cnt'] if ops_count_row else 0
+            
+            end_time = datetime.now(timezone.utc)
+            result['duration_seconds'] = (end_time - start_time).total_seconds()
+            
+            self.logger.info("Dry run complete. No records deleted.")
+            self.logger.info(f"  Would remove {len(accounts_to_remove)} accounts")
+            self.logger.info(f"  Would affect ~{result.get('affected_transactions', 0)} transactions")
+            self.logger.info(f"  Would affect ~{result.get('affected_operations', 0)} operations")
+            
+            return result
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 5: Live mode - perform deletion
+        # ═══════════════════════════════════════════════════════════════════
+        if not accounts_to_remove:
+            self.logger.info("No irrelevant accounts found. Nothing to delete.")
+            end_time = datetime.now(timezone.utc)
+            result['duration_seconds'] = (end_time - start_time).total_seconds()
+            return result
+        
+        self.logger.info("Deleting irrelevant records...")
+        
+        # Delete in correct FK order to avoid constraint violations
+        # Tables referencing stellar_accounts(account_id):
+        #   - stellar_operations (source_account, from_account, to_account)
+        #   - stellar_transactions (source_account via fk_source_account)
+        #   - ubec_balances (account_id)
+        #   - ubec_holonic_metrics (account_id via fk_holonic_account)
+        
+        # 1. Delete holonic metrics (references accounts via FK)
+        self.logger.info("  Deleting holonic metrics...")
+        holonic_result = await self.db.execute(
+            """
+            DELETE FROM ubec_main.ubec_holonic_metrics
+            WHERE account_id = ANY($1)
+            """,
+            (accounts_to_remove,)
+        )
+        result['deleted']['holonic_metrics'] = self._extract_row_count(holonic_result)
+        self.logger.info(f"    Deleted {result['deleted']['holonic_metrics']} holonic metrics")
+        
+        # 2. Delete operations (references transactions via FK)
+        self.logger.info("  Deleting operations...")
+        ops_result = await self.db.execute(
+            """
+            DELETE FROM ubec_main.stellar_operations
+            WHERE source_account = ANY($1)
+               OR from_account = ANY($1)
+               OR to_account = ANY($1)
+            """,
+            (accounts_to_remove,)
+        )
+        result['deleted']['operations'] = self._extract_row_count(ops_result)
+        self.logger.info(f"    Deleted {result['deleted']['operations']} operations")
+        
+        # 3. Delete transactions (references accounts via FK)
+        self.logger.info("  Deleting transactions...")
+        tx_result = await self.db.execute(
+            """
+            DELETE FROM ubec_main.stellar_transactions
+            WHERE source_account = ANY($1)
+            """,
+            (accounts_to_remove,)
+        )
+        result['deleted']['transactions'] = self._extract_row_count(tx_result)
+        self.logger.info(f"    Deleted {result['deleted']['transactions']} transactions")
+        
+        # 4. Delete balances (references accounts via FK)
+        self.logger.info("  Deleting balances...")
+        bal_result = await self.db.execute(
+            """
+            DELETE FROM ubec_main.ubec_balances
+            WHERE account_id = ANY($1)
+            """,
+            (accounts_to_remove,)
+        )
+        result['deleted']['balances'] = self._extract_row_count(bal_result)
+        self.logger.info(f"    Deleted {result['deleted']['balances']} balance records")
+        
+        # 5. Delete accounts (parent table - must be last)
+        self.logger.info("  Deleting accounts...")
+        acc_result = await self.db.execute(
+            """
+            DELETE FROM ubec_main.stellar_accounts
+            WHERE account_id = ANY($1)
+            """,
+            (accounts_to_remove,)
+        )
+        result['deleted']['accounts'] = self._extract_row_count(acc_result)
+        self.logger.info(f"    Deleted {result['deleted']['accounts']} accounts")
+        
+        # Update metrics
+        self.total_accounts_cleaned += result['deleted']['accounts']
+        self.last_cleanup_time = datetime.now(timezone.utc)
+        
+        end_time = datetime.now(timezone.utc)
+        result['duration_seconds'] = (end_time - start_time).total_seconds()
+        
+        self.logger.info("=" * 70)
+        self.logger.info("CLEANUP COMPLETE")
+        self.logger.info(f"  Accounts removed: {result['deleted']['accounts']}")
+        self.logger.info(f"  Transactions removed: {result['deleted']['transactions']}")
+        self.logger.info(f"  Operations removed: {result['deleted']['operations']}")
+        self.logger.info(f"  Balances removed: {result['deleted']['balances']}")
+        self.logger.info(f"  Holonic metrics removed: {result['deleted']['holonic_metrics']}")
+        self.logger.info(f"  Duration: {result['duration_seconds']:.2f} seconds")
+        self.logger.info("=" * 70)
+        
+        return result
+    
+    def _extract_row_count(self, result: Any) -> int:
+        """
+        Extract row count from database execute result.
+        
+        asyncpg returns strings like 'DELETE 5' or 'UPDATE 10'.
+        This method extracts the numeric count.
+        
+        Args:
+            result: Result from db.execute() call
+        
+        Returns:
+            Number of affected rows, or 0 if unable to parse
+        """
+        if result is None:
+            return 0
+        
+        if isinstance(result, str):
+            # Format: "DELETE 5" or "UPDATE 10"
+            parts = result.split()
+            if len(parts) >= 2:
+                try:
+                    return int(parts[-1])
+                except ValueError:
+                    pass
+        elif isinstance(result, int):
+            return result
+        
+        return 0
     
     async def sync_liquidity_pools(self) -> Dict[str, Any]:
         """
@@ -723,16 +1080,17 @@ class UBECDataSynchronizer:
         
         # ✅ FIX v5.1.5: Column name is ubec_asset_position, not ubec_position
         # This matches the actual liquidity_pools table schema
+        # ✅ FIX v5.2.11: Use explicit schema name
         # UPSERT pool
         query = """
-        INSERT INTO liquidity_pools (
+        INSERT INTO ubec_main.liquidity_pools (
             id, asset_a_code, asset_a_issuer, asset_b_code, asset_b_issuer,
             pair, primary_element, token_code, ubec_asset_position,
             reserve_a, reserve_b, total_shares, balance,
             fee_bp, trustline_count, last_modified_at, sync_status
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s::element_type, %s::token_code, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s
+            $1, $2, $3, $4, $5, $6, $7::element_type, $8::token_code, $9,
+            $10, $11, $12, $13, $14, $15, $16, $17
         )
         ON CONFLICT (id) DO UPDATE SET
             reserve_a = EXCLUDED.reserve_a,
@@ -765,7 +1123,12 @@ class UBECDataSynchronizer:
             raise
     
     async def _sync_pool_participants(self, pool_id: str) -> int:
-        """Sync liquidity pool owners/participants."""
+        """
+        Sync liquidity pool owners/participants.
+        
+        v5.2.11: FIXED - Now ensures account exists in stellar_accounts
+        before inserting into liquidity_pool_owners to satisfy FK constraint.
+        """
         try:
             await self.rate_limiter.acquire()
             
@@ -791,8 +1154,8 @@ class UBECDataSynchronizer:
                         
                         pool_query = """
                         SELECT total_shares, balance, primary_element, token_code
-                        FROM liquidity_pools
-                        WHERE id = %s
+                        FROM ubec_main.liquidity_pools
+                        WHERE id = $1
                         """
                         
                         pool_row = await self.db.fetch_one(pool_query, (pool_id,))
@@ -806,14 +1169,25 @@ class UBECDataSynchronizer:
                         ownership_pct = (shares / total_shares * 100) if total_shares > 0 else Decimal('0')
                         ubec_balance = (shares / total_shares * pool_balance) if total_shares > 0 else Decimal('0')
                         
-                        # ✅ FIXED: 9 columns, 9 values
+                        # ═══════════════════════════════════════════════════════════════
+                        # CRITICAL FIX v5.2.11: Ensure account exists in stellar_accounts
+                        # liquidity_pool_owners.account_id has FK to stellar_accounts
+                        # ═══════════════════════════════════════════════════════════════
+                        account_upsert_query = """
+                        INSERT INTO ubec_main.stellar_accounts (account_id)
+                        VALUES ($1)
+                        ON CONFLICT (account_id) DO NOTHING
+                        """
+                        await self.db.execute(account_upsert_query, (account_id,))
+                        
+                        # Now insert into liquidity_pool_owners (FK constraint satisfied)
                         owner_query = """
-                        INSERT INTO liquidity_pool_owners (
+                        INSERT INTO ubec_main.liquidity_pool_owners (
                             account_id, liquidity_pool_id, shares,
                             ownership_percentage, ubec_balance, element,
                             token_code, sync_timestamp, sync_status
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9
                         )
                         ON CONFLICT (account_id, liquidity_pool_id) DO UPDATE SET
                             shares = EXCLUDED.shares,
@@ -1198,26 +1572,209 @@ class UBECDataSynchronizer:
                 from_account = op_data.get('from') or op_data.get('account') or None
                 to_account = op_data.get('to') or op_data.get('destination') or None
                 
-                # Extract amount and asset info for payment operations
-                # FIX v5.2.6: Only set asset_code for UBEC tokens, use exchange_source_asset for others
+                # Extract amount and asset info for ALL operation types
+                # FIX v5.2.12: Comprehensive asset extraction for all operation types
+                # FIX v5.2.13: Added exchange pair extraction for DEX operations
+                # Previously only extracted for 'payment' ops which missed:
+                #   - change_trust, manage_sell_offer, path_payment, claimable_balance, etc.
                 amount = None
                 asset_code = None
+                asset_type = None
+                asset_issuer = None
                 operation_element = None
                 exchange_source_asset = None
+                exchange_source_amount = None
+                exchange_dest_asset = None
+                exchange_dest_amount = None
                 
-                if op_type == 'payment':
-                    amount = op_data.get('amount')
-                    if op_data.get('asset_type') == 'credit_alphanum4':
-                        raw_asset_code = op_data.get('asset_code')
-                        # asset_code column is token_code enum - only accepts UBEC tokens
-                        # For UBEC tokens: set asset_code and operation_element
-                        # For non-UBEC tokens: set exchange_source_asset only
-                        if raw_asset_code in self.ELEMENT_MAP:
-                            asset_code = raw_asset_code
-                            operation_element = self.ELEMENT_MAP[raw_asset_code]
-                        else:
-                            # Non-UBEC asset - store in exchange_source_asset
-                            exchange_source_asset = raw_asset_code
+                # Extract amount (available in many operation types)
+                amount = op_data.get('amount') or op_data.get('starting_balance') or op_data.get('limit')
+                
+                # Extract asset information based on operation type
+                # Different operation types store asset info in different fields
+                raw_asset_code = None
+                raw_asset_type = None
+                raw_asset_issuer = None
+                
+                if op_type in ('payment',):
+                    # Simple payment - just has destination asset
+                    raw_asset_type = op_data.get('asset_type')
+                    raw_asset_code = op_data.get('asset_code')
+                    raw_asset_issuer = op_data.get('asset_issuer')
+                
+                elif op_type == 'path_payment_strict_send':
+                    # Path payment: source asset -> destination asset
+                    # Primary asset is the destination (what recipient gets)
+                    raw_asset_type = op_data.get('asset_type')
+                    raw_asset_code = op_data.get('asset_code')
+                    raw_asset_issuer = op_data.get('asset_issuer')
+                    
+                    # Extract exchange pair details
+                    # Source asset (what sender pays)
+                    src_type = op_data.get('source_asset_type')
+                    if src_type == 'native':
+                        exchange_source_asset = 'XLM'
+                    else:
+                        exchange_source_asset = op_data.get('source_asset_code')
+                    exchange_source_amount = op_data.get('source_amount')
+                    
+                    # Destination asset (what recipient gets)
+                    dest_type = op_data.get('asset_type')
+                    if dest_type == 'native':
+                        exchange_dest_asset = 'XLM'
+                    else:
+                        exchange_dest_asset = op_data.get('asset_code')
+                    exchange_dest_amount = op_data.get('amount')
+                
+                elif op_type == 'path_payment_strict_receive':
+                    # Path payment: source asset -> destination asset
+                    # Primary asset is the destination (what recipient gets)
+                    raw_asset_type = op_data.get('asset_type')
+                    raw_asset_code = op_data.get('asset_code')
+                    raw_asset_issuer = op_data.get('asset_issuer')
+                    
+                    # Extract exchange pair details
+                    src_type = op_data.get('source_asset_type')
+                    if src_type == 'native':
+                        exchange_source_asset = 'XLM'
+                    else:
+                        exchange_source_asset = op_data.get('source_asset_code')
+                    exchange_source_amount = op_data.get('source_max')
+                    
+                    dest_type = op_data.get('asset_type')
+                    if dest_type == 'native':
+                        exchange_dest_asset = 'XLM'
+                    else:
+                        exchange_dest_asset = op_data.get('asset_code')
+                    exchange_dest_amount = op_data.get('amount')
+                    
+                elif op_type == 'change_trust':
+                    # Trust line operations have asset_code, asset_type, asset_issuer
+                    raw_asset_type = op_data.get('asset_type')
+                    raw_asset_code = op_data.get('asset_code')
+                    raw_asset_issuer = op_data.get('asset_issuer')
+                    
+                elif op_type in ('manage_sell_offer', 'create_passive_sell_offer'):
+                    # Sell offers: selling asset -> buying asset
+                    # Primary asset is what's being sold
+                    raw_asset_type = op_data.get('selling_asset_type')
+                    raw_asset_code = op_data.get('selling_asset_code')
+                    raw_asset_issuer = op_data.get('selling_asset_issuer')
+                    
+                    # Extract exchange pair: selling -> buying
+                    sell_type = op_data.get('selling_asset_type')
+                    if sell_type == 'native':
+                        exchange_source_asset = 'XLM'
+                    else:
+                        exchange_source_asset = op_data.get('selling_asset_code')
+                    exchange_source_amount = op_data.get('amount')
+                    
+                    buy_type = op_data.get('buying_asset_type')
+                    if buy_type == 'native':
+                        exchange_dest_asset = 'XLM'
+                    else:
+                        exchange_dest_asset = op_data.get('buying_asset_code')
+                    # For offers, price determines dest amount
+                    price = op_data.get('price')
+                    if price and amount:
+                        try:
+                            exchange_dest_amount = str(Decimal(amount) * Decimal(price))
+                        except:
+                            exchange_dest_amount = None
+                    
+                elif op_type == 'manage_buy_offer':
+                    # Buy offers: selling asset -> buying asset
+                    # Primary asset is what's being bought
+                    raw_asset_type = op_data.get('buying_asset_type')
+                    raw_asset_code = op_data.get('buying_asset_code')
+                    raw_asset_issuer = op_data.get('buying_asset_issuer')
+                    
+                    # Extract exchange pair: selling -> buying
+                    sell_type = op_data.get('selling_asset_type')
+                    if sell_type == 'native':
+                        exchange_source_asset = 'XLM'
+                    else:
+                        exchange_source_asset = op_data.get('selling_asset_code')
+                    
+                    buy_type = op_data.get('buying_asset_type')
+                    if buy_type == 'native':
+                        exchange_dest_asset = 'XLM'
+                    else:
+                        exchange_dest_asset = op_data.get('buying_asset_code')
+                    exchange_dest_amount = op_data.get('amount')  # amount is what's being bought
+                    
+                    # For buy offers, price is inverted
+                    price = op_data.get('price')
+                    if price and amount:
+                        try:
+                            exchange_source_amount = str(Decimal(amount) * Decimal(price))
+                        except:
+                            exchange_source_amount = None
+                    
+                elif op_type in ('create_claimable_balance', 'claim_claimable_balance'):
+                    # Claimable balance operations
+                    raw_asset_type = op_data.get('asset_type') or op_data.get('asset')
+                    raw_asset_code = op_data.get('asset_code')
+                    raw_asset_issuer = op_data.get('asset_issuer')
+                    # Parse from combined asset string if available (e.g., "UBEC:ISSUER")
+                    asset_str = op_data.get('asset')
+                    if asset_str and ':' in str(asset_str):
+                        parts = str(asset_str).split(':')
+                        if len(parts) >= 2:
+                            raw_asset_code = parts[0]
+                            raw_asset_issuer = parts[1]
+                            raw_asset_type = 'credit_alphanum4' if len(parts[0]) <= 4 else 'credit_alphanum12'
+                    
+                elif op_type in ('liquidity_pool_deposit', 'liquidity_pool_withdraw'):
+                    # LP operations - check reserves_deposited/received for asset info
+                    reserves = op_data.get('reserves_deposited') or op_data.get('reserves_received') or []
+                    for reserve in reserves:
+                        asset_str = reserve.get('asset')
+                        if asset_str and ':' in str(asset_str):
+                            parts = str(asset_str).split(':')
+                            code = parts[0]
+                            if code in self.ELEMENT_MAP:
+                                raw_asset_code = code
+                                raw_asset_issuer = parts[1] if len(parts) > 1 else None
+                                raw_asset_type = 'credit_alphanum4' if len(code) <= 4 else 'credit_alphanum12'
+                                amount = reserve.get('amount')
+                                break
+                
+                # Determine if this is a UBEC token or other asset
+                # asset_code column is token_code enum - only accepts UBEC, UBECrc, UBECgpi, UBECtt
+                if raw_asset_code:
+                    if raw_asset_code in self.ELEMENT_MAP:
+                        # UBEC token: set asset_code and operation_element
+                        asset_code = raw_asset_code
+                        asset_type = raw_asset_type
+                        asset_issuer = raw_asset_issuer
+                        operation_element = self.ELEMENT_MAP[raw_asset_code]
+                    else:
+                        # Non-UBEC asset: store in exchange_source_asset
+                        exchange_source_asset = raw_asset_code
+                
+                # ============================================================================
+                # FIX v5.2.14: UBEC-ONLY FILTER
+                # ============================================================================
+                # Only store operations that involve at least one UBEC token.
+                # This prevents database pollution with unrelated DEX trades (SSLX, yXLM, etc.)
+                #
+                # An operation is UBEC-related if ANY of these conditions are true:
+                #   1. asset_code is a UBEC token (payment, change_trust involving UBEC)
+                #   2. exchange_source_asset is a UBEC token (selling UBEC)
+                #   3. exchange_dest_asset is a UBEC token (buying UBEC)
+                # ============================================================================
+                UBEC_TOKENS = {'UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'}
+                
+                is_ubec_related = (
+                    (asset_code and asset_code in UBEC_TOKENS) or
+                    (exchange_source_asset and exchange_source_asset in UBEC_TOKENS) or
+                    (exchange_dest_asset and exchange_dest_asset in UBEC_TOKENS)
+                )
+                
+                if not is_ubec_related:
+                    # Skip non-UBEC operations - not relevant to our protocol
+                    continue
                 
                 try:
                     # ✅ FIX v5.2.7: Added source_account UPSERT and operation type validation
@@ -1280,6 +1837,8 @@ class UBECDataSynchronizer:
                     # FIX v5.2.6: Added exchange_source_asset for non-UBEC assets
                     # FIX v5.2.7: Added source_account UPSERT for FK compliance
                     # FIX v5.2.8: Removed operation type filter - all Stellar types now supported
+                    # FIX v5.2.12: Added asset_type and asset_issuer columns
+                    # FIX v5.2.13: Added full exchange pair columns for DEX operations
                     #
                     # After running add_stellar_operation_types_migration.sql, the database
                     # operation_type enum includes ALL 27 Stellar Protocol 20 operation types:
@@ -1291,18 +1850,26 @@ class UBECDataSynchronizer:
                     #   - DeFi operations (liquidity pools, claimable balances)
                     #   - Soroban smart contract operations
                     #   - Sponsorship and clawback operations
+                    #   - Full DEX trading pair details
                     operation_query = f"""
                         INSERT INTO ubec_main.stellar_operations 
                         (operation_id, transaction_hash, type, source_account, 
-                         from_account, to_account, created_at, amount, asset_code, 
-                         operation_element, exchange_source_asset)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                         from_account, to_account, created_at, amount, asset_code,
+                         asset_type, asset_issuer, operation_element, 
+                         exchange_source_asset, exchange_source_amount,
+                         exchange_dest_asset, exchange_dest_amount)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                         ON CONFLICT (operation_id) DO UPDATE SET
                             created_at = EXCLUDED.created_at,
                             amount = EXCLUDED.amount,
                             asset_code = EXCLUDED.asset_code,
+                            asset_type = EXCLUDED.asset_type,
+                            asset_issuer = EXCLUDED.asset_issuer,
                             operation_element = EXCLUDED.operation_element,
-                            exchange_source_asset = EXCLUDED.exchange_source_asset
+                            exchange_source_asset = EXCLUDED.exchange_source_asset,
+                            exchange_source_amount = EXCLUDED.exchange_source_amount,
+                            exchange_dest_asset = EXCLUDED.exchange_dest_asset,
+                            exchange_dest_amount = EXCLUDED.exchange_dest_amount
                     """
                     
                     await self.db.execute(
@@ -1317,8 +1884,13 @@ class UBECDataSynchronizer:
                             created_at,
                             amount,
                             asset_code,
+                            asset_type,
+                            asset_issuer,
                             operation_element,
-                            exchange_source_asset
+                            exchange_source_asset,
+                            exchange_source_amount,
+                            exchange_dest_asset,
+                            exchange_dest_amount
                         )
                     )
                     
@@ -1341,6 +1913,258 @@ class UBECDataSynchronizer:
             self.logger.error(f"Failed to sync operations for {account_id[:8]}...: {e}")
             # Don't raise - operations sync failure shouldn't block account sync
             return 0
+    
+    async def sync_token_operations(self, token_code: str, limit: int = 200, cursor: str = None) -> Dict[str, Any]:
+        """
+        Sync ALL recent operations for a UBEC token network-wide.
+        
+        NEW in v5.2.14: This method fetches operations directly by asset,
+        capturing ALL network activity for the token regardless of whether
+        we know about the accounts involved.
+        
+        This is the proper way to track token activity - by watching the
+        asset itself rather than individual accounts.
+        
+        Args:
+            token_code: UBEC token code (UBEC, UBECrc, UBECgpi, UBECtt)
+            limit: Maximum operations to fetch per page (default: 200)
+            cursor: Pagination cursor for fetching more results
+        
+        Returns:
+            Dict with operations_synced count and next_cursor for pagination
+        
+        Principle #4: Database as single source of truth
+        Principle #5: Strict async operations
+        Principle #9: Rate limiting
+        """
+        if token_code not in self.ELEMENT_MAP:
+            raise ValueError(f"Invalid token code: {token_code}")
+        
+        operations_synced = 0
+        next_cursor = None
+        
+        try:
+            # Get issuer from database settings
+            issuer_key = f"{token_code.lower()}_issuer"
+            issuer = self.settings.get(issuer_key)
+            
+            if not issuer:
+                self.logger.error(f"No issuer found for {token_code}")
+                return {'operations_synced': 0, 'next_cursor': None, 'error': 'No issuer configured'}
+            
+            # Build Asset object
+            from stellar_sdk import Asset
+            asset = Asset(token_code, issuer)
+            
+            await self.rate_limiter.acquire()
+            
+            # Fetch operations for this asset network-wide
+            # This captures ALL payments, trades, trustlines involving this token
+            builder = self.server.operations().for_asset(asset).order(desc=True).limit(limit)
+            
+            if cursor:
+                builder = builder.cursor(cursor)
+            
+            response = await builder.call()
+            self.rate_limiter.record_success()
+            
+            operations = response.get('_embedded', {}).get('records', [])
+            
+            if not operations:
+                return {'operations_synced': 0, 'next_cursor': None}
+            
+            # Get next cursor for pagination
+            links = response.get('_links', {})
+            next_link = links.get('next', {}).get('href', '')
+            if 'cursor=' in next_link:
+                import re
+                cursor_match = re.search(r'cursor=([^&]+)', next_link)
+                if cursor_match:
+                    next_cursor = cursor_match.group(1)
+            
+            self.logger.info(f"  Processing {len(operations)} {token_code} operations...")
+            
+            # Process each operation using the same logic as _sync_account_operations
+            for op_data in operations:
+                operation_id = op_data.get('id')
+                if not operation_id:
+                    continue
+                
+                # Extract operation details
+                op_type = op_data.get('type', 'unknown')
+                transaction_hash = op_data.get('transaction_hash', '')
+                
+                # Parse created_at timestamp
+                created_at_str = op_data.get('created_at')
+                if created_at_str:
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                else:
+                    created_at = datetime.now(timezone.utc)
+                
+                # Extract participant accounts
+                source_account = op_data.get('source_account', '')
+                from_account = op_data.get('from') or op_data.get('account') or None
+                to_account = op_data.get('to') or op_data.get('destination') or None
+                
+                # Extract amount
+                amount = op_data.get('amount') or op_data.get('starting_balance') or op_data.get('limit')
+                
+                # For token operations, the asset is always the UBEC token we're querying
+                asset_code = token_code
+                asset_type = op_data.get('asset_type')
+                asset_issuer = issuer
+                operation_element = self.ELEMENT_MAP[token_code]
+                
+                # Extract exchange pair for DEX operations
+                exchange_source_asset = None
+                exchange_source_amount = None
+                exchange_dest_asset = None
+                exchange_dest_amount = None
+                
+                if op_type == 'path_payment_strict_send':
+                    src_type = op_data.get('source_asset_type')
+                    exchange_source_asset = 'XLM' if src_type == 'native' else op_data.get('source_asset_code')
+                    exchange_source_amount = op_data.get('source_amount')
+                    dest_type = op_data.get('asset_type')
+                    exchange_dest_asset = 'XLM' if dest_type == 'native' else op_data.get('asset_code')
+                    exchange_dest_amount = op_data.get('amount')
+                    
+                elif op_type == 'path_payment_strict_receive':
+                    src_type = op_data.get('source_asset_type')
+                    exchange_source_asset = 'XLM' if src_type == 'native' else op_data.get('source_asset_code')
+                    exchange_source_amount = op_data.get('source_max')
+                    dest_type = op_data.get('asset_type')
+                    exchange_dest_asset = 'XLM' if dest_type == 'native' else op_data.get('asset_code')
+                    exchange_dest_amount = op_data.get('amount')
+                    
+                elif op_type in ('manage_sell_offer', 'create_passive_sell_offer'):
+                    sell_type = op_data.get('selling_asset_type')
+                    exchange_source_asset = 'XLM' if sell_type == 'native' else op_data.get('selling_asset_code')
+                    exchange_source_amount = op_data.get('amount')
+                    buy_type = op_data.get('buying_asset_type')
+                    exchange_dest_asset = 'XLM' if buy_type == 'native' else op_data.get('buying_asset_code')
+                    
+                elif op_type == 'manage_buy_offer':
+                    sell_type = op_data.get('selling_asset_type')
+                    exchange_source_asset = 'XLM' if sell_type == 'native' else op_data.get('selling_asset_code')
+                    buy_type = op_data.get('buying_asset_type')
+                    exchange_dest_asset = 'XLM' if buy_type == 'native' else op_data.get('buying_asset_code')
+                    exchange_dest_amount = op_data.get('amount')
+                
+                try:
+                    # Ensure source_account exists
+                    if source_account:
+                        await self.db.execute(
+                            "INSERT INTO ubec_main.stellar_accounts (account_id) VALUES ($1) ON CONFLICT DO NOTHING",
+                            (source_account,)
+                        )
+                    
+                    # Ensure transaction exists
+                    ledger_sequence = op_data.get('transaction_attr', {}).get('ledger', 0) or 0
+                    await self.db.execute(
+                        """INSERT INTO ubec_main.stellar_transactions 
+                           (transaction_hash, source_account, ledger_sequence, created_at)
+                           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING""",
+                        (transaction_hash, source_account, ledger_sequence, created_at)
+                    )
+                    
+                    # Insert operation
+                    await self.db.execute(
+                        """INSERT INTO ubec_main.stellar_operations 
+                           (operation_id, transaction_hash, type, source_account, 
+                            from_account, to_account, created_at, amount, asset_code,
+                            asset_type, asset_issuer, operation_element,
+                            exchange_source_asset, exchange_source_amount,
+                            exchange_dest_asset, exchange_dest_amount)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                           ON CONFLICT (operation_id) DO UPDATE SET
+                               amount = EXCLUDED.amount,
+                               asset_code = EXCLUDED.asset_code,
+                               exchange_source_asset = EXCLUDED.exchange_source_asset,
+                               exchange_source_amount = EXCLUDED.exchange_source_amount,
+                               exchange_dest_asset = EXCLUDED.exchange_dest_asset,
+                               exchange_dest_amount = EXCLUDED.exchange_dest_amount""",
+                        (operation_id, transaction_hash, op_type, source_account,
+                         from_account, to_account, created_at, amount, asset_code,
+                         asset_type, asset_issuer, operation_element,
+                         exchange_source_asset, exchange_source_amount,
+                         exchange_dest_asset, exchange_dest_amount)
+                    )
+                    
+                    operations_synced += 1
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to insert operation {operation_id[:8]}...: {e}")
+                    continue
+            
+            self.total_operations_synced += operations_synced
+            self.logger.info(f"  ✓ Synced {operations_synced} {token_code} operations")
+            
+            return {
+                'operations_synced': operations_synced,
+                'next_cursor': next_cursor,
+                'token_code': token_code
+            }
+            
+        except Exception as e:
+            self.rate_limiter.record_failure()
+            self.logger.error(f"Failed to sync {token_code} operations: {e}")
+            return {'operations_synced': 0, 'next_cursor': None, 'error': str(e)}
+    
+    async def sync_all_token_operations(self, limit_per_token: int = 1000) -> Dict[str, Any]:
+        """
+        Sync recent operations for ALL UBEC tokens network-wide.
+        
+        This method fetches the most recent operations for each token,
+        ensuring we have complete coverage of network activity.
+        
+        Args:
+            limit_per_token: Maximum operations to fetch per token (default: 1000)
+        
+        Returns:
+            Dict with sync results per token
+        """
+        results = {}
+        total_synced = 0
+        
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info("SYNCING ALL UBEC TOKEN OPERATIONS (NETWORK-WIDE)")
+        self.logger.info("=" * 70)
+        
+        for token_code in self.ELEMENT_MAP.keys():
+            self.logger.info(f"\n→ Syncing {token_code} operations...")
+            
+            token_synced = 0
+            cursor = None
+            pages = 0
+            max_pages = limit_per_token // 200 + 1
+            
+            while pages < max_pages:
+                result = await self.sync_token_operations(token_code, limit=200, cursor=cursor)
+                
+                token_synced += result.get('operations_synced', 0)
+                cursor = result.get('next_cursor')
+                pages += 1
+                
+                if not cursor or result.get('operations_synced', 0) == 0:
+                    break
+                
+                # Small delay between pages
+                await asyncio.sleep(0.1)
+            
+            results[token_code] = {
+                'operations_synced': token_synced,
+                'pages_fetched': pages,
+                'element': self.ELEMENT_MAP[token_code]
+            }
+            total_synced += token_synced
+        
+        self.logger.info(f"\n✓ Total operations synced: {total_synced}")
+        
+        return {
+            'total_operations_synced': total_synced,
+            'by_token': results
+        }
     
     async def sync_all(self, max_accounts_per_token: int = 5000) -> Dict[str, Any]:
         """Perform full synchronization of all data."""
@@ -1478,7 +2302,8 @@ class UBECDataSynchronizer:
                 'pools_synced': self.total_pools_synced,
                 'owners_synced': self.total_owners_synced,
                 'accounts_synced': self.total_accounts_synced,
-                'operations_synced': self.total_operations_synced  # NEW v5.2.0
+                'operations_synced': self.total_operations_synced,  # NEW v5.2.0
+                'accounts_cleaned': self.total_accounts_cleaned    # NEW v5.2.9
             },
             error_count=self.error_count,
             last_error=self.last_error,
@@ -1486,7 +2311,8 @@ class UBECDataSynchronizer:
             context={
                 'network': self.network,
                 'horizon_url': self.settings.get('horizon_url', 'unknown'),
-                'rate_limit': self.settings.get('rate_limit_stellar', 'not_set')
+                'rate_limit': self.settings.get('rate_limit_stellar', 'not_set'),
+                'last_cleanup_time': self.last_cleanup_time.isoformat() if self.last_cleanup_time else None  # NEW v5.2.9
             }
         )
     
@@ -1534,6 +2360,13 @@ __all__ = [
 if __name__ == "__main__":
     raise RuntimeError(
         "This module implements the service pattern and should not be run directly.\n\n"
+        "v5.2.9 - Irrelevant Account Cleanup:\n"
+        "  ✅ Added cleanup_irrelevant_accounts() method\n"
+        "  ✅ Removes accounts with no UBEC trustlines\n"
+        "  ✅ Optionally removes zero-balance accounts\n"
+        "  ✅ Supports dry_run mode for safe preview\n"
+        "  ✅ Deletes related records in correct FK order\n"
+        "  ✅ Integrated into health monitoring metrics\n\n"
         "v5.2.8 - Complete Stellar Operation Type Support:\n"
         "  ✅ Expanded to support ALL 27 Stellar Protocol 20 operation types\n"
         "  ✅ Removed operation type filtering\n"
@@ -1608,7 +2441,9 @@ if __name__ == "__main__":
         "  INSERT INTO system_settings (setting_key, setting_value, setting_type, is_active)\n"
         "  VALUES ('rate_limit_stellar', '3.0', 'float', TRUE);\n\n"
         "Usage:\n"
-        "  python main.py sync --sync-type all\n\n"
+        "  python main.py sync --sync-type all\n"
+        "  python main.py cleanup --dry-run      # Preview cleanup\n"
+        "  python main.py cleanup --execute      # Perform cleanup\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )
