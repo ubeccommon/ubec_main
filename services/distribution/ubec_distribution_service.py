@@ -33,8 +33,36 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team  
-Version: 4.2.2 (Distribution Plan Generation Complete + Robust Quantization)
-Date: November 19, 2025
+Version: 4.3.0 (Secure Signing Integration)
+Date: November 28, 2025
+
+Changes in v4.3.0:
+    - 🔐 SECURITY: Integrated SignerClient for secure transaction signing
+    - ✅ NEW: SignerClient class for Unix socket communication with signer service
+    - ✅ NEW: SecurityError exception for security-related failures
+    - ✅ NEW: Full _execute_transaction() implementation with secure signing
+    - ✅ NEW: Transaction building with Stellar SDK
+    - ✅ NEW: Signer availability checking in initialize()
+    - ✅ NEW: Health check includes signer status, limits, and signing metrics
+    - ✅ NEW: Signing request/failure tracking for monitoring
+    - ✅ SECURITY: Keys never exposed to main application
+    - ✅ SECURITY: Transaction limits enforced at signing layer
+    - ✅ SECURITY: Unix socket only (no network exposure)
+    - ✅ COMPLIANT: All 12 design principles maintained
+    - ✅ Principle #1: Precision - Secure, exact implementation
+    - ✅ Principle #5: Strict Async - All operations async
+    - ✅ Principle #7: Per-Asset Monitoring - Limits at signing layer
+    - ✅ Principle #10: Separation - Signing isolated from business logic
+
+Changes in v4.2.3:
+    - ✅ VERIFIED: All SQL queries match current database schema
+    - ✅ VERIFIED: account_balances uses asset_code (VARCHAR) column
+    - ✅ VERIFIED: liquidity_pools uses token_code (ENUM) column
+    - ✅ VERIFIED: liquidity_pool_owners uses ubec_balance column
+    - ✅ VERIFIED: system_settings uses setting_key, setting_value, is_active columns
+    - ✅ VERIFIED: All explicit schema names used correctly
+    - ✅ VERIFIED: All 12 design principles maintained
+    - ✅ VERIFIED: ServiceHealthCheck utility properly integrated
 
 Changes in v4.2.2:
     - 🔥 CRITICAL FIX: Improved decimal quantization with safe_quantize helper
@@ -134,11 +162,13 @@ Design Principles Compliance:
 import asyncio
 import json
 import logging
+import uuid
 from decimal import Decimal, getcontext, ROUND_DOWN
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List, Tuple
+from pathlib import Path
 
-from stellar_sdk import Asset, Keypair, TransactionBuilder, Network
+from stellar_sdk import Asset, Keypair, TransactionBuilder, Network, Server
 from stellar_sdk.exceptions import NotFoundError, BadRequestError
 
 # Import standardized health check utility (Principle #12: Method Singularity)
@@ -226,6 +256,359 @@ class RateLimiter:
             
             # Consume one token
             self.tokens -= 1
+
+
+# ========================================================================
+# SECURITY EXCEPTIONS
+# Principle 1: Precision in Implementation - Clear error types
+# ========================================================================
+
+class SecurityError(Exception):
+    """
+    Raised when a security check fails during transaction signing.
+    
+    This exception is thrown when:
+    - Signing service is unavailable
+    - Transaction limits are exceeded
+    - Key not available for account
+    - Signing operation fails
+    
+    Design Notes:
+        - Principle 1: Precision - Clear, specific error types
+        - Principle 11: Documentation - Error cases well defined
+    """
+    pass
+
+
+# ========================================================================
+# SECURE SIGNER CLIENT
+# Principle 1: Precision - Secure transaction signing
+# Principle 5: Strict Async - All operations async
+# Principle 7: Per-Asset Monitoring - Limits enforced at signing layer
+# ========================================================================
+
+class SignerClient:
+    """
+    Client for the encrypted signing service.
+    
+    This client communicates with the secure signing service via Unix socket
+    to sign Stellar transactions. The signing service:
+    - Runs as a dedicated unprivileged user (ubec_signer)
+    - Keeps keys encrypted at rest
+    - Enforces transaction limits (per-tx, hourly, daily)
+    - Logs all signing operations
+    
+    Security Features:
+        - Keys never exposed to the main application
+        - Unix socket communication (no network exposure)
+        - Transaction limits enforced at signing layer
+        - Comprehensive audit trail
+    
+    Design Notes:
+        - Principle 1: Precision - Exact, secure implementation
+        - Principle 5: Strict Async - All operations use async/await
+        - Principle 7: Per-Asset Monitoring - Limits at signing layer
+        - Principle 10: Separation of Concerns - Signing isolated from business logic
+    
+    Example:
+        >>> client = SignerClient()
+        >>> signed_xdr = await client.sign_transaction(
+        ...     transaction_xdr=unsigned_xdr,
+        ...     source_account="GXXXX...",
+        ...     network='PUBLIC'
+        ... )
+    
+    Attribution:
+        This project uses the services of Claude and Anthropic PBC to inform
+        our decisions and recommendations.
+    """
+    
+    # Default socket path for the signing service
+    SOCKET_PATH = "/var/run/wampum-signer/signer.sock"
+    
+    # Connection timeout (seconds)
+    CONNECT_TIMEOUT = 5.0
+    
+    # Read timeout (seconds)
+    READ_TIMEOUT = 30.0
+    
+    def __init__(self, socket_path: Optional[str] = None):
+        """
+        Initialize the signer client.
+        
+        Args:
+            socket_path: Optional custom socket path. Defaults to standard location.
+        """
+        self.socket_path = socket_path or self.SOCKET_PATH
+        self.logger = logging.getLogger(f"{__name__}.SignerClient")
+        self._available = None  # Cached availability check
+    
+    async def is_available(self) -> bool:
+        """
+        Check if the signing service is available.
+        
+        Returns:
+            True if service is reachable and responding
+            
+        Design Notes:
+            - Principle 5: Fully async operation
+            - Caches result for efficiency (cleared on connection failure)
+        """
+        try:
+            # Check if socket file exists
+            if not Path(self.socket_path).exists():
+                self.logger.debug(f"Socket not found: {self.socket_path}")
+                self._available = False
+                return False
+            
+            # Try to get status
+            status = await self.get_status()
+            self._available = status.get('success', False)
+            return self._available
+            
+        except Exception as e:
+            self.logger.debug(f"Signer service not available: {e}")
+            self._available = False
+            return False
+    
+    async def sign_transaction(
+        self,
+        transaction_xdr: str,
+        source_account: str,
+        network: str = 'PUBLIC'
+    ) -> str:
+        """
+        Sign a transaction using the secure signing service.
+        
+        This method sends an unsigned transaction to the isolated signing
+        service, which:
+        1. Verifies the transaction is within limits
+        2. Signs with the appropriate key
+        3. Returns the signed XDR
+        
+        Args:
+            transaction_xdr: Unsigned transaction XDR (base64 encoded)
+            source_account: Source account public key (G... format)
+            network: 'PUBLIC' for mainnet, 'TESTNET' for testnet
+            
+        Returns:
+            Signed transaction XDR (base64 encoded)
+            
+        Raises:
+            SecurityError: If signing fails for any reason:
+                - Service unavailable
+                - Limits exceeded
+                - No key for account
+                - Network error
+        
+        Example:
+            >>> client = SignerClient()
+            >>> signed_xdr = await client.sign_transaction(
+            ...     transaction_xdr="AAAAAgAAAAB...",
+            ...     source_account="GABC...XYZ",
+            ...     network='PUBLIC'
+            ... )
+        
+        Design Notes:
+            - Principle 1: Precision - Exact error handling
+            - Principle 5: Fully async operation
+            - Principle 7: Limits enforced in signing service
+        """
+        request_id = str(uuid.uuid4())
+        
+        self.logger.info(
+            f"Sign request: id={request_id}, account={source_account[:8]}..., "
+            f"network={network}"
+        )
+        
+        request = {
+            'command': 'sign',
+            'request': {
+                'transaction_xdr': transaction_xdr,
+                'source_account': source_account,
+                'network': network,
+                'request_id': request_id,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+        }
+        
+        try:
+            # Connect to signing service via Unix socket
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path),
+                timeout=self.CONNECT_TIMEOUT
+            )
+            
+        except FileNotFoundError:
+            self._available = False
+            raise SecurityError(
+                f"Signing service not available: socket not found at {self.socket_path}. "
+                "Ensure ubec-signer service is running."
+            )
+        except asyncio.TimeoutError:
+            self._available = False
+            raise SecurityError(
+                f"Signing service connection timeout after {self.CONNECT_TIMEOUT}s"
+            )
+        except Exception as e:
+            self._available = False
+            raise SecurityError(f"Failed to connect to signing service: {e}")
+        
+        try:
+            # Send request
+            writer.write(json.dumps(request).encode())
+            await writer.drain()
+            
+            # Read response with timeout
+            data = await asyncio.wait_for(
+                reader.read(65536),  # 64KB max
+                timeout=self.READ_TIMEOUT
+            )
+            
+            if not data:
+                raise SecurityError("Empty response from signing service")
+            
+            response = json.loads(data.decode())
+            
+            if response.get('success'):
+                self.logger.info(
+                    f"Transaction signed: id={request_id}, account={source_account[:8]}..."
+                )
+                return response['signed_xdr']
+            else:
+                error_msg = response.get('error', 'Unknown signing error')
+                self.logger.warning(
+                    f"Signing failed: id={request_id}, error={error_msg}"
+                )
+                raise SecurityError(f"Signing failed: {error_msg}")
+                
+        except asyncio.TimeoutError:
+            raise SecurityError(
+                f"Signing service read timeout after {self.READ_TIMEOUT}s"
+            )
+        except json.JSONDecodeError as e:
+            raise SecurityError(f"Invalid response from signing service: {e}")
+        except SecurityError:
+            raise  # Re-raise SecurityError as-is
+        except Exception as e:
+            raise SecurityError(f"Signing operation failed: {e}")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    async def get_status(self) -> Dict[str, Any]:
+        """
+        Get signing service status and configuration.
+        
+        Returns:
+            Dict with status information:
+            {
+                'success': bool,
+                'accounts': int (number of keys loaded),
+                'accounts_list': list (masked account IDs),
+                'limits': {
+                    'max_per_transaction': str,
+                    'max_daily': str,
+                    'max_hourly': str
+                }
+            }
+            
+        Raises:
+            SecurityError: If status check fails
+            
+        Design Notes:
+            - Principle 5: Fully async operation
+        """
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path),
+                timeout=self.CONNECT_TIMEOUT
+            )
+            
+        except Exception as e:
+            raise SecurityError(f"Cannot connect to signing service: {e}")
+        
+        try:
+            writer.write(json.dumps({'command': 'status'}).encode())
+            await writer.drain()
+            
+            data = await asyncio.wait_for(
+                reader.read(65536),
+                timeout=self.READ_TIMEOUT
+            )
+            
+            return json.loads(data.decode())
+            
+        except Exception as e:
+            raise SecurityError(f"Status check failed: {e}")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    async def add_key(self, secret_key: str) -> str:
+        """
+        Add a new key to the signing service.
+        
+        WARNING: This method should only be used during initial setup.
+        In production, keys should be added via secure administrative process.
+        
+        Args:
+            secret_key: Stellar secret key (S... format)
+            
+        Returns:
+            Account ID (public key) for the added key
+            
+        Raises:
+            SecurityError: If key addition fails
+            
+        Design Notes:
+            - This is a privileged operation
+            - Keys are encrypted by the signing service
+            - Use only during initial setup
+        """
+        self.logger.warning(
+            "Adding key to signing service - this should only be done during setup"
+        )
+        
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path),
+                timeout=self.CONNECT_TIMEOUT
+            )
+            
+        except Exception as e:
+            raise SecurityError(f"Cannot connect to signing service: {e}")
+        
+        try:
+            request = {
+                'command': 'add_key',
+                'secret_key': secret_key
+            }
+            
+            writer.write(json.dumps(request).encode())
+            await writer.drain()
+            
+            data = await asyncio.wait_for(
+                reader.read(65536),
+                timeout=self.READ_TIMEOUT
+            )
+            
+            response = json.loads(data.decode())
+            
+            if response.get('success'):
+                account_id = response.get('account_id')
+                self.logger.info(f"Key added for account: {account_id[:8]}...")
+                return account_id
+            else:
+                raise SecurityError(f"Failed to add key: {response.get('error')}")
+                
+        except SecurityError:
+            raise
+        except Exception as e:
+            raise SecurityError(f"Add key operation failed: {e}")
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
 
 # ========================================================================
@@ -321,6 +704,10 @@ class UBECDistributionService:
         self.audit_service = audit_service
         self.rate_limiter = RateLimiter(calls_per_second=rate_limit_calls_per_second)
         
+        # Initialize secure signer client (Principle 1: Precision - Secure key management)
+        signer_socket = config.get('signer', {}).get('socket_path')
+        self.signer_client = SignerClient(socket_path=signer_socket)
+        
         # Extract configuration (Principle 8: No duplicate config)
         self.ubec_code = config.get('asset_code', 'UBEC')
         self.ubec_issuer = config.get('asset_issuer')  # May be None - will load from DB
@@ -339,10 +726,14 @@ class UBECDistributionService:
         
         # Initialization tracking (for health checks)
         self._initialized = False
+        self._signer_available = False
         self._last_distribution_check = None
         self._last_compliance_check = None
         self._distribution_check_count = 0
         self._compliance_check_count = 0
+        self._error_count = 0
+        self._signing_requests = 0
+        self._signing_failures = 0
         
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.logger.info(
@@ -407,6 +798,24 @@ class UBECDistributionService:
                 "3. Database table asset_holders has records for UBEC"
             )
         
+        # Check signer service availability (non-blocking)
+        try:
+            self._signer_available = await self.signer_client.is_available()
+            if self._signer_available:
+                self.logger.info("✅ Secure signer service is available")
+                status = await self.signer_client.get_status()
+                self.logger.info(
+                    f"   Signer accounts loaded: {status.get('accounts', 0)}"
+                )
+            else:
+                self.logger.warning(
+                    "⚠️ Secure signer service not available - "
+                    "live transaction execution will be disabled"
+                )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not check signer availability: {e}")
+            self._signer_available = False
+        
         self._initialized = True
         
         # Log initialization with validation
@@ -432,6 +841,7 @@ class UBECDistributionService:
             self.logger.debug("Loading issuer address from database...")
             
             # Method 1: Try system_settings table
+            # Schema: setting_key (VARCHAR), setting_value (TEXT), is_active (BOOLEAN)
             try:
                 query = f"""
                     SELECT setting_value 
@@ -460,6 +870,7 @@ class UBECDistributionService:
                 )
             
             # Method 2: Try asset_holders table
+            # Schema: asset_code (VARCHAR), asset_issuer (VARCHAR)
             try:
                 query = f"""
                     SELECT DISTINCT asset_issuer 
@@ -689,6 +1100,7 @@ class UBECDistributionService:
                         exc_info=True
                     )
                     errors.append(f"Transaction {i}: {str(e)}")
+                    self._error_count += 1
             
             # Step 6: Log execution to audit service
             await self._log_distribution_execution(
@@ -726,6 +1138,7 @@ class UBECDistributionService:
         
         except Exception as e:
             self.logger.error(f"Distribution execution failed: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'success': False,
                 'dry_run': dry_run,
@@ -876,23 +1289,39 @@ class UBECDistributionService:
             if abs(steward_deviation) > MIN_TRANSFER:
                 if steward_deviation > 0:
                     # Stewardship has excess - transfer to General
-                    # Distribute across three stewardship accounts evenly
+                    # FIXED: Check actual balance of each account before transferring
                     steward_accounts = self.accounts['stewardship']
                     
-                    # Calculate per-account amount
-                    amount_per_account = safe_quantize(steward_deviation / Decimal('3'))
+                    # Get actual balances for each stewardship account
+                    remaining_to_transfer = steward_deviation
                     
                     for steward_account in steward_accounts:
-                        if amount_per_account > MIN_TRANSFER:
+                        if remaining_to_transfer <= MIN_TRANSFER:
+                            break
+                            
+                        # Get this account's actual balance
+                        account_data = await self.get_account_balance_with_lp(steward_account)
+                        available_balance = account_data.get('direct_balance', Decimal('0'))
+                        
+                        if available_balance <= MIN_TRANSFER:
+                            self.logger.info(f"  ⚠️ Steward ({steward_account[:8]}...) has insufficient balance ({available_balance:,.2f}), skipping")
+                            continue
+                        
+                        # Transfer the lesser of: available balance or remaining needed
+                        transfer_amount = min(available_balance, remaining_to_transfer)
+                        transfer_amount = safe_quantize(transfer_amount)
+                        
+                        if transfer_amount > MIN_TRANSFER:
                             distributions.append({
                                 'source': steward_account,
                                 'destination': self.accounts['general'],
-                                'amount': str(amount_per_account),
+                                'amount': str(transfer_amount),
                                 'asset': self.ubec_code,
                                 'reason': f'Rebalance Stewardship from {distribution["stewardship"]["percentage"]:.2f}% to 30.00%',
                                 'category': 'steward_to_general'
                             })
-                            self.logger.info(f"  → Steward ({steward_account[:8]}...) to General: {amount_per_account:,.7f} {self.ubec_code}")
+                            remaining_to_transfer -= transfer_amount
+                            self.logger.info(f"  → Steward ({steward_account[:8]}...) to General: {transfer_amount:,.7f} {self.ubec_code}")
                     
                 else:
                     # Stewardship has deficit - transfer from General
@@ -964,6 +1393,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error generating distribution plan: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'requires_distribution': False,
                 'error': str(e),
@@ -1053,32 +1483,193 @@ class UBECDistributionService:
         """
         Execute a single distribution transaction on Stellar.
         
+        This method builds a Stellar transaction, signs it via the secure
+        signing service, and submits it to the network.
+        
+        Security Flow:
+        1. Build unsigned transaction with Stellar SDK
+        2. Send XDR to secure signer service (isolated process)
+        3. Signer service verifies limits and signs
+        4. Submit signed transaction to Stellar network
+        5. Wait for confirmation
+        
         Args:
-            tx: Transaction dictionary with source, destination, amount, etc.
+            tx: Transaction dictionary with:
+                - source: Source account public key
+                - destination: Destination account public key
+                - amount: Amount to transfer (string)
+                - asset: Asset code (e.g., 'UBEC')
+                - issuer: Asset issuer public key
+                - reason: Description of the transfer
+                - memo: Transaction memo (optional)
             
         Returns:
-            Result dictionary with success status and transaction hash
+            Result dictionary:
+            {
+                'status': 'success' | 'failed',
+                'transaction': dict (original tx data),
+                'transaction_hash': str (if successful),
+                'ledger': int (if successful),
+                'memo': str,
+                'reason': str,
+                'error': str (if failed)
+            }
             
-        Note:
-            This is a placeholder for actual Stellar transaction execution.
-            Real implementation requires:
-            1. Secure key management (loading source account secret keys)
-            2. Transaction building with Stellar SDK
-            3. Transaction signing
-            4. Submission to Stellar network
-            5. Confirmation waiting
-            6. Error handling for network issues
-        """
-        # This is a placeholder - actual implementation needs secure key management
-        # and transaction signing capabilities
+        Raises:
+            SecurityError: If signing fails (limits exceeded, no key, service down)
         
-        return {
-            'status': 'simulated',
-            'transaction': tx,
-            'memo': tx.get('memo', ''),
-            'reason': tx.get('reason', 'Distribution execution'),
-            'note': 'Transaction execution requires secure key management implementation'
-        }
+        Design Notes:
+            - Principle 1: Precision - Exact transaction handling
+            - Principle 5: Fully async operation
+            - Principle 7: Per-Asset Monitoring - Limits enforced in signer
+            - Principle 10: Separation - Signing isolated from execution
+        """
+        self._signing_requests += 1
+        
+        # Check if signer is available
+        if not self._signer_available:
+            # Re-check availability (may have been started)
+            self._signer_available = await self.signer_client.is_available()
+            
+        if not self._signer_available:
+            self._signing_failures += 1
+            raise SecurityError(
+                "Secure signer service not available. "
+                "Cannot execute live transactions without secure key management. "
+                "Start the ubec-signer service or use dry_run=True."
+            )
+        
+        try:
+            # Apply rate limiting
+            await self.rate_limiter.acquire()
+            
+            # Step 1: Load source account from Stellar
+            self.logger.debug(f"Loading source account: {tx['source'][:8]}...")
+            
+            try:
+                source_account = await self.stellar_client.load_account(tx['source'])
+            except NotFoundError:
+                raise SecurityError(
+                    f"Source account not found on Stellar: {tx['source'][:8]}..."
+                )
+            
+            # Step 2: Build the transaction
+            network_passphrase = (
+                Network.PUBLIC_NETWORK_PASSPHRASE 
+                if self.network.upper() == 'MAINNET' 
+                else Network.TESTNET_NETWORK_PASSPHRASE
+            )
+            
+            # Create the asset
+            asset = Asset(tx['asset'], tx['issuer'])
+            
+            # Build transaction
+            builder = TransactionBuilder(
+                source_account=source_account,
+                network_passphrase=network_passphrase,
+                base_fee=100  # 0.00001 XLM
+            )
+            
+            # Add payment operation
+            builder.append_payment_op(
+                destination=tx['destination'],
+                asset=asset,
+                amount=tx['amount']
+            )
+            
+            # Add memo if provided
+            if tx.get('memo'):
+                builder.add_text_memo(tx['memo'][:28])  # Stellar memo limit
+            
+            # Set timeout (5 minutes)
+            builder.set_timeout(300)
+            
+            # Build unsigned transaction
+            unsigned_tx = builder.build()
+            unsigned_xdr = unsigned_tx.to_xdr()
+            
+            self.logger.debug(f"Built unsigned transaction: {len(unsigned_xdr)} bytes")
+            
+            # Step 3: Sign via secure signer service
+            self.logger.info(
+                f"Requesting signature from secure signer for {tx['source'][:8]}..."
+            )
+            
+            network_name = 'PUBLIC' if self.network.upper() == 'MAINNET' else 'TESTNET'
+            
+            signed_xdr = await self.signer_client.sign_transaction(
+                transaction_xdr=unsigned_xdr,
+                source_account=tx['source'],
+                network=network_name
+            )
+            
+            self.logger.debug("Transaction signed successfully")
+            
+            # Step 4: Submit to Stellar network
+            self.logger.info(f"Submitting transaction to Stellar {self.network}...")
+            
+            response = await self.stellar_client.submit_transaction(signed_xdr)
+            
+            # Step 5: Process response
+            if response.get('successful', False):
+                tx_hash = response.get('hash', 'unknown')
+                ledger = response.get('ledger', 0)
+                
+                self.logger.info(
+                    f"✅ Transaction successful: hash={tx_hash[:16]}..., ledger={ledger}"
+                )
+                
+                return {
+                    'status': 'success',
+                    'transaction': tx,
+                    'transaction_hash': tx_hash,
+                    'ledger': ledger,
+                    'memo': tx.get('memo', ''),
+                    'reason': tx.get('reason', 'Distribution execution')
+                }
+            else:
+                # Transaction failed
+                error_codes = response.get('extras', {}).get('result_codes', {})
+                error_msg = str(error_codes)
+                
+                self.logger.error(
+                    f"❌ Transaction failed: {error_msg}"
+                )
+                self._signing_failures += 1
+                
+                return {
+                    'status': 'failed',
+                    'transaction': tx,
+                    'error': error_msg,
+                    'memo': tx.get('memo', ''),
+                    'reason': tx.get('reason', 'Distribution execution')
+                }
+                
+        except SecurityError:
+            self._signing_failures += 1
+            raise  # Re-raise security errors as-is
+            
+        except BadRequestError as e:
+            self.logger.error(f"Stellar bad request: {e}", exc_info=True)
+            self._signing_failures += 1
+            return {
+                'status': 'failed',
+                'transaction': tx,
+                'error': f"Bad request: {str(e)}",
+                'memo': tx.get('memo', ''),
+                'reason': tx.get('reason', 'Distribution execution')
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Transaction execution failed: {e}", exc_info=True)
+            self._signing_failures += 1
+            return {
+                'status': 'failed',
+                'transaction': tx,
+                'error': str(e),
+                'memo': tx.get('memo', ''),
+                'reason': tx.get('reason', 'Distribution execution')
+            }
     
     async def _log_distribution_execution(
         self,
@@ -1128,7 +1719,7 @@ class UBECDistributionService:
             Total UBEC balance locked in LPs for this account
             
         Database Tables:
-            - liquidity_pool_owners: Contains ubec_balance column
+            - liquidity_pool_owners: Contains ubec_balance column (numeric(20,7))
             
         Example:
             >>> balance = await service.get_lp_balance_for_account('GXXXX...')
@@ -1141,6 +1732,7 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
+            # Schema: account_id (VARCHAR), ubec_balance (NUMERIC)
             query = f"""
                 SELECT COALESCE(SUM(ubec_balance), 0) as total_lp_balance
                 FROM {self.db_schema}.liquidity_pool_owners
@@ -1155,6 +1747,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error fetching LP balance for {account_id}: {e}", exc_info=True)
+            self._error_count += 1
             return Decimal('0')
     
     async def get_total_pool_balances(self) -> Dict[str, Decimal]:
@@ -1174,7 +1767,7 @@ class UBECDistributionService:
             }
             
         Database Tables:
-            - liquidity_pools: Contains balance column (UBEC balance in pool)
+            - liquidity_pools: Contains pair (VARCHAR), balance (NUMERIC), token_code (ENUM)
             
         Example:
             >>> pools = await service.get_total_pool_balances()
@@ -1188,6 +1781,7 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
+            # Schema: pair (VARCHAR), balance (NUMERIC), token_code (ENUM)
             query = f"""
                 SELECT 
                     pair,
@@ -1215,6 +1809,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error fetching total pool balances: {e}", exc_info=True)
+            self._error_count += 1
             return {'total': Decimal('0')}
     
     async def get_account_balance_with_lp(self, account_id: str) -> Dict[str, Decimal]:
@@ -1238,8 +1833,8 @@ class UBECDistributionService:
             }
             
         Database Tables:
-            - account_balances: Direct token holdings
-            - liquidity_pool_owners: LP positions
+            - account_balances: Contains account_id (VARCHAR), asset_code (VARCHAR), balance (NUMERIC)
+            - liquidity_pool_owners: LP positions with ubec_balance column
             
         Example:
             >>> data = await service.get_account_balance_with_lp('GXXXX...')
@@ -1254,7 +1849,8 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
-            # Get direct balance
+            # Get direct balance from account_balances table
+            # Schema: account_id (VARCHAR), asset_code (VARCHAR), balance (NUMERIC)
             direct_query = f"""
                 SELECT COALESCE(balance, 0) as balance
                 FROM {self.db_schema}.account_balances
@@ -1285,6 +1881,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error fetching account balance for {account_id}: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'account_id': account_id,
                 'direct_balance': Decimal('0'),
@@ -1389,6 +1986,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error fetching all account balances: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'general': {'direct': Decimal('0'), 'lp': Decimal('0'), 'total': Decimal('0')},
                 'administration': {'direct': Decimal('0'), 'lp': Decimal('0'), 'total': Decimal('0')},
@@ -1510,6 +2108,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error calculating current distribution: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'total_supply': Decimal('0'),
                 'error': str(e)
@@ -1632,6 +2231,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error checking compliance: {e}", exc_info=True)
+            self._error_count += 1
             return {
                 'compliant': False,
                 'error': str(e),
@@ -1673,6 +2273,7 @@ class UBECDistributionService:
             
         except Exception as e:
             self.logger.error(f"Error checking rebalance status: {e}", exc_info=True)
+            self._error_count += 1
             # Conservative approach: assume rebalance needed on error
             return True
     
@@ -1738,12 +2339,35 @@ class UBECDistributionService:
             except ValueError:
                 return False
         
+        async def check_signer():
+            """Check secure signer service availability."""
+            try:
+                self._signer_available = await self.signer_client.is_available()
+                return self._signer_available
+            except Exception:
+                self._signer_available = False
+                return False
+        
+        # Get signer status for details
+        signer_status = None
+        try:
+            if self._signer_available:
+                signer_status = await self.signer_client.get_status()
+        except Exception:
+            pass
+        
         # Prepare distribution-specific details
         distribution_details = {
             'last_distribution_check': self._last_distribution_check.isoformat() if self._last_distribution_check else None,
             'last_compliance_check': self._last_compliance_check.isoformat() if self._last_compliance_check else None,
             'distribution_checks': self._distribution_check_count,
             'compliance_checks': self._compliance_check_count,
+            'error_count': self._error_count,
+            'signing_requests': self._signing_requests,
+            'signing_failures': self._signing_failures,
+            'signer_available': self._signer_available,
+            'signer_accounts': signer_status.get('accounts', 0) if signer_status else 0,
+            'signer_limits': signer_status.get('limits', {}) if signer_status else {},
             'cache_status': 'fresh' if self._is_cache_fresh() else 'stale',
             'cache_size': len(self._cache),
             'ubec_code': self.ubec_code,
@@ -1757,7 +2381,7 @@ class UBECDistributionService:
             service_name='distribution',
             db_manager=self.db_manager,
             is_initialized=self._initialized,
-            additional_checks=[check_stellar, check_config],
+            additional_checks=[check_stellar, check_config, check_signer],
             **distribution_details
         )
         
@@ -1772,6 +2396,10 @@ class UBECDistributionService:
             check_age = (datetime.now() - self._last_compliance_check).total_seconds()
             if check_age > 86400:  # 24 hours
                 issues.append(f"No compliance check in {check_age/3600:.1f} hours")
+        
+        # Warning if signer not available (can only do dry-runs)
+        if not self._signer_available:
+            issues.append("Secure signer not available - live execution disabled")
         
         # Update status if there are operational warnings
         if issues and health['status'] == 'healthy':
@@ -1883,6 +2511,8 @@ async def create_distribution_service(
 __all__ = [
     'UBECDistributionService',
     'create_distribution_service',
+    'SignerClient',
+    'SecurityError',
     'OFFICIAL_TOKENOMICS',
     'OFFICIAL_ACCOUNTS',
     'LIQUIDITY_ACCOUNT'

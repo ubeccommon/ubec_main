@@ -1385,7 +1385,7 @@ async def handle_distribution(
         
         if action == 'status':
             logger.info("Getting distribution status...")
-            status = await distribution.get_current_state()
+            status = await distribution.get_current_distribution()
             
             logger.info(f"\n✓ Distribution Status:")
             logger.info(f"  Total Supply: {status.get('total_supply', 0):,.2f} UBEC")
@@ -1404,10 +1404,10 @@ async def handle_distribution(
             
         elif action == 'rebalance-check':
             logger.info("Checking if rebalance is needed...")
-            result = await distribution.check_rebalance_needed()
+            result = await distribution.is_rebalance_needed()
             
             logger.info(f"\n✓ Rebalance Check:")
-            logger.info(f"  Rebalance needed: {result.get('rebalance_needed', False)}")
+            logger.info(f"  Rebalance needed: {result}")
             
         elif action == 'execute-rebalance':
             if dry_run:
@@ -1416,7 +1416,7 @@ async def handle_distribution(
                 logger.info("=" * 70 + "\n")
             
             logger.info("Executing rebalance...")
-            result = await distribution.execute_rebalance(dry_run=dry_run)
+            result = await distribution.execute_distribution(dry_run=dry_run)
             
             logger.info(f"\n✓ Rebalance {'Simulation' if dry_run else 'Execution'}:")
             logger.info(f"  Status: {result.get('status', 'unknown')}")
