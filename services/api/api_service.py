@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.5.8 (GATEWAY AUTH)
+UBEC Backend API Service - Production Version 2.5.9 (GATEWAY AUTH)
 ===================================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
@@ -1151,73 +1151,89 @@ class BackendAPIService:
                 self.logger.error(f"Error fetching account details: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching account details: {str(e)}")
         
-        @self.app.get("/api/v1/distribution", response_model=Dict)
+                @self.app.get("/api/v1/distribution", response_model=Dict)
         @self.app.get("/api/v1/distributions", response_model=Dict)
         @limiter.limit("100/minute")
         async def get_distribution(request: Request) -> Dict:
             """
-            Get current token distribution state across all categories.
+            Get current token distribution state using live calculation.
             
             Rate limit: 100 requests/minute per IP
             
             Returns:
-            - Distribution percentages by category for each token
+            - Distribution percentages for the 65/30/5 model
             - Target vs actual allocations
+            - Compliance status
+            - Total supply including liquidity pools
             
-            SCHEMA FIX v2.3.11: distribution_state is NORMALIZED table
-            Each row = one asset + one category combination
-            Must PIVOT to get all categories per asset in one row
+            v2.5.9 FIX: Now uses UBECDistributionService for live data
+            instead of stale distribution_state table.
+            
+            Distribution Model:
+            - General Distribution: 65% (DERIVED: 100% - Admin% - Stewardship%)
+            - Token Ecosystem Stewardship: 30%
+            - Administration: 5%
             """
             try:
-                db = await self.registry.get('database')
+                # Get distribution service for live calculation
+                distribution_service = await self.registry.get('distribution')
                 
-                # v2.3.11: PIVOT query to aggregate normalized data
-                query = """
-                    SELECT 
-                        asset_code,
-                        MAX(CASE WHEN category = 'crowd_funding' THEN actual_percentage ELSE 0 END) as crowd_funding_pct,
-                        MAX(CASE WHEN category = 'general_circulation' THEN actual_percentage ELSE 0 END) as general_circulation_pct,
-                        MAX(CASE WHEN category = 'sustainability_reserve' THEN actual_percentage ELSE 0 END) as sustainability_reserve_pct,
-                        MAX(CASE WHEN category = 'protocol_operations' THEN actual_percentage ELSE 0 END) as protocol_operations_pct,
-                        MAX(CASE WHEN category = 'liquidity_buffer' THEN actual_percentage ELSE 0 END) as liquidity_buffer_pct,
-                        MAX(last_updated) as last_updated
-                    FROM ubec_main.distribution_state
-                    GROUP BY asset_code
-                    ORDER BY 
-                        CASE asset_code 
-                            WHEN 'UBEC' THEN 1 
-                            WHEN 'UBECrc' THEN 2 
-                            WHEN 'UBECgpi' THEN 3 
-                            WHEN 'UBECtt' THEN 4 
-                        END
-                """
+                # Get current distribution with live data
+                distribution_data = await distribution_service.get_current_distribution()
                 
-                results = await db.fetch_all(query)
-                
-                distributions = []
-                for row in results:
-                    distributions.append({
-                        'token': row['asset_code'],
-                        'categories': {
-                            'crowd_funding': safe_float(row['crowd_funding_pct']),
-                            'general_circulation': safe_float(row['general_circulation_pct']),
-                            'sustainability_reserve': safe_float(row['sustainability_reserve_pct']),
-                            'protocol_operations': safe_float(row['protocol_operations_pct']),
-                            'liquidity_buffer': safe_float(row['liquidity_buffer_pct'])
-                        },
-                        'last_updated': row['last_updated'].isoformat() if row['last_updated'] else None
-                    })
-                
+                # Format response for API consumers
                 return {
-                    'distributions': distributions,
+                    'distribution': {
+                        'model': '65/30/5',
+                        'total_supply': str(distribution_data.get('total_supply', 0)),
+                        'total_in_accounts': str(distribution_data.get('account_total', 0)),
+                        'total_in_liquidity_pools': str(distribution_data.get('pool_total', 0)),
+                        'categories': {
+                            'general_distribution': {
+                                'name': 'General Distribution',
+                                'target_percentage': 65.0,
+                                'actual_percentage': float(distribution_data.get('general_percentage', 0)),
+                                'amount': str(distribution_data.get('general_amount', 0)),
+                                'description': 'Tokens in general circulation (derived: 100% - Admin - Stewardship)'
+                            },
+                            'token_ecosystem_stewardship': {
+                                'name': 'Token Ecosystem Stewardship',
+                                'target_percentage': 30.0,
+                                'actual_percentage': float(distribution_data.get('stewardship_percentage', 0)),
+                                'amount': str(distribution_data.get('stewardship_amount', 0)),
+                                'description': 'Management, Infrastructure, and Liquidity accounts'
+                            },
+                            'administration': {
+                                'name': 'Administration',
+                                'target_percentage': 5.0,
+                                'actual_percentage': float(distribution_data.get('admin_percentage', 0)),
+                                'amount': str(distribution_data.get('admin_amount', 0)),
+                                'description': 'General administration account'
+                            }
+                        },
+                        'compliance': {
+                            'overall_compliant': distribution_data.get('overall_compliant', False),
+                            'admin_compliant': distribution_data.get('admin_compliant', False),
+                            'stewardship_compliant': distribution_data.get('stewardship_compliant', False),
+                            'thresholds': {
+                                'green_zone': '< 2% deviation',
+                                'yellow_zone': '2-5% deviation',
+                                'red_zone': '> 5% deviation'
+                            }
+                        }
+                    },
+                    'source': 'live_calculation',
                     'timestamp': datetime.now(timezone.utc).isoformat()
                 }
                 
             except Exception as e:
                 self.logger.error(f"Error fetching distribution: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error fetching distribution state: {str(e)}")
-        
-        @self.app.get("/api/v1/token-audit", response_model=Dict)
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error fetching distribution state: {str(e)}"
+                )
+
+@self.app.get("/api/v1/token-audit", response_model=Dict)
         @self.app.get("/api/v1/token-audit/{token_code}", response_model=Dict)
         @limiter.limit("30/minute")
         async def get_token_audit(request: Request, token_code: str = "UBEC") -> Dict:

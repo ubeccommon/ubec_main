@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-28T07:45:44.966160
+**Generated:** 2025-11-29T05:56:14.723149
 
 **Database:** ubec
 
@@ -33,7 +33,7 @@
 - **Total Tables:** 82
 - **Total Views:** 37
 - **Total Functions:** 1626
-- **Total Rows:** 60,312
+- **Total Rows:** 63,054
 - **Total Columns:** 1,016
 - **Total Foreign Keys:** 31
 
@@ -44,7 +44,7 @@
 | phenomenal | 29 | 13 | 21 | 22,638 | 1009 MB |
 | public | 1 | 4 | 1421 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 50 | 20 | 81 | 29,174 | 145 MB |
+| ubec_main | 50 | 20 | 81 | 31,916 | 148 MB |
 
 ---
 
@@ -10537,7 +10537,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 29,174 | **Size:** 145 MB
+**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 31,916 | **Size:** 148 MB
 
 ### Schema Permissions
 
@@ -11655,7 +11655,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 4,776 | **Size:** 6648 kB
+**Rows:** 5,273 | **Size:** 7240 kB
 
 **Columns:**
 
@@ -11694,15 +11694,15 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - valid_ubuntu_score: CHECK (((ubuntu_alignment_score >= (0)::numeric) AND (ubuntu_alignment_score <= (1)::numeric)))
 
 **Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 272 kB
-- UNIQUE BTREE: (account_id) - 568 kB
-- BTREE: (account_id) - 152 kB
-- BTREE: (calculation_mode) - 80 kB
-- BTREE: (holonic_category) - 104 kB
-- BTREE: (composite_score) - 272 kB
-- BTREE: (confidence) - 264 kB
-- BTREE: (evaluation_date) - 392 kB
-- UNIQUE BTREE: (evaluation_date, account_id) - 752 kB
+- PRIMARY UNIQUE BTREE: (id) - 304 kB
+- UNIQUE BTREE: (account_id) - 584 kB
+- BTREE: (account_id) - 160 kB
+- BTREE: (calculation_mode) - 88 kB
+- BTREE: (holonic_category) - 112 kB
+- BTREE: (composite_score) - 280 kB
+- BTREE: (confidence) - 280 kB
+- BTREE: (evaluation_date) - 424 kB
+- UNIQUE BTREE: (evaluation_date, account_id) - 808 kB
 
 **Triggers:**
 - **trg_set_evaluation_date_date:** BEFORE INSERT OR UPDATE ROW
@@ -12229,7 +12229,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Scheduled jobs configuration. job_function must be in format: service_name.method_name where both service and method exist in the registry.*
 
-**Rows:** 8 | **Size:** 112 kB
+**Rows:** 9 | **Size:** 112 kB
 
 **Columns:**
 
@@ -12315,7 +12315,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stellar blockchain accounts with element tracking*
 
-**Rows:** 654 | **Size:** 992 kB
+**Rows:** 653 | **Size:** 992 kB
 
 **Columns:**
 
@@ -12495,7 +12495,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 647 | **Size:** 52 MB
+**Rows:** 788 | **Size:** 52 MB
 
 **Columns:**
 
@@ -12569,7 +12569,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 567 | **Size:** 70 MB
+**Rows:** 708 | **Size:** 70 MB
 
 **Columns:**
 
@@ -13044,7 +13044,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Token balances for all four elements with distribution tracking*
 
-**Rows:** 654 | **Size:** 616 kB
+**Rows:** 653 | **Size:** 624 kB
 
 **Columns:**
 
@@ -13084,7 +13084,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - BTREE: (balance) - 72 kB
 - BTREE: (distribution_category) - 16 kB
 - BTREE: (element) - 16 kB
-- BTREE: (last_modified_at) - 88 kB
+- BTREE: (last_modified_at) - 96 kB
 - BTREE: (token_code) - 16 kB
 - PRIMARY UNIQUE BTREE: (id) - 40 kB
 - UNIQUE BTREE: (account_id, token_code) - 120 kB
@@ -13185,7 +13185,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 11,952 | **Size:** 6864 kB
+**Rows:** 13,916 | **Size:** 8632 kB
 
 **Columns:**
 
@@ -13219,13 +13219,13 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - valid_score: CHECK (((score >= (0)::numeric) AND (score <= (1)::numeric)))
 
 **Indexes:**
-- BTREE: (account_id) - 176 kB
-- BTREE: (calculated_at) - 496 kB
+- BTREE: (account_id) - 248 kB
+- BTREE: (calculated_at) - 560 kB
 - BTREE: (element) - 168 kB
-- BTREE: (health_status) - 208 kB
+- BTREE: (health_status) - 216 kB
 - BTREE: (principle) - 168 kB
-- BTREE: (score) - 632 kB
-- PRIMARY UNIQUE BTREE: (id) - 496 kB
+- BTREE: (score) - 656 kB
+- PRIMARY UNIQUE BTREE: (id) - 560 kB
 
 **Row Level Security:** Enabled
 
