@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.5.9 (GATEWAY AUTH)
+UBEC Backend API Service - Production Version 2.6.0 (NO ALIASES)
 ===================================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
@@ -10,7 +10,21 @@ providing an abstraction layer between the public website and internal
 protocol operations. Integrated with real bioregion tracking, ecoregion
 data, and watershed information.
 
-NEW IN v2.5.8 - TOTAL SUPPLY FIX:
+NEW IN v2.6.0 - ALIAS REMOVAL (Principle #12 Compliance):
+- 🔧 REMOVED: /api/v1/network-status alias (use /api/v1/network)
+- 🔧 REMOVED: /api/v1/distributions alias reference (use /api/v1/distribution)
+- 🔧 STREAMLINED: Root endpoint now returns concise categorized endpoint listing
+- 🔧 ADDED: Missing /api/v1/token-audit/{token_code} to endpoint listing
+- 🐛 FIXED: /api/v1/distribution returning zeros for all category amounts
+  - Root cause: API used flat keys (account_total, general_percentage) 
+  - Service returns nested structure (total_in_accounts, general['percentage'])
+  - Fixed: Corrected key mapping to extract nested values properly
+  - Added: direct/lp_positions breakdown for stewardship and admin
+- 🎯 Full compliance with Principle #12 (Method Singularity) - no duplicate routes
+- 🎯 Each endpoint implemented exactly once with single canonical path
+- Result: 21 UNIQUE ENDPOINTS (was 23 with aliases counted separately)
+
+MAINTAINED FROM v2.5.8 - TOTAL SUPPLY FIX:
 - 🔥 CRITICAL FIX: Total supply now includes liquidity pool reserves
   - Total = account_balances + liquidity_pools.balance
   - Expected ~191,766,039 UBEC (was only showing ~152M)
@@ -30,7 +44,7 @@ NEW IN v2.5.7 - API GATEWAY AUTHENTICATION:
   - Complies with Principle #12 (Method Singularity)
   - Provides detailed request/error metrics
 - 🎯 Full compliance with all 12 project design principles
-- Result: 23 TOTAL ENDPOINTS NOW AVAILABLE
+- Result: 21 UNIQUE ENDPOINTS (aliases removed in v2.6.0)
 
 MAINTAINED FROM v2.5.6 - LIQUIDITY POOLS ENDPOINT:
 - ✨ /api/v1/liquidity-pools endpoint
@@ -318,9 +332,20 @@ Rate Limiting:
     - No API keys required - open access with abuse prevention
 
 Author: UBEC Protocol Development Team
-Version: 2.5.7
-Updated: 2025-11-28
+Version: 2.6.0
+Updated: 2025-11-29
 Changes: 
+  v2.6.0 - NO ALIASES: Remove duplicate routes for Principle #12 compliance
+         - REMOVED: /api/v1/network-status alias (canonical: /api/v1/network)
+         - REMOVED: /api/v1/distributions phantom alias from root endpoint listing
+         - STREAMLINED: Root endpoint returns categorized endpoint listing
+         - ADDED: /api/v1/token-audit/{token_code} to endpoint listing (was missing)
+         - 🐛 FIXED: /api/v1/distribution returning zeros for all category amounts
+           - Root cause: API used flat keys but service returns nested structure
+           - Fixed: Corrected key mapping (total_in_accounts, general['percentage'], etc.)
+           - Added: direct/lp_positions breakdown for stewardship and admin categories
+         - COMPLIANCE: Full Principle #12 - each endpoint implemented exactly once
+         - Result: 21 UNIQUE ENDPOINTS (no aliases or duplicates)
   v2.5.7 - GATEWAY AUTH: API Gateway Authentication and standardized health checks
          - NEW: APIGatewayAuthMiddleware integration for defense-in-depth security
          - NEW: Verifies X-API-Gateway-Key header from authorized gateway
@@ -329,7 +354,6 @@ Changes:
          - ENHANCED: Health check now tracks request_count and error_count metrics
          - COMPLIANCE: Full Principle #12 (Method Singularity) health check pattern
          - ENV: API_GATEWAY_KEY, API_GATEWAY_IPS for configuration
-         - Result: 23 TOTAL ENDPOINTS WITH ENHANCED SECURITY
   v2.5.6 - LIQUIDITY POOLS: New endpoint for LP details
          - NEW: /api/v1/liquidity-pools endpoint
          - Returns all UBEC liquidity pools with comprehensive details
@@ -590,7 +614,7 @@ class BackendAPIService:
         self.app = FastAPI(
             title="UBEC Backend API",
             description="Read-only API for UBEC Protocol public website",
-            version="2.5.7"
+            version="2.6.0"
         )
         
         # Configure CORS (must be first - handles preflight requests)
@@ -622,7 +646,7 @@ class BackendAPIService:
         if self._initialized:
             return
         
-        self.logger.info("Initializing BackendAPIService v2.5.7")
+        self.logger.info("Initializing BackendAPIService v2.6.0")
         
         # Register all endpoints
         self._register_endpoints()
@@ -671,9 +695,9 @@ class BackendAPIService:
             request_count=self._request_count,
             error_count=self._error_count,
             cache_info={
-                'endpoints_count': 23,
+                'endpoints_count': 21,
                 'rate_limiting': 'active',
-                'version': '2.5.7',
+                'version': '2.6.0',
                 'gateway_auth': 'enabled'
             }
         )
@@ -696,30 +720,40 @@ class BackendAPIService:
             """Root endpoint with API information."""
             return {
                 'service': 'UBEC Backend API',
-                'version': '2.5.7',
+                'version': '2.6.0',
                 'status': 'operational',
                 'endpoints': {
-                    'health': '/health',
-                    'network': '/api/v1/network',
-                    'network_status': '/api/v1/network-status',
-                    'tokens': '/api/v1/tokens',
-                    'token_analysis': '/api/v1/tokens/{token_code}/analysis',
-                    'accounts': '/api/v1/accounts',
-                    'account_details': '/api/v1/accounts/{account_id}',
-                    'distribution': '/api/v1/distribution',
-                    'distributions': '/api/v1/distributions',
-                    'bioregions': '/api/v1/bioregions',
-                    'bioregion_boundaries': '/api/v1/bioregion-boundaries',
-                    'bioregion_bbox': '/api/v1/bioregions/{gid}/bbox',
-                    'points_of_interest': '/api/v1/points-of-interest',
-                    'holonic_scores': '/api/v1/holonic-scores',
-                    'recent_transactions': '/api/v1/transactions/recent',
-                    'ecoregions': '/api/v1/ecoregions',
-                    'ecoregion_bbox': '/api/v1/ecoregions/{eco_id}/bbox',
-                    'watersheds': '/api/v1/watersheds',
-                    'watershed_bbox': '/api/v1/watersheds/{feow_id}/bbox',
-                    'liquidity_pools': '/api/v1/liquidity-pools'
+                    'system': ['/health'],
+                    'network': ['/api/v1/network'],
+                    'tokens': [
+                        '/api/v1/tokens',
+                        '/api/v1/tokens/{token_code}/analysis',
+                        '/api/v1/token-audit/{token_code}'
+                    ],
+                    'accounts': [
+                        '/api/v1/accounts',
+                        '/api/v1/accounts/{account_id}'
+                    ],
+                    'distribution': [
+                        '/api/v1/distribution',
+                        '/api/v1/liquidity-pools'
+                    ],
+                    'geography': [
+                        '/api/v1/bioregions',
+                        '/api/v1/bioregions/{gid}/bbox',
+                        '/api/v1/bioregion-boundaries',
+                        '/api/v1/points-of-interest',
+                        '/api/v1/ecoregions',
+                        '/api/v1/ecoregions/{eco_id}/bbox',
+                        '/api/v1/watersheds',
+                        '/api/v1/watersheds/{feow_id}/bbox'
+                    ],
+                    'analytics': [
+                        '/api/v1/holonic-scores',
+                        '/api/v1/transactions/recent'
+                    ]
                 },
+                'endpoint_count': 21,
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
         
@@ -737,11 +771,10 @@ class BackendAPIService:
             return {
                 'status': 'healthy',
                 'service': 'ubec_backend_api',
-                'version': '2.5.7',
+                'version': '2.6.0',
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
         
-        @self.app.get("/api/v1/network-status", response_model=Dict)
         @self.app.get("/api/v1/network", response_model=Dict)
         @limiter.limit("100/minute")
         async def get_network_stats(request: Request) -> Dict:
@@ -1151,8 +1184,7 @@ class BackendAPIService:
                 self.logger.error(f"Error fetching account details: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching account details: {str(e)}")
         
-                @self.app.get("/api/v1/distribution", response_model=Dict)
-        @self.app.get("/api/v1/distributions", response_model=Dict)
+        @self.app.get("/api/v1/distribution", response_model=Dict)
         @limiter.limit("100/minute")
         async def get_distribution(request: Request) -> Dict:
             """
@@ -1166,8 +1198,12 @@ class BackendAPIService:
             - Compliance status
             - Total supply including liquidity pools
             
-            v2.5.9 FIX: Now uses UBECDistributionService for live data
-            instead of stale distribution_state table.
+            v2.6.0 FIX: Corrected key mapping from UBECDistributionService response.
+            The service returns nested structure with keys like:
+            - total_in_accounts, total_in_pools
+            - administration['percentage'], administration['amount']
+            - stewardship['percentage'], stewardship['amount']
+            - general['percentage'], general['amount']
             
             Distribution Model:
             - General Distribution: 65% (DERIVED: 100% - Admin% - Stewardship%)
@@ -1181,33 +1217,44 @@ class BackendAPIService:
                 # Get current distribution with live data
                 distribution_data = await distribution_service.get_current_distribution()
                 
+                # Extract nested values with safe defaults
+                # Service returns: total_in_accounts, total_in_pools (not account_total, pool_total)
+                # Service returns: administration{}, stewardship{}, general{} nested dicts
+                admin_data = distribution_data.get('administration', {})
+                steward_data = distribution_data.get('stewardship', {})
+                general_data = distribution_data.get('general', {})
+                
                 # Format response for API consumers
                 return {
                     'distribution': {
                         'model': '65/30/5',
                         'total_supply': str(distribution_data.get('total_supply', 0)),
-                        'total_in_accounts': str(distribution_data.get('account_total', 0)),
-                        'total_in_liquidity_pools': str(distribution_data.get('pool_total', 0)),
+                        'total_in_accounts': str(distribution_data.get('total_in_accounts', 0)),
+                        'total_in_liquidity_pools': str(distribution_data.get('total_in_pools', 0)),
                         'categories': {
                             'general_distribution': {
                                 'name': 'General Distribution',
                                 'target_percentage': 65.0,
-                                'actual_percentage': float(distribution_data.get('general_percentage', 0)),
-                                'amount': str(distribution_data.get('general_amount', 0)),
+                                'actual_percentage': float(general_data.get('percentage', 0)),
+                                'amount': str(general_data.get('amount', 0)),
                                 'description': 'Tokens in general circulation (derived: 100% - Admin - Stewardship)'
                             },
                             'token_ecosystem_stewardship': {
                                 'name': 'Token Ecosystem Stewardship',
                                 'target_percentage': 30.0,
-                                'actual_percentage': float(distribution_data.get('stewardship_percentage', 0)),
-                                'amount': str(distribution_data.get('stewardship_amount', 0)),
+                                'actual_percentage': float(steward_data.get('percentage', 0)),
+                                'amount': str(steward_data.get('amount', 0)),
+                                'direct': str(steward_data.get('direct', 0)),
+                                'lp_positions': str(steward_data.get('lp', 0)),
                                 'description': 'Management, Infrastructure, and Liquidity accounts'
                             },
                             'administration': {
                                 'name': 'Administration',
                                 'target_percentage': 5.0,
-                                'actual_percentage': float(distribution_data.get('admin_percentage', 0)),
-                                'amount': str(distribution_data.get('admin_amount', 0)),
+                                'actual_percentage': float(admin_data.get('percentage', 0)),
+                                'amount': str(admin_data.get('amount', 0)),
+                                'direct': str(admin_data.get('direct', 0)),
+                                'lp_positions': str(admin_data.get('lp', 0)),
                                 'description': 'General administration account'
                             }
                         },
@@ -1233,7 +1280,6 @@ class BackendAPIService:
                     detail=f"Error fetching distribution state: {str(e)}"
                 )
 
-@self.app.get("/api/v1/token-audit", response_model=Dict)
         @self.app.get("/api/v1/token-audit/{token_code}", response_model=Dict)
         @limiter.limit("30/minute")
         async def get_token_audit(request: Request, token_code: str = "UBEC") -> Dict:
@@ -2792,7 +2838,7 @@ class BackendAPIService:
                     detail=f"Error fetching watershed bbox: {str(e)}"
                 )
         
-        self.logger.info("✓ All endpoints registered successfully (23 total)")
+        self.logger.info("✓ All endpoints registered successfully (21 unique endpoints)")
     
     async def _rate_limit_error_handler(self, request: Request, exc: RateLimitExceeded) -> JSONResponse:
         """

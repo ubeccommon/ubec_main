@@ -63,10 +63,19 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team
-Version: 4.5.1 (Database API Fix)
-Date: November 2, 2025
+Version: 4.6.0 (Table Reference Fix - ubec_balances)
+Date: November 29, 2025
 
 Changelog:
+    v4.6.0 - TABLE REFERENCE FIX: Changed from account_balances to ubec_balances
+           - 🔥 CRITICAL FIX: account_balances was STALE (not synced by scheduler)
+           - ✅ FIXED: get_distribution_snapshot() now uses ubec_balances table
+           - ✅ FIXED: Changed asset_code to token_code::token_code for ENUM type
+           - ✅ FIXED: Changed placeholder style from %s to $1 for asyncpg
+           - ✅ IMPACT: Audit service now shows correct real-time balances
+           - 📝 NOTE: account_balances table is being deprecated
+           - 📝 NOTE: ubec_balances is synced by blockchain_sync scheduler job
+
     v4.5.1 - HOTFIX: Database API method corrections
            - Fixed fetch_value() → fetch_one() method calls
            - Database manager uses fetch_one() returning dict, not fetch_value()
@@ -264,7 +273,8 @@ class UBECAuditService:
         Design Notes:
             - Principle 4: Database as single source of truth
             - Principle 5: Async operation
-            - v4.5.0: Uses explicit schema name (ubec_main.account_balances)
+            - v4.6.0: Uses ubec_balances table (actively synced by scheduler)
+            - v4.6.0: Changed from account_balances (stale) to ubec_balances
         """
         # Check cache freshness
         if self._is_snapshot_fresh():
@@ -278,15 +288,16 @@ class UBECAuditService:
             raise ValueError("Both admin and steward accounts must be configured")
         
         # Get balances from database (Principle 4: Single Source of Truth)
-        # v4.5.0: Explicit schema name for production reliability
+        # v4.6.0: Changed from account_balances to ubec_balances (actively synced table)
+        # account_balances is stale; ubec_balances is synced by blockchain_sync job
         admin_row = await self.db.fetch_one(
-            "SELECT balance FROM ubec_main.account_balances WHERE account_id = %s AND asset_code = %s",
+            "SELECT balance FROM ubec_main.ubec_balances WHERE account_id = $1 AND token_code = $2::token_code",
             (self.admin_account, self.ubec_code)
         )
         admin_balance = admin_row['balance'] if admin_row else None
         
         steward_row = await self.db.fetch_one(
-            "SELECT balance FROM ubec_main.account_balances WHERE account_id = %s AND asset_code = %s",
+            "SELECT balance FROM ubec_main.ubec_balances WHERE account_id = $1 AND token_code = $2::token_code",
             (self.steward_account, self.ubec_code)
         )
         steward_balance = steward_row['balance'] if steward_row else None
@@ -662,15 +673,15 @@ class UBECAuditService:
         
         async def check_tokenomics_accounts():
             """Verify tokenomics accounts exist in database"""
-            # v4.5.0: Explicit schema name for production reliability
+            # v4.6.0: Changed to ubec_balances (actively synced table)
             admin_row = await self.db.fetch_one(
-                "SELECT COUNT(*) as count FROM ubec_main.account_balances WHERE account_id = %s",
+                "SELECT COUNT(*) as count FROM ubec_main.ubec_balances WHERE account_id = $1",
                 (self.admin_account,)
             )
             admin_exists = admin_row['count'] if admin_row else 0
             
             steward_row = await self.db.fetch_one(
-                "SELECT COUNT(*) as count FROM ubec_main.account_balances WHERE account_id = %s",
+                "SELECT COUNT(*) as count FROM ubec_main.ubec_balances WHERE account_id = $1",
                 (self.steward_account,)
             )
             steward_exists = steward_row['count'] if steward_row else 0
@@ -887,6 +898,13 @@ if __name__ == "__main__":
         "  result = await audit.perform_comprehensive_audit()\n"
         "  compliance = await audit.check_distribution_compliance()\n"
         "  health = await audit.health_check()\n\n"
+        "Version 4.6.0 - Table Reference Fix:\n"
+        "  - CRITICAL FIX: Changed from account_balances to ubec_balances\n"
+        "  - account_balances was STALE (not synced by scheduler)\n"
+        "  - ubec_balances is actively synced by blockchain_sync job\n"
+        "  - Changed asset_code to token_code::token_code for ENUM type\n"
+        "  - Changed placeholder style from %s to $1 for asyncpg\n"
+        "  - Audit service now shows correct real-time balances\n\n"
         "Version 4.5.1 - Database API Fix:\n"
         "  - HOTFIX: Corrected database manager method calls\n"
         "  - Fixed fetch_value() → fetch_one() (database API correction)\n"
@@ -910,22 +928,6 @@ if __name__ == "__main__":
         "  - Added nested dict format expected by distribution evaluator\n"
         "  - Each deviation now includes: actual, target, deviation_percent\n"
         "  - Resolves TypeError: 'float' object is not subscriptable\n\n"
-        "Version 4.2.0 - Database Schema Alignment Fix:\n"
-        "  - CRITICAL FIX: Corrected get_distribution_snapshot() database query\n"
-        "  - Removed asset_issuer column reference (doesn't exist in account_balances)\n"
-        "  - Query now correctly filters by asset_code only\n"
-        "  - Resolves asyncpg.exceptions.UndefinedColumnError\n\n"
-        "Version 4.1.0 - Distribution Evaluator Interface Fix:\n"
-        "  - CRITICAL FIX: Added check_distribution_compliance() method\n"
-        "  - Fixes AttributeError in distribution evaluator integration\n"
-        "  - Wraps perform_comprehensive_audit() with evaluator-expected format\n"
-        "  - Implements Principle #12: Method Singularity (wraps, not duplicates)\n"
-        "  - Maintains all existing functionality\n\n"
-        "Version 4.0.0 - ServiceHealthCheck Integration:\n"
-        "  - Uses ServiceHealthCheck.database_dependent_health() utility\n"
-        "  - Implements Principle #12: Method Singularity\n"
-        "  - Four custom health checks for comprehensive monitoring\n"
-        "  - Standardized health response format\n\n"
         "Attribution:\n"
         "  This project uses the services of Claude and Anthropic PBC."
     )

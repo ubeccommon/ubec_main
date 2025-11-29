@@ -2,7 +2,7 @@
 
 *This project uses the services of Claude and Anthropic PBC to inform our decisions and recommendations.*
 
-**Generated:** 2025-11-29T05:56:14.723149
+**Generated:** 2025-11-29T12:07:20.384682
 
 **Database:** ubec
 
@@ -30,11 +30,11 @@
 ### Summary Statistics
 
 - **Total Schemas:** 4
-- **Total Tables:** 82
+- **Total Tables:** 81
 - **Total Views:** 37
 - **Total Functions:** 1626
-- **Total Rows:** 63,054
-- **Total Columns:** 1,016
+- **Total Rows:** 62,475
+- **Total Columns:** 1,010
 - **Total Foreign Keys:** 31
 
 ### Schema Summary
@@ -44,7 +44,7 @@
 | phenomenal | 29 | 13 | 21 | 22,638 | 1009 MB |
 | public | 1 | 4 | 1421 | 8,500 | 7144 kB |
 | topology | 2 | 0 | 103 | 0 | 48 kB |
-| ubec_main | 50 | 20 | 81 | 31,916 | 148 MB |
+| ubec_main | 49 | 20 | 81 | 31,337 | 146 MB |
 
 ---
 
@@ -10537,7 +10537,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Four-Element Protocol - Primary operational schema for UBEC token management*
 
-**Tables:** 50 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 31,916 | **Size:** 148 MB
+**Tables:** 49 | **Views:** 20 | **Functions:** 81 | **Total Rows:** 31,337 | **Size:** 146 MB
 
 ### Schema Permissions
 
@@ -10545,18 +10545,10 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - **reward_admin:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **reward_data_writer:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **ubec_admin:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
-- **ubec_app:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
+- **ubec_app:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 - **ubec_sync:** USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE, USAGE
 
 ### Sequences
-
-#### account_balances_id_seq
-
-- **Start:** 1
-- **Increment:** 1
-- **Min:** 1, **Max:** 2147483647
-- **Cache:** 1
-- **Owned By:** account_balances.id
 
 #### account_order_positions_id_seq
 
@@ -10911,47 +10903,6 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - **Owned By:** ubec_sync_status.id
 
 ### Tables
-
-#### account_balances
-
-*Tracks token balances for all accounts across all UBEC tokens. Used for stability analysis in Earth element (UBECgpi).*
-
-**Rows:** 651 | **Size:** 1584 kB
-
-**Columns:**
-
-| Column | Type | Nullable | Default |
-|--------|------|----------|----------|
-| id | integer(32) | ✗ | nextval('account_balances_id_seq'::regclass) |
-| account_id *(Stellar public key (G... format))* | character varying(56) | ✗ |  |
-| asset_code *(Token code: UBEC, UBECrc, UBECgpi, or UBECtt)* | character varying(12) | ✗ |  |
-| balance *(Current token balance for this account)* | numeric(20,7) | ✓ | 0.0 |
-| last_updated *(Timestamp of last balance update)* | timestamp with time zone | ✓ | now() |
-| created_at | timestamp with time zone | ✓ | now() |
-
-**Primary Key:**
-- account_balances_pkey: (id)
-
-**Unique Constraints:**
-- account_balances_unique_account_asset: (account_id, asset_code)
-
-**Check Constraints:**
-- account_balances_balance_check: CHECK ((balance >= (0)::numeric))
-
-**Indexes:**
-- PRIMARY UNIQUE BTREE: (id) - 40 kB
-- UNIQUE BTREE: (account_id, asset_code) - 160 kB
-- BTREE: (account_id) - 160 kB
-- BTREE: (asset_code, balance) - 296 kB
-- BTREE: (asset_code) - 16 kB
-- BTREE: (asset_code, last_updated) - 40 kB
-- BTREE: (balance) - 264 kB
-- BTREE: (last_updated) - 280 kB
-
-**Permissions:**
-- **ubec_app:** DELETE (GRANT), INSERT (GRANT), REFERENCES (GRANT), SELECT (GRANT), TRIGGER (GRANT), TRUNCATE (GRANT), UPDATE (GRANT)
-
----
 
 #### account_order_positions
 
@@ -11655,7 +11606,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stores holonic evaluation metrics for UBEC token holders*
 
-**Rows:** 5,273 | **Size:** 7240 kB
+**Rows:** 5,275 | **Size:** 7248 kB
 
 **Columns:**
 
@@ -11699,7 +11650,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - BTREE: (account_id) - 160 kB
 - BTREE: (calculation_mode) - 88 kB
 - BTREE: (holonic_category) - 112 kB
-- BTREE: (composite_score) - 280 kB
+- BTREE: (composite_score) - 288 kB
 - BTREE: (confidence) - 280 kB
 - BTREE: (evaluation_date) - 424 kB
 - UNIQUE BTREE: (evaluation_date, account_id) - 808 kB
@@ -12495,7 +12446,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stellar blockchain operations with element and asset tracking*
 
-**Rows:** 788 | **Size:** 52 MB
+**Rows:** 819 | **Size:** 52 MB
 
 **Columns:**
 
@@ -12569,7 +12520,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Stellar blockchain transactions with element context*
 
-**Rows:** 708 | **Size:** 70 MB
+**Rows:** 739 | **Size:** 70 MB
 
 **Columns:**
 
@@ -13185,7 +13136,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 
 *Ubuntu principle metrics for holonic health assessment*
 
-**Rows:** 13,916 | **Size:** 8632 kB
+**Rows:** 13,924 | **Size:** 8664 kB
 
 **Columns:**
 
@@ -13224,7 +13175,7 @@ Returns NULL if no raster data intersects the polygon or if an error occurs.
 - BTREE: (element) - 168 kB
 - BTREE: (health_status) - 216 kB
 - BTREE: (principle) - 168 kB
-- BTREE: (score) - 656 kB
+- BTREE: (score) - 688 kB
 - PRIMARY UNIQUE BTREE: (id) - 560 kB
 
 **Row Level Security:** Enabled

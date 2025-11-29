@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # services/distribution/ubec_distribution_service.py
 """
-UBEC Distribution Manager Service - Production Version 4.3.0 (STATE SYNC)
+UBEC Distribution Manager Service - Production Version 4.6.0 (TABLE FIX)
 
 This service manages UBEC token distribution according to official tokenomics:
     - General Distribution: 65%
@@ -9,7 +9,7 @@ This service manages UBEC token distribution according to official tokenomics:
     - Administration: 5%
 
 CRITICAL: Total Supply Calculation Includes:
-    1. UBEC tokens in individual accounts (from account_balances table)
+    1. UBEC tokens in individual accounts (from ubec_balances table)
     2. UBEC tokens in ALL liquidity pools (from liquidity_pools table)
     3. Stewardship Liquidity Account includes both free and LP-locked tokens
 
@@ -33,8 +33,19 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team  
-Version: 4.5.0 (Total Supply Calculation Fix)
-Date: November 28, 2025
+Version: 4.6.0 (Table Reference Fix)
+Date: November 29, 2025
+
+Changes in v4.6.0:
+    - 🔥 CRITICAL FIX: Changed table reference from account_balances to ubec_balances
+    - ✅ ROOT CAUSE: account_balances table was STALE (not updated by scheduler)
+    - ✅ ROOT CAUSE: ubec_balances table is ACTIVE (synced by blockchain_sync job)
+    - ✅ FIXED: get_account_balance_with_lp() now queries ubec_balances
+    - ✅ FIXED: get_total_supply() now queries ubec_balances
+    - ✅ FIXED: Changed asset_code to token_code::token_code for ENUM type
+    - ✅ IMPACT: Distribution API now shows correct real-time balances
+    - ✅ VERIFIED: Admin account balance now matches Stellar blockchain
+    - ✅ All 12 design principles maintained
 
 Changes in v4.5.0:
     - 🔥 CRITICAL FIX: Total supply now includes liquidity pool reserves
@@ -1851,9 +1862,14 @@ class UBECDistributionService:
         """
         Get combined balance for an account (direct + LP-locked).
         
-        This method fetches both the direct balance from account_balances table
+        This method fetches both the direct balance from ubec_balances table
         and the LP-locked balance from liquidity_pool_owners, then returns both
         along with the total.
+        
+        v4.6.0 FIX: Changed from account_balances to ubec_balances table.
+        The account_balances table was stale and not being updated by the
+        blockchain_sync scheduler job. The ubec_balances table is the actively
+        synced table that reflects current Stellar blockchain state.
         
         Args:
             account_id: Stellar account ID
@@ -1868,7 +1884,7 @@ class UBECDistributionService:
             }
             
         Database Tables:
-            - account_balances: Contains account_id (VARCHAR), asset_code (VARCHAR), balance (NUMERIC)
+            - ubec_balances: Contains account_id (VARCHAR), token_code (ENUM), balance (NUMERIC)
             - liquidity_pool_owners: LP positions with ubec_balance column
             
         Example:
@@ -1884,13 +1900,15 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
-            # Get direct balance from account_balances table
-            # Schema: account_id (VARCHAR), asset_code (VARCHAR), balance (NUMERIC)
+            # Get direct balance from ubec_balances table (actively synced by scheduler)
+            # FIX v4.6.0: Changed from account_balances to ubec_balances
+            # account_balances is stale; ubec_balances is synced by blockchain_sync job
+            # Schema: account_id (VARCHAR), token_code (ENUM), balance (NUMERIC)
             direct_query = f"""
                 SELECT COALESCE(balance, 0) as balance
-                FROM {self.db_schema}.account_balances
+                FROM {self.db_schema}.ubec_balances
                 WHERE account_id = $1
-                AND asset_code = $2
+                AND token_code = $2::token_code
                 LIMIT 1
             """
             
@@ -1953,7 +1971,7 @@ class UBECDistributionService:
             }
             
         Database Tables:
-            - account_balances: Direct token holdings
+            - ubec_balances: Direct token holdings (synced by blockchain_sync job)
             - liquidity_pool_owners: LP positions
             
         Example:
@@ -2034,18 +2052,21 @@ class UBECDistributionService:
         Get total UBEC supply from ALL sources.
         
         CRITICAL: This queries:
-        1. All accounts holding UBEC (from account_balances)
+        1. All accounts holding UBEC (from ubec_balances - synced by scheduler)
         2. All UBEC locked in liquidity pools (from liquidity_pools)
         
         Total Supply = Account Balances + Liquidity Pool Reserves
         
-        Known total: 191,766,039 UBEC
+        v4.6.0 FIX: Changed from account_balances to ubec_balances table.
+        The account_balances table was stale; ubec_balances is actively synced.
+        
+        Known total: ~192,363,827 UBEC
         
         Returns:
             Tuple of (total_supply, account_total, pool_total)
             
         Database Tables:
-            - ubec_main.account_balances: Direct token holdings
+            - ubec_main.ubec_balances: Direct token holdings (actively synced)
             - ubec_main.liquidity_pools: LP reserves (balance column)
             
         Example:
@@ -2059,11 +2080,13 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
-            # Query 1: Total UBEC in account balances
+            # Query 1: Total UBEC in ubec_balances (actively synced by scheduler)
+            # FIX v4.6.0: Changed from account_balances to ubec_balances
+            # account_balances is stale; ubec_balances is synced by blockchain_sync job
             account_query = f"""
                 SELECT COALESCE(SUM(balance), 0) as total
-                FROM {self.db_schema}.account_balances
-                WHERE asset_code = $1
+                FROM {self.db_schema}.ubec_balances
+                WHERE token_code = $1::token_code
             """
             
             account_result = await self.db_manager.fetch_one(

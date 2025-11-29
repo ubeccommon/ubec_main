@@ -46,10 +46,19 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team with Claude AI assistance
-Version: 3.7.0 (Data Consistency Fix - Total Accounts Query Correction)
-Date: November 19, 2025
+Version: 3.8.0 (Remove Deprecated account_balances References)
+Date: November 29, 2025
 
-Changelog v3.7.0:
+Changelog v3.8.0:
+- 🔥 CRITICAL: Removed deprecated account_balances table references
+- ✅ UPDATED: _TableColumns class to mark account_balances as deprecated
+- ✅ ADDED: Deprecation warning to get_account_balance_asset_col() method
+- ✅ UPDATED: Schema notes to reflect single source of truth (ubec_balances)
+- 📝 NOTE: account_balances table is being removed from database
+- 📝 NOTE: ubec_balances is synced by blockchain_sync scheduler job
+- 📝 NOTE: All balance queries should use ubec_balances exclusively
+
+Previous Changelog v3.7.0:
 - 🔥 CRITICAL FIX: Corrected total_accounts query to use stellar_accounts table
 - ✅ FIXED: Active accounts can no longer exceed total accounts
 - ✅ FIXED: Network activity score now capped at 100 (was 163.5%)
@@ -119,16 +128,22 @@ class _TableColumns:
     different tables, implementing Principle #4 (Single Source of Truth) and
     Principle #12 (Method Singularity).
     
-    Schema Notes (verified against current_ubec_comprehensive_database_documentation_20251119_120304.md):
-        - ubec_balances: Uses token_code (ENUM: UBEC, UBECrc, UBECgpi, UBECtt) - 654 rows
-        - account_balances: Uses asset_code (VARCHAR) - 651 rows
+    Schema Notes (v3.8.0 - Updated November 29, 2025):
+        - ubec_balances: Uses token_code (ENUM: UBEC, UBECrc, UBECgpi, UBECtt) - PRIMARY BALANCE TABLE
         - stellar_accounts: Primary account table - 1,481 rows
         - stellar_operations: Uses source_account, from_account, to_account (NOT destination) - 30,889 rows
         - stellar_transactions: Uses source_account - 98,549 rows
+        
+    DEPRECATED (v3.8.0):
+        - account_balances: REMOVED - was stale and not synced by scheduler
+        - Use ubec_balances exclusively for all balance queries
     """
-    # Balance tables (CORRECTED v3.7.0)
+    # Balance table - SINGLE SOURCE OF TRUTH (v3.8.0)
     UBEC_BALANCES_TOKEN_COL = "token_code"      # Token identifier in ubec_balances (ENUM)
-    ACCOUNT_BALANCES_ASSET_COL = "asset_code"   # Token identifier in account_balances (VARCHAR)
+    
+    # DEPRECATED v3.8.0: account_balances table removed from database
+    # Kept for backward compatibility during transition, but raises warning
+    ACCOUNT_BALANCES_ASSET_COL = "asset_code"   # DEPRECATED - table removed
     
     # Transaction table
     TRANSACTIONS_ASSET_COL = "asset_code"       # Token identifier in stellar_transactions
@@ -143,8 +158,26 @@ class _TableColumns:
     
     @staticmethod
     def get_account_balance_asset_col() -> str:
-        """Get asset column name for account_balances table."""
-        return _TableColumns.ACCOUNT_BALANCES_ASSET_COL
+        """
+        DEPRECATED v3.8.0: account_balances table has been removed.
+        Use get_balance_token_col() with ubec_balances table instead.
+        
+        This method is kept for backward compatibility during transition
+        but will log a deprecation warning.
+        
+        Returns:
+            str: The token_code column name (redirected to ubec_balances)
+        """
+        import warnings
+        warnings.warn(
+            "get_account_balance_asset_col() is deprecated. "
+            "account_balances table has been removed. "
+            "Use get_balance_token_col() with ubec_balances instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        # Return ubec_balances column for backward compatibility
+        return _TableColumns.UBEC_BALANCES_TOKEN_COL
     
     @staticmethod
     def get_transaction_asset_col() -> str:
