@@ -978,6 +978,14 @@ async def handle_sync(
         sync_type: Type of sync (all, UBEC, UBECrc, UBECgpi, UBECtt)
         max_accounts: Maximum accounts to sync per token
         force: Force resync even if recently synced
+    
+    Uses sync service methods:
+        - sync_all() for full ecosystem sync
+        - sync_all_tokens() for token-specific sync
+        
+    Design Principles:
+        ✅ #5: Strict Async - All operations async
+        ✅ #12: Method Singularity - Uses actual synchronizer methods
     """
     logger.info("=" * 70)
     logger.info(f"BLOCKCHAIN SYNCHRONIZATION (type: {sync_type})")
@@ -986,31 +994,60 @@ async def handle_sync(
     try:
         sync_service = await registry.get('sync')
         
-        tokens_to_sync = ['UBEC', 'UBECrc', 'UBECgpi', 'UBECtt'] if sync_type == 'all' else [sync_type]
+        # Determine max accounts (default 5000)
+        max_accts = max_accounts if max_accounts else 5000
         
-        for token in tokens_to_sync:
-            logger.info(f"\n{'='*70}")
-            logger.info(f"Syncing {token}...")
-            logger.info(f"{'='*70}")
+        if sync_type == 'all':
+            # Use sync_all() for full ecosystem sync
+            logger.info("Performing full ecosystem sync...")
+            logger.info(f"Max accounts per token: {max_accts}")
             
-            if hasattr(sync_service, 'sync_token_data'):
-                result = await sync_service.sync_token_data(
-                    asset_code=token,
-                    max_accounts=max_accounts,
-                    force=force
-                )
+            if hasattr(sync_service, 'sync_all'):
+                result = await sync_service.sync_all(max_accounts_per_token=max_accts)
                 
-                logger.info(f"\n✓ Sync complete for {token}:")
-                logger.info(f"  Accounts synced: {result.get('accounts_synced', 0)}")
-                logger.info(f"  Operations synced: {result.get('operations_synced', 0)}")
-                logger.info(f"  Duration: {result.get('duration', 0):.2f}s")
+                # Display results
+                logger.info(f"\n✓ Full sync complete:")
+                logger.info(f"  Status: {result.get('status', 'unknown')}")
+                logger.info(f"  Duration: {result.get('duration_seconds', 0):.2f}s")
+                
+                # Account results
+                accounts = result.get('accounts', {})
+                logger.info(f"  Total accounts: {accounts.get('total_accounts', 0)}")
+                
+                by_token = accounts.get('by_token', {})
+                for token, data in by_token.items():
+                    synced = data.get('accounts_synced', 0)
+                    status = data.get('status', 'unknown')
+                    logger.info(f"    {token}: {synced} accounts [{status}]")
+                
+                # Pool results
+                pools = result.get('liquidity_pools', {})
+                logger.info(f"  Liquidity pools: {pools.get('total_pools', 0)}")
+                
             else:
-                logger.warning(f"Sync service doesn't support token sync")
+                logger.error("Sync service doesn't have sync_all() method")
+                logger.error("Please ensure ubec_data_synchronizer.py is up to date")
+        else:
+            # Sync specific token
+            token = sync_type.upper()
+            logger.info(f"Syncing {token} accounts...")
+            
+            if hasattr(sync_service, 'sync_all_tokens'):
+                result = await sync_service.sync_all_tokens(max_accounts_per_token=max_accts)
+                
+                by_token = result.get('by_token', {})
+                if token in by_token:
+                    data = by_token[token]
+                    logger.info(f"\n✓ Sync complete for {token}:")
+                    logger.info(f"  Accounts synced: {data.get('accounts_synced', 0)}")
+                    logger.info(f"  Status: {data.get('status', 'unknown')}")
+                else:
+                    logger.warning(f"Token {token} not found in sync results")
+            else:
+                logger.error("Sync service doesn't have sync_all_tokens() method")
                 
     except Exception as e:
         logger.error(f"Sync failed: {e}", exc_info=True)
-
-
 async def handle_cleanup(
     registry: ServiceRegistry,
     dry_run: bool = True,
@@ -1395,13 +1432,56 @@ async def handle_distribution(
             logger.info("Checking tokenomics compliance...")
             result = await distribution.check_compliance()
             
-            dist_state = result.get('distribution_state', {})
-            logger.info(f"\n✓ Compliance Check:")
-            logger.info(f"  Status: {result.get('status', 'unknown')}")
-            logger.info(f"  General Distribution: {dist_state.get('general_pct', 0):.2f}%")
-            logger.info(f"  Stewardship: {dist_state.get('steward_pct', 0):.2f}%")
-            logger.info(f"  Administration: {dist_state.get('admin_pct', 0):.2f}%")
+            # Check for error response
+            if 'error' in result:
+                logger.error(f"Compliance check failed: {result['error']}")
+                return
             
+            # Extract from check_compliance() return structure
+            distribution_data = result.get('distribution', {})
+            compliant = result.get('compliant', False)
+            
+            # Get percentages
+            admin_pct = float(distribution_data.get('administration', {}).get('percentage', 0))
+            steward_pct = float(distribution_data.get('stewardship', {}).get('percentage', 0))
+            general_pct = float(distribution_data.get('general', {}).get('percentage', 0))
+            
+            # Get targets
+            admin_target = float(distribution_data.get('administration', {}).get('target', 5))
+            steward_target = float(distribution_data.get('stewardship', {}).get('target', 30))
+            general_target = float(distribution_data.get('general', {}).get('target', 65))
+            
+            # Get total supply
+            total_supply = float(distribution_data.get('total_supply', 0))
+            
+            # Get compliance status
+            admin_ok = result.get('administration_compliant', False)
+            steward_ok = result.get('stewardship_compliant', False)
+            general_ok = result.get('general_compliant', False)
+            
+            # Display results
+            status = 'COMPLIANT' if compliant else 'NON-COMPLIANT'
+            icon = '✅' if compliant else '❌'
+            
+            logger.info(f"\n{icon} Compliance Check:")
+            logger.info(f"  Overall Status: {status}")
+            logger.info(f"  Total Supply: {total_supply:,.2f} UBEC")
+            logger.info(f"\n  Current Distribution:")
+            logger.info(f"    General:        {general_pct:6.2f}% (target: {general_target:.2f}%) {'✅' if general_ok else '❌'}")
+            logger.info(f"    Stewardship:    {steward_pct:6.2f}% (target: {steward_target:.2f}%) {'✅' if steward_ok else '❌'}")
+            logger.info(f"    Administration: {admin_pct:6.2f}% (target: {admin_target:.2f}%) {'✅' if admin_ok else '❌'}")
+            
+            # Show deviations if non-compliant
+            if not compliant:
+                deviations = result.get('deviations', {})
+                logger.warning(f"\n  Deviations from Target:")
+                logger.warning(f"    Administration: {deviations.get('administration', 0):+.2f}%")
+                logger.warning(f"    Stewardship:    {deviations.get('stewardship', 0):+.2f}%")
+                recommendations = result.get('recommendations', [])
+                if recommendations:
+                    logger.info(f"\n  Recommendations:")
+                    for rec in recommendations:
+                        logger.info(f"    → {rec}")
         elif action == 'rebalance-check':
             logger.info("Checking if rebalance is needed...")
             result = await distribution.is_rebalance_needed()
@@ -1418,19 +1498,46 @@ async def handle_distribution(
             logger.info("Executing rebalance...")
             result = await distribution.execute_distribution(dry_run=dry_run)
             
-            logger.info(f"\n✓ Rebalance {'Simulation' if dry_run else 'Execution'}:")
-            logger.info(f"  Status: {result.get('status', 'unknown')}")
-            logger.info(f"  Transactions: {result.get('transaction_count', 0)}")
+            # Extract from execute_distribution() return structure
+            success = result.get('success', False)
+            is_dry_run = result.get('dry_run', True)
+            transactions = result.get('transactions', [])
+            total_distributed = result.get('total_distributed', '0')
+            accounts_updated = result.get('accounts_updated', 0)
+            errors = result.get('errors', [])
             
-            if result.get('transactions'):
+            # Determine status
+            if is_dry_run:
+                status = 'SIMULATION COMPLETE' if success else 'SIMULATION FAILED'
+            else:
+                status = 'EXECUTION COMPLETE' if success else 'EXECUTION FAILED'
+            
+            icon = '✅' if success else '❌'
+            mode = "Simulation" if is_dry_run else "Execution"
+            
+            logger.info(f"\n{icon} Rebalance {mode}:")
+            logger.info(f"  Status: {status}")
+            logger.info(f"  Transactions: {len(transactions)}")
+            logger.info(f"  Total Distributed: {total_distributed} UBEC")
+            logger.info(f"  Accounts Updated: {accounts_updated}")
+            
+            if transactions:
                 logger.info("\n  Transaction Details:")
-                for tx in result['transactions']:
+                for tx in transactions:
                     # Handle nested transaction structure
                     tx_data = tx.get('transaction', tx)
                     amount = tx_data.get('amount', 'N/A')
+                    source = tx_data.get('source', 'N/A')
                     dest = tx_data.get('destination', 'N/A')
-                    logger.info(f"    {amount} UBEC → {dest[:8]}...")
+                    tx_status = tx.get('status', 'unknown')
+                    src_short = source[:8] if len(source) > 8 else source
+                    dst_short = dest[:8] if len(dest) > 8 else dest
+                    logger.info(f"    {src_short}... → {dst_short}...: {amount} UBEC [{tx_status}]")
             
+            if errors:
+                logger.warning("\n  Errors:")
+                for err in errors:
+                    logger.warning(f"    ⚠️  {err}")
         else:
             logger.warning(f"Unknown action: {action}")
             

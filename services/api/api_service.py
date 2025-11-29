@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.5.7 (GATEWAY AUTH)
+UBEC Backend API Service - Production Version 2.5.8 (GATEWAY AUTH)
 ===================================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
@@ -9,6 +9,15 @@ This service exposes specific endpoints for the www server to consume,
 providing an abstraction layer between the public website and internal
 protocol operations. Integrated with real bioregion tracking, ecoregion
 data, and watershed information.
+
+NEW IN v2.5.8 - TOTAL SUPPLY FIX:
+- 🔥 CRITICAL FIX: Total supply now includes liquidity pool reserves
+  - Total = account_balances + liquidity_pools.balance
+  - Expected ~191,766,039 UBEC (was only showing ~152M)
+- ✅ FIXED: Stewardship LP positions include ALL 3 accounts
+  - Management, Infrastructure, and Liquidity accounts now all include LP
+- ✅ ADDED: LP breakdown for each stewardship account in audit
+- ✅ ADDED: total_in_accounts and total_in_liquidity_pools in summary
 
 NEW IN v2.5.7 - API GATEWAY AUTHENTICATION:
 - ✨ NEW: APIGatewayAuthMiddleware integration for defense-in-depth security
@@ -1336,14 +1345,26 @@ class BackendAPIService:
                     result = await db.fetch_one(query, (account_id, token_code_upper))
                     return safe_float(result['lp_balance']) if result else 0.0
                 
-                # Get total supply from all balances
-                total_supply_query = """
-                    SELECT COALESCE(SUM(balance), 0) as total_supply
+                # Get total supply from all balances + liquidity pools
+                # FIX v2.5.8: Total supply = account balances + LP reserves
+                account_supply_query = """
+                    SELECT COALESCE(SUM(balance), 0) as total
                     FROM ubec_main.ubec_balances
                     WHERE token_code::text = $1
                 """
-                total_result = await db.fetch_one(total_supply_query, (token_code_upper,))
-                total_supply = safe_float(total_result['total_supply']) if total_result else 0.0
+                account_result = await db.fetch_one(account_supply_query, (token_code_upper,))
+                account_supply = safe_float(account_result['total']) if account_result else 0.0
+                
+                lp_supply_query = """
+                    SELECT COALESCE(SUM(balance), 0) as total
+                    FROM ubec_main.liquidity_pools
+                    WHERE token_code::text = $1
+                """
+                lp_supply_result = await db.fetch_one(lp_supply_query, (token_code_upper,))
+                lp_supply = safe_float(lp_supply_result['total']) if lp_supply_result else 0.0
+                
+                # Total supply = accounts + pools (expected ~191,766,039 for UBEC)
+                total_supply = account_supply + lp_supply
                 
                 # Get total LP locked
                 total_lp_query = """
@@ -1377,12 +1398,22 @@ class BackendAPIService:
                     })
                 
                 # 2. Token Ecosystem Stewardship (30%)
-                steward_mgmt_balance = await get_account_balance(steward_mgmt_account)
-                steward_infra_balance = await get_account_balance(steward_infra_account)
+                # FIX v2.5.8: Get LP balance for ALL stewardship accounts, not just liquidity
+                steward_mgmt_direct = await get_account_balance(steward_mgmt_account)
+                steward_mgmt_lp = await get_lp_balance(steward_mgmt_account)
+                steward_mgmt_balance = steward_mgmt_direct + steward_mgmt_lp
+                
+                steward_infra_direct = await get_account_balance(steward_infra_account)
+                steward_infra_lp = await get_lp_balance(steward_infra_account)
+                steward_infra_balance = steward_infra_direct + steward_infra_lp
+                
                 steward_liq_direct = await get_account_balance(steward_liq_account)
                 steward_liq_lp = await get_lp_balance(steward_liq_account)
+                steward_liq_balance = steward_liq_direct + steward_liq_lp
                 
-                stewardship_total = steward_mgmt_balance + steward_infra_balance + steward_liq_direct + steward_liq_lp
+                # Total stewardship = all 3 accounts (direct + LP positions)
+                stewardship_total = steward_mgmt_balance + steward_infra_balance + steward_liq_balance
+                stewardship_lp_total = steward_mgmt_lp + steward_infra_lp + steward_liq_lp
                 
                 # 3. Administration (5%)
                 admin_balance = await get_account_balance(admin_account)
@@ -1406,11 +1437,12 @@ class BackendAPIService:
                     },
                     'summary': {
                         'total_issued': round(total_supply, 7),
+                        'total_in_accounts': round(account_supply, 7),
+                        'total_in_liquidity_pools': round(lp_supply, 7),
                         'total_distributed': round(general_total + stewardship_total + admin_balance, 7),
                         'general_distribution_pct': round(general_pct, 4),
                         'stewardship_pct': round(stewardship_pct, 4),
                         'administration_pct': round(admin_pct, 4),
-                        'total_in_liquidity_pools': round(total_lp_locked, 7),
                         'distribution_model': '65/30/5'
                     },
                     'general_distribution': {
@@ -1435,28 +1467,40 @@ class BackendAPIService:
                                 {
                                     'purpose': 'Stewardship Management',
                                     'account_id': steward_mgmt_account,
-                                    'balance': round(steward_mgmt_balance, 7)
+                                    'balance': round(steward_mgmt_balance, 7),
+                                    'breakdown': {
+                                        'direct': round(steward_mgmt_direct, 7),
+                                        'lp_positions': round(steward_mgmt_lp, 7)
+                                    }
                                 } if steward_mgmt_account else None,
                                 {
                                     'purpose': 'Infrastructure and Stakeholder Care',
                                     'account_id': steward_infra_account,
-                                    'balance': round(steward_infra_balance, 7)
+                                    'balance': round(steward_infra_balance, 7),
+                                    'breakdown': {
+                                        'direct': round(steward_infra_direct, 7),
+                                        'lp_positions': round(steward_infra_lp, 7)
+                                    }
                                 } if steward_infra_account else None,
                                 {
                                     'purpose': 'Liquidity Pool',
                                     'account_id': steward_liq_account,
-                                    'balance': round(steward_liq_direct + steward_liq_lp, 7),
-                                    'liquidity_breakdown': {
-                                        'unlocked': round(steward_liq_direct, 7),
-                                        'locked_in_pools': round(steward_liq_lp, 7)
+                                    'balance': round(steward_liq_balance, 7),
+                                    'breakdown': {
+                                        'direct': round(steward_liq_direct, 7),
+                                        'lp_positions': round(steward_liq_lp, 7)
                                     }
                                 } if steward_liq_account else None
                             ] if acc is not None
                         ],
                         'liquidity_pools_summary': {
                             'total_locked_in_all_pools': round(total_lp_locked, 7),
-                            'stewardship_lp_unlocked': round(steward_liq_direct, 7),
-                            'stewardship_lp_locked': round(steward_liq_lp, 7)
+                            'stewardship_total_in_lp': round(stewardship_lp_total, 7),
+                            'stewardship_lp_by_account': {
+                                'management': round(steward_mgmt_lp, 7),
+                                'infrastructure': round(steward_infra_lp, 7),
+                                'liquidity': round(steward_liq_lp, 7)
+                            }
                         }
                     },
                     'administration': {

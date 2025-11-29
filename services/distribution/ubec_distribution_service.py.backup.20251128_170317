@@ -33,19 +33,8 @@ Attribution:
     assistance of Claude and Anthropic PBC.
 
 Author: UBEC Protocol Team  
-Version: 4.5.0 (Total Supply Calculation Fix)
+Version: 4.4.0 (Total Supply Calculation Fix)
 Date: November 28, 2025
-
-Changes in v4.5.0:
-    - 🔥 CRITICAL FIX: Total supply now includes liquidity pool reserves
-    - ✅ FIXED: get_total_supply() queries account_balances + liquidity_pools
-    - ✅ FIXED: get_total_supply() returns Tuple (total, accounts, pools)
-    - ✅ FIXED: get_current_distribution() uses correct total (191,766,039 UBEC)
-    - ✅ FIXED: General amount is DERIVED (total - admin - steward)
-    - ✅ FIXED: Stewardship includes LP positions from stewardship accounts
-    - ✅ ADDED: direct/lp breakdown in distribution results
-    - ✅ Total = SUM(account_balances) + SUM(liquidity_pools.balance)
-    - ✅ All 12 design principles maintained
 
 Changes in v4.4.0:
     - 🔥 CRITICAL FIX: Total supply now calculated from ALL UBEC holders
@@ -2015,28 +2004,22 @@ class UBECDistributionService:
                 'error': str(e)
             }
     
-    async def get_total_supply(self) -> Tuple[Decimal, Decimal, Decimal]:
+    async def get_total_supply(self) -> Decimal:
         """
-        Get total UBEC supply from ALL sources.
+        Get total UBEC supply from ALL holders in account_balances.
         
-        CRITICAL: This queries:
-        1. All accounts holding UBEC (from account_balances)
-        2. All UBEC locked in liquidity pools (from liquidity_pools)
-        
-        Total Supply = Account Balances + Liquidity Pool Reserves
-        
-        Known total: 191,766,039 UBEC
+        CRITICAL: This queries ALL accounts holding UBEC, not just official accounts.
+        Total supply is the sum of all UBEC tokens held by all 643+ accounts.
         
         Returns:
-            Tuple of (total_supply, account_total, pool_total)
+            Decimal: Total UBEC supply across all holders
             
         Database Tables:
-            - ubec_main.account_balances: Direct token holdings
-            - ubec_main.liquidity_pools: LP reserves (balance column)
+            - ubec_main.account_balances: All token holdings
             
         Example:
-            >>> total, accts, pools = await service.get_total_supply()
-            >>> print(f"Total: {total:,.2f} (accounts: {accts:,.2f}, pools: {pools:,.2f})")
+            >>> total = await service.get_total_supply()
+            >>> print(f"Total UBEC in circulation: {total:,.2f}")
         
         Design Notes:
             - Principle 4: Database as single source of truth
@@ -2045,47 +2028,25 @@ class UBECDistributionService:
         self._require_initialized()
         
         try:
-            # Query 1: Total UBEC in account balances
-            account_query = f"""
-                SELECT COALESCE(SUM(balance), 0) as total
+            # Query total supply from ALL accounts holding UBEC
+            # Uses explicit schema name per design principles
+            query = f"""
+                SELECT COALESCE(SUM(balance), 0) as total_supply
                 FROM {self.db_schema}.account_balances
                 WHERE asset_code = $1
             """
             
-            account_result = await self.db_manager.fetch_one(
-                account_query, 
-                (self.ubec_code,)
-            )
-            account_total = Decimal(str(account_result['total'])) if account_result else Decimal('0')
+            result = await self.db_manager.fetch_one(query, (self.ubec_code,))
+            total_supply = Decimal(str(result['total_supply'])) if result else Decimal('0')
             
-            # Query 2: Total UBEC in liquidity pools
-            # The 'balance' column in liquidity_pools contains total UBEC in each pool
-            pool_query = f"""
-                SELECT COALESCE(SUM(balance), 0) as total
-                FROM {self.db_schema}.liquidity_pools
-                WHERE token_code = $1::token_code
-            """
-            
-            pool_result = await self.db_manager.fetch_one(
-                pool_query,
-                (self.ubec_code,)
-            )
-            pool_total = Decimal(str(pool_result['total'])) if pool_result else Decimal('0')
-            
-            # Total supply = accounts + pools
-            total_supply = account_total + pool_total
-            
-            self.logger.info(
-                f"Total UBEC supply: {total_supply:,.2f} "
-                f"(accounts: {account_total:,.2f}, pools: {pool_total:,.2f})"
-            )
-            
-            return total_supply, account_total, pool_total
+            self.logger.debug(f"Total UBEC supply (all holders): {total_supply:,.2f}")
+            return total_supply
             
         except Exception as e:
             self.logger.error(f"Error fetching total supply: {e}", exc_info=True)
             self._error_count += 1
-            return Decimal('0'), Decimal('0'), Decimal('0')
+            return Decimal('0')
+    
     # ========================================================================
     # DISTRIBUTION ANALYSIS METHODS
     # Principle 1: Modular Design - Clear separation of concerns
@@ -2097,28 +2058,23 @@ class UBECDistributionService:
         Calculate current distribution percentages across all monitored accounts.
         
         CRITICAL: This implements the DERIVED model where:
-        - Total Supply includes both account balances AND liquidity pool reserves
         - Administration and Stewardship percentages are calculated directly
         - General percentage is DERIVED: 100% - Admin% - Stewardship%
-        - Stewardship includes LP positions held by stewardship accounts
+        
+        This ensures General automatically complies when Admin and Stewardship
+        are at their targets (5% and 30% respectively).
         
         Returns:
             Dict with current distribution state:
             {
                 'total_supply': Decimal,
-                'total_in_accounts': Decimal,
-                'total_in_pools': Decimal,
                 'administration': {
                     'amount': Decimal,
-                    'direct': Decimal,
-                    'lp': Decimal,
                     'percentage': Decimal,
                     'target': Decimal
                 },
                 'stewardship': {
                     'amount': Decimal,
-                    'direct': Decimal,
-                    'lp': Decimal,
                     'percentage': Decimal,
                     'target': Decimal
                 },
@@ -2130,20 +2086,29 @@ class UBECDistributionService:
                 'timestamp': str
             }
             
+        Database Tables:
+            - account_balances: Direct token holdings
+            - liquidity_pool_owners: LP positions
+            
+        Example:
+            >>> dist = await service.get_current_distribution()
+            >>> print(f"Admin: {dist['administration']['percentage']:.2f}%")
+            >>> print(f"Steward: {dist['stewardship']['percentage']:.2f}%")
+            >>> print(f"General: {dist['general']['percentage']:.2f}% (derived)")
+        
         Design Notes:
             - Principle 4: Database as single source of truth
             - Principle 5: Fully async operation
             - General% is ALWAYS derived, never calculated directly
-            - Total supply includes LP reserves
-            - Stewardship includes LP positions from stewardship accounts
         """
         self._require_initialized()
         
         try:
-            # Get total supply (includes LP balances) - returns tuple
-            total_supply, account_total, pool_total = await self.get_total_supply()
+            # Get total supply from ALL UBEC holders (not just official accounts)
+            # This is critical for correct percentage calculations
+            total_supply = await self.get_total_supply()
             
-            # Get balances for official accounts (includes their LP positions)
+            # Get balances for official accounts only
             balances = await self.get_all_account_balances()
             
             if total_supply == 0:
@@ -2153,13 +2118,10 @@ class UBECDistributionService:
                     'error': 'Zero total supply - no tokens detected in system'
                 }
             
-            # Calculate percentages against TRUE total supply
+            # Calculate percentages
             admin_pct = (balances['administration']['total'] / total_supply) * 100
             steward_pct = (balances['stewardship']['total'] / total_supply) * 100
             general_pct = Decimal('100') - admin_pct - steward_pct  # DERIVED
-            
-            # General amount is everything NOT in admin or stewardship
-            general_amount = total_supply - balances['administration']['total'] - balances['stewardship']['total']
             
             # Update tracking
             self._last_distribution_check = datetime.now()
@@ -2167,37 +2129,28 @@ class UBECDistributionService:
             
             distribution = {
                 'total_supply': total_supply,
-                'total_in_accounts': account_total,
-                'total_in_pools': pool_total,
                 'administration': {
                     'amount': balances['administration']['total'],
-                    'direct': balances['administration']['direct'],
-                    'lp': balances['administration']['lp'],
                     'percentage': admin_pct,
                     'target': self.target_distribution['administration'] * 100
                 },
                 'stewardship': {
                     'amount': balances['stewardship']['total'],
-                    'direct': balances['stewardship']['direct'],
-                    'lp': balances['stewardship']['lp'],
                     'percentage': steward_pct,
                     'target': self.target_distribution['stewardship'] * 100
                 },
                 'general': {
-                    'amount': general_amount,  # DERIVED amount
-                    'percentage': general_pct,  # DERIVED percentage
+                    'amount': total_supply - balances['administration']['total'] - balances['stewardship']['total'],  # DERIVED amount
+                    'percentage': general_pct,  # DERIVED
                     'target': self.target_distribution['general'] * 100
                 },
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
             self.logger.info(
-                f"Current Distribution (Total: {total_supply:,.2f} UBEC, "
-                f"Accounts: {account_total:,.2f}, Pools: {pool_total:,.2f}):"
-            )
-            self.logger.info(
-                f"  Admin={admin_pct:.2f}% ({balances['administration']['total']:,.2f} UBEC), "
-                f"Steward={steward_pct:.2f}% ({balances['stewardship']['total']:,.2f} UBEC), "
+                f"Current Distribution: "
+                f"Admin={admin_pct:.2f}%, "
+                f"Steward={steward_pct:.2f}%, "
                 f"General={general_pct:.2f}% (DERIVED)"
             )
             
@@ -2210,6 +2163,7 @@ class UBECDistributionService:
                 'total_supply': Decimal('0'),
                 'error': str(e)
             }
+    
     async def check_compliance(self) -> Dict[str, Any]:
         """
         Check distribution compliance against official tokenomics.
