@@ -68,9 +68,21 @@ Usage:
     python main.py serve --host 0.0.0.0 --port 8000
 
 Author: UBEC Protocol Development Team
-Version: 3.8.4
-Updated: 2025-11-27
+Version: 3.8.5
+Updated: 2025-11-29
 
+
+CHANGELOG v3.8.5:
+    - 🔧 FIX: Fixed handle_visualize() to use correct method name
+    - FIXED: Changed visualizer.generate_report() to visualizer.generate_html_report()
+    - FIXED: Method signature now matches HolonicVisualizer.generate_html_report(output_dir, include_advanced)
+    - FIXED: Added output_dir parameter (default: './reports')
+    - FIXED: Added proper logging for report generation status
+    - ADDED: Warning when format other than 'html' is requested (only HTML supported)
+    - ADDED: Helpful message when report returns None (suggests running evaluate-holonic first)
+    - IMPACT: visualize --action report command now actually generates reports
+    - ROOT CAUSE: hasattr(visualizer, 'generate_report') was silently failing
+    - 🎯 COMPLIANCE: All 12 design principles verified and maintained
 
 CHANGELOG v3.8.4:
     - ✅ ADDED: sync-operations command for network-wide token operation sync
@@ -1315,8 +1327,13 @@ async def handle_visualize(
     Args:
         registry: Service registry
         action: Action to perform (report)
-        format: Output format (html, json)
+        format: Output format (html - only HTML currently supported)
         include_advanced: Include advanced metrics
+    
+    Design Principles:
+        ✅ #5: Strict Async - All operations async
+        ✅ #10: Separation of concerns - Uses visualizer service
+        ✅ #12: Method Singularity - Uses actual HolonicVisualizer methods
     """
     logger.info("=" * 70)
     logger.info(f"VISUALIZATION: {action.upper()}")
@@ -1326,13 +1343,35 @@ async def handle_visualize(
         visualizer = await registry.get('visualizer')
         
         if action == 'report':
-            if hasattr(visualizer, 'generate_report'):
-                result = await visualizer.generate_report(
-                    format=format,
+            # Note: HolonicVisualizer uses generate_html_report method
+            # The format parameter is informational - only HTML is currently supported
+            if format != 'html':
+                logger.warning(f"Format '{format}' not supported. Using HTML format.")
+            
+            if hasattr(visualizer, 'generate_html_report'):
+                # Default output directory for reports
+                output_dir = './reports'
+                
+                logger.info(f"Generating HTML report to: {output_dir}")
+                logger.info(f"Include advanced metrics: {include_advanced}")
+                
+                result = await visualizer.generate_html_report(
+                    output_dir=output_dir,
                     include_advanced=include_advanced
                 )
                 
-                logger.info(f"\n✓ Report generated: {result.get('file_path')}")
+                if result:
+                    logger.info(f"\n✓ Report generated: {result}")
+                else:
+                    logger.warning("\n⚠️  Report generation returned None")
+                    logger.warning("   This may indicate no evaluation data is available.")
+                    logger.warning("   Run 'evaluate-holonic --all' first to generate evaluation data.")
+            else:
+                logger.error("Visualizer service does not have generate_html_report method")
+                logger.error("This indicates a service version mismatch.")
+        else:
+            logger.warning(f"Unknown visualization action: {action}")
+            logger.info("Available actions: report")
                 
     except Exception as e:
         logger.error(f"Visualization failed: {e}", exc_info=True)

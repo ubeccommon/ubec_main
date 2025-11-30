@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-UBEC Backend API Service - Production Version 2.6.0 (NO ALIASES)
-===================================================================
+UBEC Backend API Service - Production Version 2.7.0 (ENHANCED HOLONIC SCORES)
+==============================================================================
 Provides read-only REST API endpoints for public website consumption
 with IP-based rate limiting for abuse prevention.
 
@@ -10,7 +10,28 @@ providing an abstraction layer between the public website and internal
 protocol operations. Integrated with real bioregion tracking, ecoregion
 data, and watershed information.
 
-NEW IN v2.6.0 - ALIAS REMOVAL (Principle #12 Compliance):
+NEW IN v2.7.0 - ENHANCED HOLONIC-SCORES ENDPOINT:
+- ✨ NEW: /api/v1/holonic-scores now supports individual account data
+  - Added include_accounts=true parameter for full dimension scores
+  - Returns all 5 holonic dimensions per account (visualization-ready)
+  - Returns all 4 Ubuntu principle scores per account (element-specific)
+  - Enables frontend visualization reports equivalent to holonic_visualizer
+  - Provides base data for third-party evaluation implementations
+- ✨ NEW: Query parameters for /api/v1/holonic-scores:
+  - include_accounts: Boolean to include individual account evaluations
+  - limit: Maximum accounts to return (default 100, max 500)
+  - offset: Pagination offset for accounts
+  - category: Filter by holonic category (Observer, Participant, etc.)
+- ✨ NEW: Enhanced summary statistics when include_accounts=true:
+  - category_distribution: Count per holonic category
+  - score_statistics: mean, median, min, max of composite scores
+  - dimension_statistics: Statistics per dimension (5 dimensions)
+  - ubuntu_principles: Aggregate metrics (4 elements)
+- 🎯 BACKWARD COMPATIBLE: Default behavior unchanged (summary only)
+- 🎯 Full compliance with all 12 project design principles
+- Result: 21 UNIQUE ENDPOINTS (unchanged)
+
+MAINTAINED FROM v2.6.0 - ALIAS REMOVAL (Principle #12 Compliance):
 - 🔧 REMOVED: /api/v1/network-status alias (use /api/v1/network)
 - 🔧 REMOVED: /api/v1/distributions alias reference (use /api/v1/distribution)
 - 🔧 STREAMLINED: Root endpoint now returns concise categorized endpoint listing
@@ -697,7 +718,7 @@ class BackendAPIService:
             cache_info={
                 'endpoints_count': 21,
                 'rate_limiting': 'active',
-                'version': '2.6.0',
+                'version': '2.7.0',
                 'gateway_auth': 'enabled'
             }
         )
@@ -720,7 +741,7 @@ class BackendAPIService:
             """Root endpoint with API information."""
             return {
                 'service': 'UBEC Backend API',
-                'version': '2.6.0',
+                'version': '2.7.0',
                 'status': 'operational',
                 'endpoints': {
                     'system': ['/health'],
@@ -771,7 +792,7 @@ class BackendAPIService:
             return {
                 'status': 'healthy',
                 'service': 'ubec_backend_api',
-                'version': '2.6.0',
+                'version': '2.7.0',
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
         
@@ -2148,81 +2169,421 @@ class BackendAPIService:
         
         @self.app.get("/api/v1/holonic-scores", response_model=Dict)
         @limiter.limit("100/minute")
-        async def get_holonic_scores(request: Request) -> Dict:
+        async def get_holonic_scores(
+            request: Request,
+            include_accounts: bool = False,
+            limit: int = 100,
+            offset: int = 0,
+            category: Optional[str] = None
+        ) -> Dict:
             """
-            Get aggregate Ubuntu principle scores across the network.
+            Get holonic evaluation scores with optional individual account data.
+            
+            NEW IN v2.7.0: Enhanced endpoint for frontend visualization support
+            - Optional include_accounts parameter returns full dimension scores per account
+            - Enables frontend to generate visualization reports equivalent to holonic_visualizer
+            - Provides base data for third-party evaluation implementations
             
             Rate limit: 100 requests/minute per IP
             
-            Returns:
-            - Aggregate scores for each Ubuntu principle
-            - Network-wide statistics
+            Query Parameters:
+            - include_accounts: If true, include individual account evaluations (default: false)
+            - limit: Maximum accounts to return when include_accounts=true (default: 100, max: 500)
+            - offset: Pagination offset for accounts (default: 0)
+            - category: Filter by holonic category (Observer, Participant, Contributor, Integrator, Exemplar)
+            
+            Returns (when include_accounts=false - default, backward compatible):
+            - ubuntu_principles: Aggregate scores for each Ubuntu principle (diversity, reciprocity, mutualism, regeneration)
+            - account_count: Total number of evaluated accounts
+            - timestamp: Response timestamp
+            
+            Returns (when include_accounts=true):
+            - accounts: Array of individual account evaluations with:
+              - account_id: Stellar account ID
+              - holonic_category: Category classification
+              - composite_score: Overall holonic score (0-1)
+              - dimension_scores: All 5 dimension scores for visualization
+                - autonomy_integration: Balance of autonomy and integration
+                - multi_scale: Multi-scale participation
+                - regenerative_impact: Regenerative contribution
+                - network_contribution: Network value added
+                - ubuntu_alignment: Ubuntu philosophy alignment
+              - ubuntu_principles: Element-specific scores (from ubec_holonic_metrics)
+                - diversity: Air/UBEC principle score
+                - reciprocity: Water/UBECrc principle score
+                - mutualism: Earth/UBECgpi principle score
+                - regeneration: Fire/UBECtt principle score
+              - evaluation_date: When evaluation was performed
+            - summary: Network-wide statistics
+              - total_evaluated: Total accounts with evaluations
+              - category_distribution: Count per holonic category
+              - score_statistics: mean, median, min, max of composite scores
+              - dimension_statistics: Statistics per dimension
+              - ubuntu_principles: Aggregate Ubuntu principle metrics
+            - pagination: Limit, offset, total, returned counts
+            - timestamp: Response timestamp
+            
+            Source Tables:
+            - ubec_main.holonic_metrics: 5 dimension scores, composite score, category
+            - ubec_main.ubec_holonic_metrics: 4 Ubuntu principle scores (element-specific)
             """
             try:
                 db = await self.registry.get('database')
                 
-                # v2.4.0: CORRECTED query for ubec_holonic_metrics table
-                # Table has 'principle' column (enum), not 'metric_name'/'metric_value'
-                # principle values: 'diversity', 'reciprocity', 'mutualism', 'regeneration'
-                query = """
-                    WITH ubuntu_metrics AS (
+                # Validate and constrain parameters
+                limit = min(max(1, limit), 500)
+                offset = max(0, offset)
+                
+                # Validate category if provided
+                valid_categories = ['Observer', 'Participant', 'Contributor', 'Integrator', 'Exemplar']
+                if category:
+                    # Case-insensitive match with proper title case
+                    category_title = category.title()
+                    if category_title not in valid_categories:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid category. Must be one of: {', '.join(valid_categories)}"
+                        )
+                    category = category_title
+                
+                if include_accounts:
+                    # ================================================================
+                    # ENHANCED MODE: Return individual account data with dimensions
+                    # ================================================================
+                    
+                    # Build query for individual accounts with all dimension scores
+                    # Join holonic_metrics (5 dimensions) with ubec_holonic_metrics (4 Ubuntu principles)
+                    category_filter = "AND hm.holonic_category = $3" if category else ""
+                    
+                    accounts_query = f"""
                         SELECT 
-                            account_id,
-                            MAX(CASE WHEN principle = 'diversity' THEN score END) as diversity_score,
-                            MAX(CASE WHEN principle = 'reciprocity' THEN score END) as reciprocity_score,
-                            MAX(CASE WHEN principle = 'mutualism' THEN score END) as mutualism_score,
-                            MAX(CASE WHEN principle = 'regeneration' THEN score END) as regeneration_score
-                        FROM ubec_main.ubec_holonic_metrics
-                        WHERE calculated_at >= NOW() - INTERVAL '7 days'
-                        GROUP BY account_id
-                    )
-                    SELECT 
-                        AVG(diversity_score) as avg_diversity,
-                        MIN(diversity_score) as min_diversity,
-                        MAX(diversity_score) as max_diversity,
-                        AVG(reciprocity_score) as avg_reciprocity,
-                        MIN(reciprocity_score) as min_reciprocity,
-                        MAX(reciprocity_score) as max_reciprocity,
-                        AVG(mutualism_score) as avg_mutualism,
-                        MIN(mutualism_score) as min_mutualism,
-                        MAX(mutualism_score) as max_mutualism,
-                        AVG(regeneration_score) as avg_regeneration,
-                        MIN(regeneration_score) as min_regeneration,
-                        MAX(regeneration_score) as max_regeneration,
-                        COUNT(*) as account_count
-                    FROM ubuntu_metrics
-                """
-                
-                result = await db.fetch_one(query)
-                
-                # v2.3.8: Use safe_float() to handle NULL aggregate results
-                return {
-                    'ubuntu_principles': {
-                        'diversity': {
-                            'average': safe_float(result['avg_diversity']),
-                            'min': safe_float(result['min_diversity']),
-                            'max': safe_float(result['max_diversity'])
+                            hm.account_id,
+                            hm.holonic_category,
+                            hm.composite_score,
+                            hm.autonomy_integration_score,
+                            hm.multi_scale_score,
+                            hm.regenerative_impact_score,
+                            hm.network_contribution_score,
+                            hm.ubuntu_alignment_score,
+                            hm.evaluation_date,
+                            hm.raw_metrics,
+                            -- Ubuntu principle scores from ubec_holonic_metrics (pivoted)
+                            MAX(CASE WHEN uhm.principle = 'diversity' THEN uhm.score END) as diversity_score,
+                            MAX(CASE WHEN uhm.principle = 'reciprocity' THEN uhm.score END) as reciprocity_score,
+                            MAX(CASE WHEN uhm.principle = 'mutualism' THEN uhm.score END) as mutualism_score,
+                            MAX(CASE WHEN uhm.principle = 'regeneration' THEN uhm.score END) as regeneration_score
+                        FROM ubec_main.holonic_metrics hm
+                        LEFT JOIN ubec_main.ubec_holonic_metrics uhm 
+                            ON hm.account_id = uhm.account_id
+                            AND uhm.calculated_at >= hm.evaluation_date - INTERVAL '1 day'
+                        WHERE hm.evaluation_date = (
+                            SELECT MAX(evaluation_date) 
+                            FROM ubec_main.holonic_metrics hm2 
+                            WHERE hm2.account_id = hm.account_id
+                        )
+                        {category_filter}
+                        GROUP BY 
+                            hm.account_id, hm.holonic_category, hm.composite_score,
+                            hm.autonomy_integration_score, hm.multi_scale_score,
+                            hm.regenerative_impact_score, hm.network_contribution_score,
+                            hm.ubuntu_alignment_score, hm.evaluation_date, hm.raw_metrics
+                        ORDER BY hm.composite_score DESC
+                        LIMIT $1 OFFSET $2
+                    """
+                    
+                    if category:
+                        accounts_results = await db.fetch_all(accounts_query, (limit, offset, category))
+                    else:
+                        accounts_results = await db.fetch_all(accounts_query, (limit, offset))
+                    
+                    # Build accounts array
+                    accounts = []
+                    for row in accounts_results:
+                        accounts.append({
+                            'account_id': row['account_id'],
+                            'holonic_category': row['holonic_category'],
+                            'composite_score': safe_float(row['composite_score']),
+                            'dimension_scores': {
+                                'autonomy_integration': safe_float(row['autonomy_integration_score']),
+                                'multi_scale': safe_float(row['multi_scale_score']),
+                                'regenerative_impact': safe_float(row['regenerative_impact_score']),
+                                'network_contribution': safe_float(row['network_contribution_score']),
+                                'ubuntu_alignment': safe_float(row['ubuntu_alignment_score'])
+                            },
+                            'ubuntu_principles': {
+                                'diversity': safe_float(row['diversity_score']),
+                                'reciprocity': safe_float(row['reciprocity_score']),
+                                'mutualism': safe_float(row['mutualism_score']),
+                                'regeneration': safe_float(row['regeneration_score'])
+                            },
+                            'evaluation_date': row['evaluation_date'].isoformat() if row['evaluation_date'] else None
+                        })
+                    
+                    # Get total count for pagination
+                    count_query = """
+                        SELECT COUNT(DISTINCT account_id) as total
+                        FROM ubec_main.holonic_metrics
+                    """
+                    if category:
+                        count_query = """
+                            SELECT COUNT(DISTINCT account_id) as total
+                            FROM ubec_main.holonic_metrics
+                            WHERE holonic_category = $1
+                        """
+                        count_result = await db.fetch_one(count_query, (category,))
+                    else:
+                        count_result = await db.fetch_one(count_query)
+                    total_count = safe_int(count_result['total']) if count_result else 0
+                    
+                    # Get category distribution
+                    category_dist_query = """
+                        SELECT holonic_category, COUNT(DISTINCT account_id) as count
+                        FROM ubec_main.holonic_metrics
+                        WHERE evaluation_date = (
+                            SELECT MAX(evaluation_date) 
+                            FROM ubec_main.holonic_metrics hm2 
+                            WHERE hm2.account_id = ubec_main.holonic_metrics.account_id
+                        )
+                        GROUP BY holonic_category
+                        ORDER BY 
+                            CASE holonic_category
+                                WHEN 'Exemplar' THEN 1
+                                WHEN 'Integrator' THEN 2
+                                WHEN 'Contributor' THEN 3
+                                WHEN 'Participant' THEN 4
+                                WHEN 'Observer' THEN 5
+                            END
+                    """
+                    category_results = await db.fetch_all(category_dist_query)
+                    category_distribution = {row['holonic_category']: safe_int(row['count']) for row in category_results}
+                    
+                    # Get score statistics
+                    stats_query = """
+                        WITH latest_scores AS (
+                            SELECT composite_score
+                            FROM ubec_main.holonic_metrics
+                            WHERE evaluation_date = (
+                                SELECT MAX(evaluation_date) 
+                                FROM ubec_main.holonic_metrics hm2 
+                                WHERE hm2.account_id = ubec_main.holonic_metrics.account_id
+                            )
+                        )
+                        SELECT 
+                            AVG(composite_score) as mean,
+                            MIN(composite_score) as min,
+                            MAX(composite_score) as max,
+                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY composite_score) as median
+                        FROM latest_scores
+                    """
+                    stats_result = await db.fetch_one(stats_query)
+                    
+                    # Get dimension statistics
+                    dim_stats_query = """
+                        WITH latest_metrics AS (
+                            SELECT 
+                                autonomy_integration_score,
+                                multi_scale_score,
+                                regenerative_impact_score,
+                                network_contribution_score,
+                                ubuntu_alignment_score
+                            FROM ubec_main.holonic_metrics
+                            WHERE evaluation_date = (
+                                SELECT MAX(evaluation_date) 
+                                FROM ubec_main.holonic_metrics hm2 
+                                WHERE hm2.account_id = ubec_main.holonic_metrics.account_id
+                            )
+                        )
+                        SELECT 
+                            AVG(autonomy_integration_score) as avg_autonomy,
+                            MIN(autonomy_integration_score) as min_autonomy,
+                            MAX(autonomy_integration_score) as max_autonomy,
+                            AVG(multi_scale_score) as avg_multi_scale,
+                            MIN(multi_scale_score) as min_multi_scale,
+                            MAX(multi_scale_score) as max_multi_scale,
+                            AVG(regenerative_impact_score) as avg_regenerative,
+                            MIN(regenerative_impact_score) as min_regenerative,
+                            MAX(regenerative_impact_score) as max_regenerative,
+                            AVG(network_contribution_score) as avg_network,
+                            MIN(network_contribution_score) as min_network,
+                            MAX(network_contribution_score) as max_network,
+                            AVG(ubuntu_alignment_score) as avg_ubuntu,
+                            MIN(ubuntu_alignment_score) as min_ubuntu,
+                            MAX(ubuntu_alignment_score) as max_ubuntu
+                        FROM latest_metrics
+                    """
+                    dim_stats_result = await db.fetch_one(dim_stats_query)
+                    
+                    # Get Ubuntu principles aggregate (same as non-include_accounts mode)
+                    ubuntu_query = """
+                        WITH ubuntu_metrics AS (
+                            SELECT 
+                                account_id,
+                                MAX(CASE WHEN principle = 'diversity' THEN score END) as diversity_score,
+                                MAX(CASE WHEN principle = 'reciprocity' THEN score END) as reciprocity_score,
+                                MAX(CASE WHEN principle = 'mutualism' THEN score END) as mutualism_score,
+                                MAX(CASE WHEN principle = 'regeneration' THEN score END) as regeneration_score
+                            FROM ubec_main.ubec_holonic_metrics
+                            WHERE calculated_at >= NOW() - INTERVAL '7 days'
+                            GROUP BY account_id
+                        )
+                        SELECT 
+                            AVG(diversity_score) as avg_diversity,
+                            MIN(diversity_score) as min_diversity,
+                            MAX(diversity_score) as max_diversity,
+                            AVG(reciprocity_score) as avg_reciprocity,
+                            MIN(reciprocity_score) as min_reciprocity,
+                            MAX(reciprocity_score) as max_reciprocity,
+                            AVG(mutualism_score) as avg_mutualism,
+                            MIN(mutualism_score) as min_mutualism,
+                            MAX(mutualism_score) as max_mutualism,
+                            AVG(regeneration_score) as avg_regeneration,
+                            MIN(regeneration_score) as min_regeneration,
+                            MAX(regeneration_score) as max_regeneration
+                        FROM ubuntu_metrics
+                    """
+                    ubuntu_result = await db.fetch_one(ubuntu_query)
+                    
+                    return {
+                        'accounts': accounts,
+                        'summary': {
+                            'total_evaluated': total_count,
+                            'category_distribution': category_distribution,
+                            'score_statistics': {
+                                'mean': safe_float(stats_result['mean']) if stats_result else 0.0,
+                                'median': safe_float(stats_result['median']) if stats_result else 0.0,
+                                'min': safe_float(stats_result['min']) if stats_result else 0.0,
+                                'max': safe_float(stats_result['max']) if stats_result else 0.0
+                            },
+                            'dimension_statistics': {
+                                'autonomy_integration': {
+                                    'mean': safe_float(dim_stats_result['avg_autonomy']) if dim_stats_result else 0.0,
+                                    'min': safe_float(dim_stats_result['min_autonomy']) if dim_stats_result else 0.0,
+                                    'max': safe_float(dim_stats_result['max_autonomy']) if dim_stats_result else 0.0
+                                },
+                                'multi_scale': {
+                                    'mean': safe_float(dim_stats_result['avg_multi_scale']) if dim_stats_result else 0.0,
+                                    'min': safe_float(dim_stats_result['min_multi_scale']) if dim_stats_result else 0.0,
+                                    'max': safe_float(dim_stats_result['max_multi_scale']) if dim_stats_result else 0.0
+                                },
+                                'regenerative_impact': {
+                                    'mean': safe_float(dim_stats_result['avg_regenerative']) if dim_stats_result else 0.0,
+                                    'min': safe_float(dim_stats_result['min_regenerative']) if dim_stats_result else 0.0,
+                                    'max': safe_float(dim_stats_result['max_regenerative']) if dim_stats_result else 0.0
+                                },
+                                'network_contribution': {
+                                    'mean': safe_float(dim_stats_result['avg_network']) if dim_stats_result else 0.0,
+                                    'min': safe_float(dim_stats_result['min_network']) if dim_stats_result else 0.0,
+                                    'max': safe_float(dim_stats_result['max_network']) if dim_stats_result else 0.0
+                                },
+                                'ubuntu_alignment': {
+                                    'mean': safe_float(dim_stats_result['avg_ubuntu']) if dim_stats_result else 0.0,
+                                    'min': safe_float(dim_stats_result['min_ubuntu']) if dim_stats_result else 0.0,
+                                    'max': safe_float(dim_stats_result['max_ubuntu']) if dim_stats_result else 0.0
+                                }
+                            },
+                            'ubuntu_principles': {
+                                'diversity': {
+                                    'average': safe_float(ubuntu_result['avg_diversity']) if ubuntu_result else 0.0,
+                                    'min': safe_float(ubuntu_result['min_diversity']) if ubuntu_result else 0.0,
+                                    'max': safe_float(ubuntu_result['max_diversity']) if ubuntu_result else 0.0
+                                },
+                                'reciprocity': {
+                                    'average': safe_float(ubuntu_result['avg_reciprocity']) if ubuntu_result else 0.0,
+                                    'min': safe_float(ubuntu_result['min_reciprocity']) if ubuntu_result else 0.0,
+                                    'max': safe_float(ubuntu_result['max_reciprocity']) if ubuntu_result else 0.0
+                                },
+                                'mutualism': {
+                                    'average': safe_float(ubuntu_result['avg_mutualism']) if ubuntu_result else 0.0,
+                                    'min': safe_float(ubuntu_result['min_mutualism']) if ubuntu_result else 0.0,
+                                    'max': safe_float(ubuntu_result['max_mutualism']) if ubuntu_result else 0.0
+                                },
+                                'regeneration': {
+                                    'average': safe_float(ubuntu_result['avg_regeneration']) if ubuntu_result else 0.0,
+                                    'min': safe_float(ubuntu_result['min_regeneration']) if ubuntu_result else 0.0,
+                                    'max': safe_float(ubuntu_result['max_regeneration']) if ubuntu_result else 0.0
+                                }
+                            }
                         },
-                        'reciprocity': {
-                            'average': safe_float(result['avg_reciprocity']),
-                            'min': safe_float(result['min_reciprocity']),
-                            'max': safe_float(result['max_reciprocity'])
+                        'pagination': {
+                            'limit': limit,
+                            'offset': offset,
+                            'total': total_count,
+                            'returned': len(accounts),
+                            'has_more': offset + len(accounts) < total_count
                         },
-                        'mutualism': {
-                            'average': safe_float(result['avg_mutualism']),
-                            'min': safe_float(result['min_mutualism']),
-                            'max': safe_float(result['max_mutualism'])
-                        },
-                        'regeneration': {
-                            'average': safe_float(result['avg_regeneration']),
-                            'min': safe_float(result['min_regeneration']),
-                            'max': safe_float(result['max_regeneration'])
-                        }
-                    },
-                    'account_count': safe_int(result['account_count']),
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
+                        'filter_applied': {'category': category} if category else None,
+                        'timestamp': datetime.now(timezone.utc).isoformat()
+                    }
                 
+                else:
+                    # ================================================================
+                    # DEFAULT MODE: Return aggregate statistics only (backward compatible)
+                    # ================================================================
+                    
+                    # v2.4.0: CORRECTED query for ubec_holonic_metrics table
+                    # Table has 'principle' column (enum), not 'metric_name'/'metric_value'
+                    # principle values: 'diversity', 'reciprocity', 'mutualism', 'regeneration'
+                    query = """
+                        WITH ubuntu_metrics AS (
+                            SELECT 
+                                account_id,
+                                MAX(CASE WHEN principle = 'diversity' THEN score END) as diversity_score,
+                                MAX(CASE WHEN principle = 'reciprocity' THEN score END) as reciprocity_score,
+                                MAX(CASE WHEN principle = 'mutualism' THEN score END) as mutualism_score,
+                                MAX(CASE WHEN principle = 'regeneration' THEN score END) as regeneration_score
+                            FROM ubec_main.ubec_holonic_metrics
+                            WHERE calculated_at >= NOW() - INTERVAL '7 days'
+                            GROUP BY account_id
+                        )
+                        SELECT 
+                            AVG(diversity_score) as avg_diversity,
+                            MIN(diversity_score) as min_diversity,
+                            MAX(diversity_score) as max_diversity,
+                            AVG(reciprocity_score) as avg_reciprocity,
+                            MIN(reciprocity_score) as min_reciprocity,
+                            MAX(reciprocity_score) as max_reciprocity,
+                            AVG(mutualism_score) as avg_mutualism,
+                            MIN(mutualism_score) as min_mutualism,
+                            MAX(mutualism_score) as max_mutualism,
+                            AVG(regeneration_score) as avg_regeneration,
+                            MIN(regeneration_score) as min_regeneration,
+                            MAX(regeneration_score) as max_regeneration,
+                            COUNT(*) as account_count
+                        FROM ubuntu_metrics
+                    """
+                    
+                    result = await db.fetch_one(query)
+                    
+                    # v2.3.8: Use safe_float() to handle NULL aggregate results
+                    return {
+                        'ubuntu_principles': {
+                            'diversity': {
+                                'average': safe_float(result['avg_diversity']),
+                                'min': safe_float(result['min_diversity']),
+                                'max': safe_float(result['max_diversity'])
+                            },
+                            'reciprocity': {
+                                'average': safe_float(result['avg_reciprocity']),
+                                'min': safe_float(result['min_reciprocity']),
+                                'max': safe_float(result['max_reciprocity'])
+                            },
+                            'mutualism': {
+                                'average': safe_float(result['avg_mutualism']),
+                                'min': safe_float(result['min_mutualism']),
+                                'max': safe_float(result['max_mutualism'])
+                            },
+                            'regeneration': {
+                                'average': safe_float(result['avg_regeneration']),
+                                'min': safe_float(result['min_regeneration']),
+                                'max': safe_float(result['max_regeneration'])
+                            }
+                        },
+                        'account_count': safe_int(result['account_count']),
+                        'timestamp': datetime.now(timezone.utc).isoformat()
+                    }
+                
+            except HTTPException:
+                raise
             except Exception as e:
                 self.logger.error(f"Error fetching holonic scores: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error fetching holonic scores: {str(e)}")

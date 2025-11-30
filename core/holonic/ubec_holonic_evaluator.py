@@ -22,6 +22,13 @@ NEW IN v3.0.0 - COMPLETE UBUNTU PRINCIPLE INTEGRATION:
 - ✅ Health status assessment for each principle
 - ✅ Complete integration with API service
 
+NEW IN v3.2.0 - DATABASE-DRIVEN CONFIGURATION:
+- ✅ Thresholds loaded from ubec_main.system_settings table
+- ✅ Dimension weights loaded from database
+- ✅ Ubuntu principle weights loaded from database
+- ✅ Follows Principle #4: Database as Single Source of Truth
+- ✅ Hardcoded values only used as fallback if DB config unavailable
+
 Evaluates UBEC token holders based on Ubuntu principles:
 - **Diversity (Air/UBEC)**: Unique participation patterns and breadth
 - **Reciprocity (Water/UBECrc)**: Balance of giving and receiving, flow
@@ -38,7 +45,7 @@ Design Principles Compliance:
     ✅ 5.  Strict Async: All I/O operations use async/await
     ✅ 6.  No Sync Fallbacks: Pure async implementation
     ✅ 7.  Per-Asset Monitoring: Individual account and element tracking
-    ✅ 8.  No Duplicate Config: Uses global configuration
+    ✅ 8.  No Duplicate Config: Uses global configuration from database
     ✅ 9.  Integrated Rate Limiting: Built-in for database operations
     ✅ 10. Separation of Concerns: Evaluation logic isolated
     ✅ 11. Comprehensive Documentation: Full docstrings and attribution
@@ -66,7 +73,7 @@ Usage:
     await evaluator.close()
 
 Database Schema:
-    Uses TWO tables for complete evaluation:
+    Uses THREE tables for complete evaluation:
     
     1. {schema}.holonic_metrics - Main holonic evaluation scores
        - autonomy_integration_score
@@ -86,16 +93,31 @@ Database Schema:
        - health_status (omitted - nullable column with database-specific enum)
        - assessment_details (JSONB)
        - calculated_at
+    
+    3. {schema}.system_settings - Configuration parameters (NEW in v3.2.0)
+       - setting_key: holonic_threshold_observer, holonic_threshold_participant, etc.
+       - setting_value: threshold/weight values as text
+       - setting_type: 'float'
+       - category: 'holonic'
 
 Attribution:
     This project uses the services of Claude and Anthropic PBC to inform our
     decisions and recommendations. This project was made possible with the
     assistance of Claude and Anthropic PBC.
 
-Version: 3.1.2 (Missing Method Fix)
-Date: November 18, 2025
+Version: 3.2.0 (Database-Driven Configuration)
+Date: November 30, 2025
 
 Changelog:
+    v3.2.0 - DATABASE-DRIVEN CONFIGURATION (Principle #4 Enhancement)
+           - Added: _load_config_from_db() method to load thresholds/weights from system_settings
+           - Added: ubuntu_weights dictionary for Ubuntu principle weighting
+           - Updated: __init__() to set default values as fallbacks only
+           - Updated: initialize() to call _load_config_from_db()
+           - Updated: evaluate_account() to use self.ubuntu_weights
+           - Updated: health_check() to report config_source
+           - Added: _config_loaded_from_db flag for tracking
+           - Config keys: holonic_threshold_*, holonic_weight_*, holonic_ubuntu_weight_*
     v3.1.2 - CRITICAL FIX: Added missing evaluate_network_holism method
            - Added: evaluate_network_holism() method for network-level holistic assessment
            - Reason: Scheduler was calling holonic.evaluate_network_holism which didn't exist
@@ -273,6 +295,9 @@ class UBECHolonicEvaluator:
     
     Implements Ubuntu philosophy through quantitative metrics across five dimensions
     plus four element-specific Ubuntu principles.
+    
+    Configuration is loaded from database (Principle #4: Single Source of Truth).
+    Hardcoded values are only used as fallback if database config is unavailable.
     """
     
     def __init__(self, db_manager, config: Dict[str, Any]):
@@ -285,8 +310,9 @@ class UBECHolonicEvaluator:
                 - ubec_code: UBEC asset code (default: 'UBEC')
                 - ubec_issuer: UBEC issuer address
                 - db_schema: Database schema name (default: 'ubec_main')
-                - weights: Optional scoring weights
-                - thresholds: Optional category thresholds
+        
+        Note: Thresholds and weights are loaded from database in initialize().
+              Hardcoded defaults are used only as fallback if DB config unavailable.
         """
         self.db_manager = db_manager
         self.logger = logging.getLogger(__name__)
@@ -296,22 +322,32 @@ class UBECHolonicEvaluator:
         self.ubec_issuer = config.get('ubec_issuer')
         self.db_schema = config.get('db_schema', 'ubec_main')
         
-        # Scoring weights (must sum to 1.0)
-        self.weights = config.get('weights', {
+        # Default scoring weights (fallback - will be overridden from database)
+        # These values are used ONLY if database config is not available
+        self.weights = {
             'autonomy_integration': 0.20,
             'multi_scale': 0.20,
             'regenerative_impact': 0.20,
             'network_contribution': 0.20,
             'ubuntu_alignment': 0.20
-        })
+        }
         
-        # Category thresholds
-        self.thresholds = config.get('thresholds', {
-            'observer': 0.2,
-            'participant': 0.4,
-            'contributor': 0.6,
-            'integrator': 0.8
-        })
+        # Default category thresholds (fallback - will be overridden from database)
+        # Early-stage ecosystem defaults
+        self.thresholds = {
+            'observer': 0.05,
+            'participant': 0.12,
+            'contributor': 0.22,
+            'integrator': 0.32
+        }
+        
+        # Default Ubuntu principle weights (fallback - will be overridden from database)
+        self.ubuntu_weights = {
+            'diversity': 0.25,
+            'reciprocity': 0.25,
+            'mutualism': 0.25,
+            'regeneration': 0.25
+        }
         
         # Health monitoring
         self._evaluation_count = 0
@@ -320,19 +356,149 @@ class UBECHolonicEvaluator:
         self._last_error: Optional[str] = None
         self._last_error_time: Optional[datetime] = None
         
-        # Schema detection
+        # Schema detection and config tracking
         self._has_ubuntu_metrics_table = False
+        self._config_loaded_from_db = False
         
-        self.logger.info("UBEC Holonic Evaluator initialized")
+        self.logger.info("UBEC Holonic Evaluator initialized (config will load from DB)")
+    
+    async def _load_config_from_db(self) -> None:
+        """
+        Load thresholds and weights from database configuration table.
+        
+        Implements Principle #4: Database as Single Source of Truth.
+        Configuration is stored in ubec_main.system_settings table.
+        
+        Expected setting_key values:
+        - holonic_threshold_observer: Upper bound for Observer (default: 0.05)
+        - holonic_threshold_participant: Upper bound for Participant (default: 0.12)
+        - holonic_threshold_contributor: Upper bound for Contributor (default: 0.22)
+        - holonic_threshold_integrator: Upper bound for Integrator (default: 0.32)
+        - holonic_weight_autonomy: Weight for autonomy dimension (default: 0.20)
+        - holonic_weight_multi_scale: Weight for multi-scale dimension (default: 0.20)
+        - holonic_weight_regenerative: Weight for regenerative dimension (default: 0.20)
+        - holonic_weight_network: Weight for network dimension (default: 0.20)
+        - holonic_weight_ubuntu: Weight for ubuntu dimension (default: 0.20)
+        - holonic_ubuntu_weight_diversity: Weight for diversity principle (default: 0.25)
+        - holonic_ubuntu_weight_reciprocity: Weight for reciprocity principle (default: 0.25)
+        - holonic_ubuntu_weight_mutualism: Weight for mutualism principle (default: 0.25)
+        - holonic_ubuntu_weight_regeneration: Weight for regeneration principle (default: 0.25)
+        
+        Falls back to hardcoded defaults if database config not available.
+        """
+        try:
+            # Load all holonic configuration from system_settings table
+            query = f"""
+                SELECT setting_key, setting_value
+                FROM {self.db_schema}.system_settings
+                WHERE setting_key LIKE 'holonic_%'
+                  AND is_active = TRUE
+            """
+            
+            results = await self.db_manager.fetch_all(query, ())
+            
+            if not results:
+                self.logger.warning(
+                    "No holonic configuration found in system_settings table. "
+                    "Using default fallback values. Consider adding holonic_* settings."
+                )
+                return
+            
+            # Parse results into thresholds, weights, and ubuntu_weights
+            config_count = 0
+            for row in results:
+                key = row['setting_key']
+                try:
+                    value = float(row['setting_value'])
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid config value for {key}: {row['setting_value']}")
+                    continue
+                
+                # Category thresholds
+                if key == 'holonic_threshold_observer':
+                    self.thresholds['observer'] = value
+                    config_count += 1
+                elif key == 'holonic_threshold_participant':
+                    self.thresholds['participant'] = value
+                    config_count += 1
+                elif key == 'holonic_threshold_contributor':
+                    self.thresholds['contributor'] = value
+                    config_count += 1
+                elif key == 'holonic_threshold_integrator':
+                    self.thresholds['integrator'] = value
+                    config_count += 1
+                
+                # Dimension weights
+                elif key == 'holonic_weight_autonomy':
+                    self.weights['autonomy_integration'] = value
+                    config_count += 1
+                elif key == 'holonic_weight_multi_scale':
+                    self.weights['multi_scale'] = value
+                    config_count += 1
+                elif key == 'holonic_weight_regenerative':
+                    self.weights['regenerative_impact'] = value
+                    config_count += 1
+                elif key == 'holonic_weight_network':
+                    self.weights['network_contribution'] = value
+                    config_count += 1
+                elif key == 'holonic_weight_ubuntu':
+                    self.weights['ubuntu_alignment'] = value
+                    config_count += 1
+                
+                # Ubuntu principle weights
+                elif key == 'holonic_ubuntu_weight_diversity':
+                    self.ubuntu_weights['diversity'] = value
+                    config_count += 1
+                elif key == 'holonic_ubuntu_weight_reciprocity':
+                    self.ubuntu_weights['reciprocity'] = value
+                    config_count += 1
+                elif key == 'holonic_ubuntu_weight_mutualism':
+                    self.ubuntu_weights['mutualism'] = value
+                    config_count += 1
+                elif key == 'holonic_ubuntu_weight_regeneration':
+                    self.ubuntu_weights['regeneration'] = value
+                    config_count += 1
+            
+            if config_count > 0:
+                self._config_loaded_from_db = True
+                self.logger.info(
+                    f"Loaded {config_count} holonic configuration values from database: "
+                    f"thresholds={self.thresholds}, dimension_weights_sum={sum(self.weights.values()):.2f}"
+                )
+            
+            # Validate dimension weights sum to 1.0
+            weight_sum = sum(self.weights.values())
+            if abs(weight_sum - 1.0) > 0.001:
+                self.logger.warning(
+                    f"Dimension weights sum to {weight_sum:.3f}, expected 1.0. "
+                    "Check system_settings table values."
+                )
+            
+            # Validate ubuntu weights sum to 1.0
+            ubuntu_sum = sum(self.ubuntu_weights.values())
+            if abs(ubuntu_sum - 1.0) > 0.001:
+                self.logger.warning(
+                    f"Ubuntu principle weights sum to {ubuntu_sum:.3f}, expected 1.0. "
+                    "Check system_settings table values."
+                )
+            
+        except Exception as e:
+            self.logger.error(f"Error loading holonic config from database: {e}")
+            self.logger.info("Using default hardcoded configuration values.")
     
     async def initialize(self) -> None:
         """
         Initialize the evaluator service.
         
-        Performs schema detection to enable optional features.
+        Performs:
+        1. Load configuration from database (Principle #4: Single Source of Truth)
+        2. Schema detection to enable optional features
         """
         try:
-            # Check if ubec_holonic_metrics table exists
+            # STEP 1: Load configuration from database
+            await self._load_config_from_db()
+            
+            # STEP 2: Check if ubec_holonic_metrics table exists
             query = """
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables
@@ -348,6 +514,17 @@ class UBECHolonicEvaluator:
                 self.logger.info("Ubuntu metrics table detected - element metrics enabled")
             else:
                 self.logger.warning("Ubuntu metrics table not found - using fallback scoring")
+            
+            # Log final configuration
+            config_source = "database" if self._config_loaded_from_db else "defaults"
+            self.logger.info(
+                f"Holonic Evaluator ready (config from {config_source}): "
+                f"Observer<{self.thresholds['observer']:.2f}, "
+                f"Participant<{self.thresholds['participant']:.2f}, "
+                f"Contributor<{self.thresholds['contributor']:.2f}, "
+                f"Integrator<{self.thresholds['integrator']:.2f}, "
+                f"Exemplar>={self.thresholds['integrator']:.2f}"
+            )
             
         except Exception as e:
             self.logger.error(f"Error during initialization: {e}")
@@ -404,11 +581,12 @@ class UBECHolonicEvaluator:
             regeneration_details = regeneration_result[1] if regeneration_result and len(regeneration_result) > 1 else {}
             
             # Calculate ubuntu_alignment_score from calculated element scores
+            # Using weights from database (Principle #4: Single Source of Truth)
             ubuntu_alignment_score = (
-                diversity_score * 0.25 +
-                reciprocity_health * 0.25 +
-                mutualism_capacity * 0.25 +
-                regeneration_score * 0.25
+                diversity_score * self.ubuntu_weights['diversity'] +
+                reciprocity_health * self.ubuntu_weights['reciprocity'] +
+                mutualism_capacity * self.ubuntu_weights['mutualism'] +
+                regeneration_score * self.ubuntu_weights['regeneration']
             )
             
             # Calculate composite score
@@ -1148,12 +1326,10 @@ class UBECHolonicEvaluator:
         """
         try:
             # Delete existing evaluation for this account today
-            # Note: Can't use ON CONFLICT with function-based unique constraint
-            # idx_holonic_metrics_account_date_unique uses extract_date_immutable(evaluation_date)
             delete_query = f"""
                 DELETE FROM {self.db_schema}.holonic_metrics
                 WHERE account_id = $1
-                  AND DATE(evaluation_date) = CURRENT_DATE
+                  AND DATE(evaluation_date) = DATE(NOW())
             """
             await self.db_manager.execute(delete_query, (metrics.account_id,))
             
@@ -1170,7 +1346,7 @@ class UBECHolonicEvaluator:
                     holonic_category,
                     raw_metrics,
                     evaluation_date
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """
             
             await self.db_manager.execute(
@@ -1184,62 +1360,64 @@ class UBECHolonicEvaluator:
                     metrics.ubuntu_alignment_score,
                     metrics.composite_score,
                     metrics.holonic_category.value,
-                    json.dumps(metrics.raw_metrics)
+                    json.dumps(metrics.raw_metrics),
+                    metrics.evaluation_date
                 )
             )
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Error storing evaluation for {metrics.account_id}: {e}")
+            self.logger.error(f"Error storing evaluation: {e}")
             return False
     
     async def _store_ubuntu_principle_metrics(
         self,
         account_id: str,
-        ubuntu_metrics: Dict[str, float],
-        ubuntu_details: Dict[str, Dict[str, Any]]
+        metrics: Dict[str, float],
+        details: Dict[str, Dict]
     ) -> bool:
         """
         Store Ubuntu principle metrics to ubec_holonic_metrics table.
         
         Args:
             account_id: Account ID
-            ubuntu_metrics: Dict with keys: diversity, reciprocity, mutualism, regeneration
-            ubuntu_details: Detailed assessment data for each principle
+            metrics: Dictionary of principle scores (diversity, reciprocity, mutualism, regeneration)
+            details: Dictionary of principle details
             
         Returns:
             True if successful
         """
         if not self._has_ubuntu_metrics_table:
-            self.logger.debug(f"Ubuntu metrics table not available, skipping storage for {account_id}")
             return False
         
         try:
-            # Delete existing metrics for today
-            delete_query = f"""
-                DELETE FROM {self.db_schema}.ubec_holonic_metrics
-                WHERE account_id = $1
-                  AND DATE(calculated_at) = CURRENT_DATE
-            """
-            await self.db_manager.execute(delete_query, (account_id,))
-            
-            # Mapping of principles to elements
-            # CRITICAL FIX v3.0.6: Use lowercase values to match database enum element_type
+            # Map principles to elements (lowercase to match database enum)
             principle_element_map = {
-                'diversity': 'air',        # lowercase to match DB enum
-                'reciprocity': 'water',    # lowercase to match DB enum
-                'mutualism': 'earth',      # lowercase to match DB enum
-                'regeneration': 'fire'     # lowercase to match DB enum
+                'diversity': 'air',
+                'reciprocity': 'water',
+                'mutualism': 'earth',
+                'regeneration': 'fire'
             }
             
-            # Insert one record for each Ubuntu principle
-            for principle_name, score in ubuntu_metrics.items():
-                element = principle_element_map.get(principle_name, 'air')
-                details = ubuntu_details.get(principle_name, {})
+            for principle, score in metrics.items():
+                element = principle_element_map.get(principle)
+                if not element:
+                    continue
                 
-                # Insert without health_status since enum values are database-specific
-                # The column is nullable, so we can omit it
+                principle_details = details.get(principle, {})
+                
+                # Delete existing entry for this account/element/principle today
+                delete_query = f"""
+                    DELETE FROM {self.db_schema}.ubec_holonic_metrics
+                    WHERE account_id = $1
+                      AND element = $2
+                      AND principle = $3
+                      AND DATE(calculated_at) = DATE(NOW())
+                """
+                await self.db_manager.execute(delete_query, (account_id, element, principle))
+                
+                # Insert new entry (without health_status column)
                 insert_query = f"""
                     INSERT INTO {self.db_schema}.ubec_holonic_metrics (
                         account_id,
@@ -1247,9 +1425,8 @@ class UBECHolonicEvaluator:
                         principle,
                         score,
                         assessment_details,
-                        calculation_method,
                         calculated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                    ) VALUES ($1, $2, $3, $4, $5, NOW())
                 """
                 
                 await self.db_manager.execute(
@@ -1257,22 +1434,76 @@ class UBECHolonicEvaluator:
                     (
                         account_id,
                         element,
-                        principle_name,
+                        principle,
                         score,
-                        json.dumps(details),
-                        'holonic_evaluator_v3'
+                        json.dumps(principle_details)
                     )
                 )
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Error storing Ubuntu metrics for {account_id}: {e}")
+            self.logger.error(f"Error storing Ubuntu principle metrics: {e}")
             return False
-
+    
+    # ==================== RETRIEVAL METHODS ====================
+    
+    async def get_ubuntu_principle_metrics(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get Ubuntu principle metrics for an account.
+        
+        Args:
+            account_id: Account to retrieve metrics for
+            
+        Returns:
+            Dictionary of Ubuntu principle metrics or None
+        """
+        if not self._has_ubuntu_metrics_table:
+            return None
+        
+        try:
+            query = f"""
+                SELECT 
+                    principle,
+                    score,
+                    assessment_details,
+                    calculated_at
+                FROM {self.db_schema}.ubec_holonic_metrics
+                WHERE account_id = $1
+                ORDER BY calculated_at DESC
+            """
+            
+            results = await self.db_manager.fetch_all(query, (account_id,))
+            
+            if not results:
+                return None
+            
+            # Group by principle (get most recent for each)
+            principles = {}
+            seen = set()
+            
+            for row in results:
+                principle = row['principle']
+                if principle not in seen:
+                    seen.add(principle)
+                    principles[principle] = {
+                        'score': float(row['score']),
+                        'details': row['assessment_details'],
+                        'calculated_at': row['calculated_at'].isoformat()
+                    }
+            
+            return {
+                'account_id': account_id,
+                'principles': principles
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving Ubuntu principle metrics: {e}")
+            return None
+    
     async def get_latest_evaluation(self, account_id: str) -> Optional[HolonicMetrics]:
         """
-        Retrieve latest evaluation for an account.
+        Get the latest evaluation for an account.
         
         Args:
             account_id: Account to retrieve evaluation for
@@ -1343,6 +1574,8 @@ class UBECHolonicEvaluator:
     def _determine_category(self, composite_score: float) -> HolonicCategory:
         """
         Determine holonic category based on composite score.
+        
+        Uses thresholds loaded from database (Principle #4: Single Source of Truth).
         
         Args:
             composite_score: Composite evaluation score (0-1)
@@ -1416,7 +1649,11 @@ class UBECHolonicEvaluator:
                     'last_error': self._last_error,
                     'last_error_time': self._last_error_time.isoformat() if self._last_error_time else None,
                     'ubuntu_metrics_enabled': self._has_ubuntu_metrics_table,
-                    'recent_evaluations_24h': recent_evaluations
+                    'recent_evaluations_24h': recent_evaluations,
+                    'config_source': 'database' if self._config_loaded_from_db else 'defaults',
+                    'thresholds': self.thresholds,
+                    'weights': self.weights,
+                    'ubuntu_weights': self.ubuntu_weights
                 }
             }
             
