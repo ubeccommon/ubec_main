@@ -1922,8 +1922,24 @@ class UBECDataSynchronizer:
             return operations_synced
             
         except Exception as e:
-            self.rate_limiter.record_failure()
-            self.logger.error(f"Failed to sync operations for {account_id[:8]}...: {e}")
+            # v5.2.16: A 404 from /accounts/{id}/operations means the account
+            # simply has no operation history - an expected "no data" response,
+            # NOT a service failure. Counting it against the circuit breaker caused
+            # the breaker to trip mid-sync on accounts with no operations, blocking
+            # all remaining accounts. Only genuine failures (timeouts, 5xx, 429)
+            # should count toward the breaker.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status is None:
+                status = getattr(e, "status", None)
+            if status == 404:
+                self.logger.debug(
+                    f"    No operations for {account_id[:8]}... (404 - expected)"
+                )
+            else:
+                self.rate_limiter.record_failure()
+                self.logger.error(
+                    f"Failed to sync operations for {account_id[:8]}...: {e}"
+                )
             # Don't raise - operations sync failure shouldn't block account sync
             return 0
     

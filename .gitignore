@@ -12,3 +12,6 @@
 __pycache__/
 reports
 backups
+*.bak
+*.bak.*
+venv/
